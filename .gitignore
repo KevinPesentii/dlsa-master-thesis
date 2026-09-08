@@ -1,0 +1,32 @@
+# Data: never commit CRSP, Compustat, WRDS or JKP extracts (licensing)
+data/
+*.parquet
+*.csv
+*.dta
+*.sas7bdat
+
+# Run outputs
+runs/
+outputs/
+*.pt
+*.ckpt
+
+# Credentials
+.env
+.pgpass
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.ipynb_checkpoints/
+*.egg-info/
+.ruff_cache/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

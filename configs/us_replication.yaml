@@ -1,0 +1,42 @@
+# US replication, Epstein, Wang, Choi & Pelger (2025), Table 2 headline specification.
+# This is the acceptance test for the whole pipeline: net Sharpe near 2.28.
+# Europe reuses this file with `market: eu`. Do not re-tune for Europe.
+
+market: us
+seed: 0
+
+sample:
+  start: 1998-01-01
+  end: 2021-12-31
+  universe_size: 500
+
+features:
+  n_characteristics: 39          # see CONFIRM 2 in docs/schemas.md
+  normalisation: rank_quantile   # see CONFIRM 1 in docs/schemas.md
+  include_cross_sectional_median: true
+  include_risk_free: true
+
+model:
+  kind: attention
+  n_factors: 30                  # K
+  embedding_dim: 32
+
+policy:
+  kind: longconv
+  layers: 1
+  hidden: 32
+  residual_lookback: 30
+
+objective:
+  lambda_var: 100
+  turnover_cost: 0.0005          # ||w_t - w_{t-1}||_1
+  short_cost: 0.0001             # ||max(-w_t, 0)||_1
+
+training:
+  window_years: 8
+  refit: annual                  # NOT the 125/1000-day schedule of GPZ
+
+evaluation:
+  report_break_even_cost: true
+  cost_grid_bps: [0, 1, 2, 5, 10, 20, 30, 50]
+  reference_net_sharpe: 2.28     # the paper's number, for comparison only

@@ -1,0 +1,30 @@
+[project]
+name = "afe"
+version = "0.1.0"
+description = "Attention factors for statistical arbitrage: US replication and European out-of-sample test"
+requires-python = ">=3.11"
+dependencies = [
+    "numpy>=1.26",
+    "pandas>=2.2",
+    "pyarrow>=15",
+    "scipy>=1.12",
+    "pyyaml>=6.0",
+    "torch>=2.3",
+]
+
+[project.optional-dependencies]
+data = ["wrds>=3.2", "psycopg2-binary>=2.9"]
+dev = ["pytest>=8.0", "ruff>=0.4", "nbstripout>=0.7"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/afe"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
