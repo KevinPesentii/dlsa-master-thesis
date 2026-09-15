@@ -2,7 +2,7 @@
 
 Read this before writing or changing code. It holds the decisions, not the code.
 If a convention here is wrong, change it in a commit so both of us pick it up.
-Owners: Henrik Reiss, Kevin Pesenti. MSc thesis, SSE, due June 2027.
+Owners: Henrik Reiss, Kevin Pesenti. MSc thesis, SSE, due December 2026.
 
 ## What the thesis is
 
@@ -15,8 +15,7 @@ produces it, survive in European equities?
 Two legs:
 1. US replication, Jan 1998 - Dec 2021, to validate the pipeline against the paper's
    net Sharpe of 2.28.
-2. Europe, SAME window 1998-2021, SAME hyperparameters. Not re-tuned. It is a test,
-   not a second fit.
+2. Europe, SAME window 1998-2021, Potentially SAME hyperparameters. Reestimation of CNN.
 
 ## Hard invariants
 

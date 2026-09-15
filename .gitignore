@@ -1,5 +1,5 @@
 # Data: never commit CRSP, Compustat, WRDS or JKP extracts (licensing)
-data/
+/data/
 *.parquet
 *.csv
 *.dta
