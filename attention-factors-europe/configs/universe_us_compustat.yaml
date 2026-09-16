@@ -1,0 +1,28 @@
+# Monthly top-N US constituent list by market cap from Compustat Security Monthly
+# (comp.secm on WRDS). Step 1 of the US data build. Produces the AS-OF ranking: row m
+# is the ranking by market cap at the end of month m. The one-month lag that turns it
+# into universe.parquet (membership for month m from cap at end of m-1) is applied
+# downstream, not here. See src/afe/data/compustat_us.py for the decisions.
+
+market: us
+source: comp.secm
+
+sample:
+  start: 1990-01            # first month end ranked
+  end: 2025-12              # last month end ranked; 432 months
+  universe_size: 500
+
+filters:
+  issue_type: "0"           # tpci: common / ordinary shares only
+  currency: USD             # curcdm
+  country_field: fic        # header field: fic = incorporation, loc = headquarters
+  country: USA
+  exchange_filter: none     # exchg is a header (last venue), see module docstring
+
+shares:
+  monthly_field: cshom      # issue-level monthly shares, populated from 1998-04
+  fallback_field: fundq.cshoq, funda.csho   # company-level, x primary-issue price, ajexm split-adjusted
+  fallback_max_stale_months: 12
+
+output:
+  dir: data/us

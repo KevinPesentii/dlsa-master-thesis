@@ -1,0 +1,77 @@
+# US data build: raw WRDS pull (stage 1, once) and characteristic construction (stage 2).
+#   python scripts/fetch_us_raw.py       --config configs/us_data.yaml
+#   python scripts/build_us_dataset.py   --config configs/us_data.yaml
+# Feature definitions live in src/afe/data/characteristics.py and are documented in
+# docs/us_characteristics.md. This file holds the choices that are NOT formulas.
+
+market: us
+
+raw:
+  dir: data/us/raw
+  start_year: 1986      # five years before the first ranked month: Beta needs a 5y window
+  end_year: 2025
+
+sample:
+  start: 1990-01        # first month of features / universe membership
+  end: 2025-12
+  universe_size: 500
+
+# CRSP CIZ flags, applied to the MONTHLY file to define the eligible pool. They are
+# historical per row, unlike Compustat's header fields. This is the CIZ spelling of the
+# classic share code 10/11 + exchange code 1/2/3 filter.
+eligibility:
+  usincflg: [Y]              # US-incorporated
+  issuertype: [CORP]         # corporates; add REIT to keep real estate trusts
+  primaryexch: [N, A, Q]     # NYSE, NYSE American, Nasdaq
+  min_price: 0.0             # no penny-stock filter; the top-500 cut makes it moot
+
+# Company = permco. Market cap is summed over its eligible share classes; the class with
+# the largest cap is the company's sec_id (permno) for that month and supplies the
+# return/volume/quote series. Universe for month M ranks by cap at the end of M-1.
+# The Compustat-only universe of step 1 (data/us/top500_monthly.parquet) is not an
+# input here; the build report shows the overlap between the two by year.
+
+# Which permnos get characteristics. 'universe' = ever a member in the sample (a few
+# thousand names, minutes to build). 'all' = every eligible stock (needed only if the
+# cross-sectional medians should be over all listed names; CONFIRM 3 in schemas.md).
+pool: universe
+
+fundamentals:
+  # When an annual report becomes usable. 'june': fiscal years ending in calendar year
+  # y are used from end of June y+1 (Fama-French). 'lag_months: 6' uses each firm's own
+  # fiscal year end plus six months (Open Source Asset Pricing).
+  availability: june
+  lag_months: 6
+  max_age_months: 30         # drop a record older than this instead of carrying it on
+  fill_zero: [txditc, txdb, pstk, mib, ivao, xrd, xad, txp, dlc]   # not pstkrv/pstkl: they are a fallback chain
+
+windows:                     # in trading days unless stated
+  momentum_min_obs: {r12_2: 8, r12_7: 4, r36_13: 16}   # of 11, 6, 24 months
+  variance_months: 2         # Variance, Resid_Var: calendar months ending at month end
+  variance_min_obs: 20
+  spread_min_obs: 10
+  suv_estimation_months: 6   # regression window before the evaluation month
+  suv_min_obs: 60
+  beta_vol_days: 252
+  beta_vol_min_obs: 120
+  beta_corr_days: 1260
+  beta_corr_min_obs: 750
+  rel2high_days: 252
+  rel2high_min_obs: 120
+  weekly_days: 5
+
+normalisation:
+  method: rank_quantile      # cross-sectional rank within the universe, mapped to (-0.5, 0.5]
+  missing: median            # NaN characteristic -> cross-sectional median (0 after ranking)
+  median_over: universe      # CONFIRM 3: universe | pool
+
+characteristics:             # the 39 of the paper; drop a name here to exclude it
+  past_returns: [r2_1, r12_2, r12_7, r36_13, ST_Rev, Ret_D1, Ret_W1, STD_W1]
+  value: [A2ME, BEME, C, CF, CF2P, Q, Lev, E2P]
+  investment: [Investment, NOA, DPI2A]
+  trading_frictions: [AT, LME, LTurnover, Rel2High, Resid_Var, Spread, SUV, Variance, Vol, Beta]
+  profitability: [PROF, CTO, FC2Y, OP, PM, RNA, D2A]
+  intangibles: [OA, OL, PCM]
+
+output:
+  dir: data/us

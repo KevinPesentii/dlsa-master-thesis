@@ -1,0 +1,55 @@
+# Two-step benchmark of Epstein, Wang, Choi & Pelger (2025), Table 2, "PCA Factors
+# (Two-Step Approach)": PCA residuals fixed first, LongConv policy trained on the net
+# Sharpe objective second. Factor construction: 252-day correlation PCA as in
+# Guijarro-Ordonez, Pelger & Zanotti (factor_models/pca.py in dlsa-public). The paper
+# does not say how loadings are obtained or whether the policy sees daily or cumulative
+# residuals; docs/pca_longconv_benchmark.md records the variants and why these defaults.
+#   python scripts/build_pca_residuals.py --config configs/us_pca_longconv.yaml
+#   python scripts/run_pca_longconv.py    --config configs/us_pca_longconv.yaml [--K 30]
+
+market: us
+seed: 0
+
+data:
+  dir: data/us
+  history_start: 1989-01-01      # raw daily rows prepended so the first PCA date is Jan 1990
+  raw_daily_dir: data/us/raw/crsp_daily
+
+sample:
+  start: 1998-01-01              # first out-of-sample day
+  end: 2021-12-31
+
+factors:
+  kind: pca
+  n_factors: [1, 3, 5, 8, 10, 15, 30, 100]   # the K column of Table 2
+  cov_window: 252                # correlation PCA window, ends the day before
+  loading_window: 252            # regression of returns on the factors, no intercept.
+                                 # 60 = GPZ's window (under-determined for K >= 60), 0 = PCA projection B = D V
+  out_dir: data/us/pca_l252      # stage-one output; the 60-day build lives in data/us/pca, projection in data/us/pca_proj
+
+policy:
+  kind: longconv
+  layers: 1
+  hidden: 32
+  residual_lookback: 30
+  dropout: 0.1
+  lambda_squash: 0.001
+  input: cumulative              # 'cumulative' residual path as in GPZ's preprocess_cumsum; 'returns' = daily residuals
+  input_scale: 100.0             # residuals fed in percent; the L1-normalised output is scale-free
+
+objective:
+  turnover_cost: 0.0005          # ||w_t - w_{t-1}||_1
+  short_cost: 0.0001             # ||max(-w_t, 0)||_1
+  subtract_rf: true              # paper: (Rbar_net - R_f) / sd in the objective
+
+training:
+  window_years: 8
+  refit: annual
+  epochs: 30
+  lr: 0.003
+  weight_decay: 0.05
+  batch_days: 125                # contiguous blocks; one Sharpe per block (GPZ batching)
+
+evaluation:
+  save_weights: true
+  cost_grid_bps: [0, 1, 2, 5, 10, 20, 30, 50]
