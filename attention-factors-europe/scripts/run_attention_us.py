@@ -52,7 +52,14 @@ def span(model, p: slots.SlotPanel, t0: int, t1: int, cfg: dict, w_prev=None):
 def train_window(model, p: slots.SlotPanel, t_tr0: int, t_te0: int, cfg: dict,
                  rng: np.random.Generator, log) -> None:
     tr = cfg["training"]
-    opt = torch.optim.AdamW(model.parameters(), lr=tr["lr"], weight_decay=tr["weight_decay"])
+    # Table 4 of the paper: weight decay 0.05 is "Adam weight decay in LongConv model", so it
+    # applies to the sequence model only. The attention factor parameters (Q, W_K) are not
+    # decayed; decaying them would shrink the scores and flatten the softmax towards equal
+    # weights, i.e. towards less discriminating factors.
+    opt = torch.optim.AdamW([
+        {"params": model.policy.parameters(), "weight_decay": tr["weight_decay"]},
+        {"params": model.factors.parameters(), "weight_decay": 0.0},
+    ], lr=tr["lr"])
     starts = list(range(t_tr0 + model.lookback, t_te0, tr["batch_days"]))
     blocks = [(b0, min(b0 + tr["batch_days"], t_te0)) for b0 in starts]
     blocks = [(b0, b1) for b0, b1 in blocks if b1 - b0 >= 20]
