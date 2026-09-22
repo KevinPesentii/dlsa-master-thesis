@@ -1,0 +1,31 @@
+# European data build: raw WRDS pull (stage 1, once). Stage 2 (EUR conversion,
+# returns, characteristics) is not in this file yet; the US/EU characteristic
+# intersection is an open decision (CLAUDE.md).
+#   python scripts/fetch_eu_raw.py --config configs/eu_data.yaml
+# The universe and the listing to trade come from the step-1 cap table
+# (configs/universe_eu_compustat.yaml -> data/eu/company_month_mktcap.parquet).
+# Variables, sources, currencies and files are documented in docs/eu_raw_data.md.
+
+market: eu
+
+universe:
+  mktcap_table: data/eu/company_month_mktcap.parquet   # step-1 output, eligible flag inside
+  size: 500                 # pooled across the countries of the cap table, AS-OF month end
+  start: 1999-01            # first ranked month end
+  end: 2025-12
+
+raw:
+  dir: data/eu/raw
+  daily_start_year: 1994    # five years before the first ranked month: Beta needs 1260 days
+  daily_end_year: 2025
+  funda_start_year: 1992    # two fiscal years of lags before the first ranked month
+  jkp_start_year: 1998      # JKP characteristics are point-in-time per month end
+  fx_start_year: 1990       # covers the fiscal years 1991-93 that carry lags into 1994
+  # Which listings get daily data: every (gvkey, iid) that was the home line of an
+  # ever-member of the top-N in any month of the cap table (all months, not only
+  # member months, so entrants carry history).
+  listings: home_lines_of_ever_members
+
+currency:
+  target: EUR               # conversion happens downstream; raw files keep quotation / reporting currency
+  fx_source: comp.g_exrt_dly
