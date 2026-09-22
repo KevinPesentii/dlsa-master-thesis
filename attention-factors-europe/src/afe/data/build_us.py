@@ -95,7 +95,9 @@ def assemble_year(year: int, uni_members: dict, D: ch.DailyInputs, mc: pd.DataFr
         monthly_vals.index = rows.index
         rows = rows.join(monthly_vals, how="left")
         parts.append(rows)
-    raw = pd.concat(parts)[names]
+    # float64, not nullable Float64: pandas' masked-array rank ignores the NA mask and
+    # ranks the garbage under it (diagnosed 2026-09-16 on the first build)
+    raw = pd.concat(parts)[names].astype("float64")
     coverage = raw.notna().mean().rename(year)
 
     date_key = raw.index.get_level_values("date")
@@ -158,10 +160,12 @@ def build(cfg: dict, raw: up.RawUS, out_dir: Path, cutoff: pd.Timestamp | None =
 
     log("daily data")
     years = range(int(cfg["raw"]["start_year"]), end.year + 1)
-    daily, stats = up.load_daily(raw.daily_dir, pool, years, raw.ff_daily, cutoff=cutoff)
+    daily, stats = up.load_daily(raw.daily_dir, pool, years, raw.ff_daily, cutoff=cutoff, delisting=raw.delisting)
     D = up.daily_inputs(daily, raw.ff_daily, windows)
     M = up.monthly_inputs(raw.monthly, co, pool, stats, D, windows)
-    log(f"  {len(daily):,} daily rows, {D.ret.shape[0]} days x {D.ret.shape[1]} stocks")
+    n_del = int(raw.delisting["permno"].isin(pool).sum()) if len(raw.delisting) else 0
+    log(f"  {len(daily):,} daily rows, {D.ret.shape[0]} days x {D.ret.shape[1]} stocks, "
+        f"{n_del} delisting-day rows merged")
 
     log("characteristics")
     mc = monthly_characteristics(M, groups["monthly"])
@@ -200,6 +204,18 @@ def build_report(cfg, uni, asof, ret, coverage, mc, raw, out_dir: Path) -> str:
          f"universe: {uni['month'].nunique()} months x {cfg['sample']['universe_size']}, "
          f"{uni['sec_id'].nunique()} distinct permnos; returns.parquet {len(ret):,} rows, "
          f"{ret['sec_id'].nunique()} permnos", ""]
+    if len(raw.delisting):
+        dl = raw.delisting[raw.delisting["permno"].isin(ret["sec_id"].astype(int).unique())]
+        key = dl.assign(sec_id=dl["permno"].astype(str))[["sec_id", "date"]]
+        inret = ret.merge(key, on=["sec_id", "date"])
+        um = uni.assign(month=uni["month"].dt.to_period("M"))[["month", "sec_id"]]
+        held = inret.assign(month=inret["date"].dt.to_period("M")).merge(um, on=["month", "sec_id"])
+        L += [f"Delisting-day rows (crsp_delisting.parquet, dlydelflg = Y) of pool permnos: {len(dl):,}; in "
+              f"returns.parquet: {len(inret):,}; while a universe member that month: {len(held):,}; their returns: "
+              f"mean {held['ret'].mean():+.4f}, median {held['ret'].median():+.4f}, min {held['ret'].min():+.3f}, "
+              f"max {held['ret'].max():+.3f}", ""]
+    else:
+        L += ["Delisting-day rows: crsp_delisting.parquet NOT present; returns lack the delisting return (see wrds_us).", ""]
     yr = asof["month"].dt.year
     per_year = asof.groupby(yr).agg(cutoff_usd_bn=("cap_co", lambda s: s.min() / 1e3),
                                     largest_usd_bn=("cap_co", lambda s: s.max() / 1e3),
