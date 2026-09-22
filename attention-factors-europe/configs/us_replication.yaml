@@ -1,12 +1,16 @@
 # US replication, Epstein, Wang, Choi & Pelger (2025), Table 2 headline specification.
 # This is the acceptance test for the whole pipeline: net Sharpe near 2.28.
 # Europe reuses this file with `market: eu`. Do not re-tune for Europe.
+#   python scripts/run_attention_us.py --config configs/us_replication.yaml [--K 30] [--years 1998]
 
 market: us
 seed: 0
 
+data:
+  dir: data/us                   # the three tables of docs/schemas.md; --data-dir overrides
+
 sample:
-  start: 1998-01-01
+  start: 1998-01-01              # first out-of-sample day; training reaches back window_years
   end: 2021-12-31
   universe_size: 500
 
@@ -20,23 +24,35 @@ model:
   kind: attention
   n_factors: 30                  # K
   embedding_dim: 32
+  lambda_ridge: 0.0001           # ridge in the loading solve, Section 3.2
 
 policy:
   kind: longconv
   layers: 1
   hidden: 32
   residual_lookback: 30
+  dropout: 0.1
+  lambda_squash: 0.001
+  input: cumulative              # cumulative residual path, as in the two-step benchmark
+  input_scale: 100.0             # residuals fed in percent; the L1-normalised output is scale-free
 
 objective:
   lambda_var: 100
   turnover_cost: 0.0005          # ||w_t - w_{t-1}||_1
   short_cost: 0.0001             # ||max(-w_t, 0)||_1
+  subtract_rf: true              # paper: (Rbar_net - R_f) / sd in the objective
 
 training:
   window_years: 8
   refit: annual                  # NOT the 125/1000-day schedule of GPZ
+  epochs: 30
+  lr: 0.003
+  weight_decay: 0.05
+  batch_days: 125                # contiguous blocks, each with residual_lookback extra dates in front
+  grad_clip: 1.0
 
 evaluation:
   report_break_even_cost: true
   cost_grid_bps: [0, 1, 2, 5, 10, 20, 30, 50]
   reference_net_sharpe: 2.28     # the paper's number, for comparison only
+  save_weights: true
