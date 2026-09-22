@@ -34,8 +34,11 @@ weaken a test to make code pass.
 - A Sharpe above 10 is a diagnostic of a broken universe, not a result. Long & Xiao
   (2024) was withdrawn for exactly this.
 - US CRSP data comes from the CIZ tables (`crsp.dsf_v2`), never legacy `crsp.dsf`.
-  Legacy stopped updating after 2024 and silently truncates the sample. CIZ folds in
-  delisting returns, so no Shumway (1997) merge is needed.
+  Legacy stopped updating after 2024 and silently truncates the sample. CIZ folds the
+  delisting return into `dlyret` on the delisting day, so no Shumway (1997) merge is
+  needed, BUT that row fails the common-share flags (they are blank on it): it is
+  pulled separately (`crsp_delisting.parquet`) and merged in stage 2. The first build
+  (2026-09-15) lacked it; fixed 2026-09-22.
 
 ## Paper parameters (verified against arXiv 2510.11616, 2026-09-06)
 

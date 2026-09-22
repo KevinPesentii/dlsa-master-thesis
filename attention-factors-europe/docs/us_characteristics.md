@@ -17,7 +17,8 @@ python scripts/build_us_dataset.py    # offline: raw -> returns / universe / fea
 
 | table | used for |
 |---|---|
-| `crsp.dsf_v2` (CIZ daily) | returns (delisting folded in), prices, volume, closing bid/ask, daily high, cap, adjustment factor |
+| `crsp.dsf_v2` (CIZ daily) | returns, prices, volume, closing bid/ask, daily high, cap, adjustment factor |
+| `crsp.dsf_v2`, `dlydelflg = 'Y'` rows | the delisting-day row of every security: its `dlyret` is the delisting return. Pulled separately into `crsp_delisting.parquet` because CRSP blanks the share/security/trading flags on it and the common-share filter drops it; merged into the pool's daily rows in `us_panel.load_daily`. Lehman: -60% on 2008-09-18 after -56.7% on 09-17. The 2026-09-15 build had none of these rows (1,205 for the pool, 593 while a universe member; median +0.1%, mean +0.8%, min -60%). The monthly file needs no fix: its delisting-month row keeps normal flags and `mthret` already spans to the delisting price. |
 | `crsp.msf_v2` (CIZ monthly) | monthly returns, prices, volume, shares, cap, eligibility flags |
 | `crsp.ccmxpf_lnkhist` | permno <-> gvkey with date ranges (LU/LC links; P, C, J) |
 | `comp.funda` | annual fundamentals (items listed in `wrds_us.FUNDA_ITEMS`) |

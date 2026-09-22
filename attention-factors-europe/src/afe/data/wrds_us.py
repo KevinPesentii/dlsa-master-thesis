@@ -6,8 +6,14 @@ logic in `characteristics.py` / `build_us.py` can be changed and re-run offline 
 minutes against the same frozen inputs. A manifest records what was pulled and when.
 
 Tables (all names as on WRDS PostgreSQL):
-  crsp.dsf_v2              daily stock file, CIZ format. Delisting returns are folded into
-                           dlyret, so no separate delisting merge (CLAUDE.md).
+  crsp.dsf_v2              daily stock file, CIZ format. The delisting return is folded
+                           into dlyret on the delisting day (dlydelflg = 'Y'), BUT on
+                           that row CRSP blanks sharetype / securitytype / securitysubtype /
+                           conditionaltype and sets tradingstatusflg to 'D', so the
+                           CRSP_COMMON filter below drops it. Those rows are pulled
+                           separately (crsp_delisting.parquet) and merged into the pool's
+                           daily rows in stage 2. Found 2026-09-22: the first build had
+                           no delisting returns at all (Lehman -60% on 2008-09-18).
   crsp.msf_v2              monthly stock file, CIZ format.
   crsp.stksecurityinfohist security header history (names, delisting codes).
   crsp.ccmxpf_lnkhist      CRSP-Compustat link (permno <-> gvkey with date ranges).
@@ -60,6 +66,22 @@ def fetch_crsp_daily_year(db, year: int) -> pd.DataFrame:
     """
     df = db.raw_sql(sql, date_cols=["date"])
     return _compact(df)
+
+
+def fetch_crsp_delisting(db, start_year: int, end_year: int) -> pd.DataFrame:
+    """Delisting-day rows of crsp.dsf_v2 (dlydelflg = 'Y'), every security, same
+    columns as the daily file plus the flag and the previous trading date. ~24k rows
+    over 1986-2025; stage 2 keeps the ones of pool permnos."""
+    sql = f"""
+        select permno, permco, dlycaldt as date,
+               dlyret::float8 as ret, dlyprc::float8 as prc, dlyvol::float8 as vol,
+               dlybid::float8 as bid, dlyask::float8 as ask, dlyhigh::float8 as high,
+               dlycap::float8 as cap, shrout, dlycumfacpr::float8 as cumfacpr,
+               usincflg, issuertype, primaryexch, siccd, dlydelflg, dlyprevdt
+        from crsp.dsf_v2
+        where dlydelflg = 'Y' and dlycaldt between '{start_year}-01-01' and '{end_year}-12-31'
+    """
+    return _compact(db.raw_sql(sql, date_cols=["date", "dlyprevdt"]))
 
 
 def fetch_crsp_monthly(db, start_year: int, end_year: int) -> pd.DataFrame:
@@ -137,6 +159,7 @@ def pull_all(db, raw_dir: Path, start_year: int, end_year: int, log=print) -> di
 
     save("crsp_monthly", fetch_crsp_monthly(db, start_year, end_year), raw_dir / "crsp_monthly.parquet")
     save("crsp_secinfo", fetch_security_info(db), raw_dir / "crsp_secinfo.parquet")
+    save("crsp_delisting", fetch_crsp_delisting(db, start_year, end_year), raw_dir / "crsp_delisting.parquet")
     save("ccm_link", fetch_ccm_link(db), raw_dir / "ccm_link.parquet")
     save("comp_funda", fetch_compustat_annual(db, start_year - 2, end_year), raw_dir / "comp_funda.parquet")
     ffd, ffm = fetch_ff_factors(db)

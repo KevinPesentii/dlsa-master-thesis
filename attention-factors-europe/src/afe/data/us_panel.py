@@ -7,7 +7,8 @@ formulas live in characteristics.py. Reading order:
   eligible_monthly    CIZ flags -> the pool a stock can be ranked in (config: eligibility)
   company_month       permco-level market cap (sum of classes) and the primary permno
   build_universe      top-N by company cap at the end of month M-1, applied to month M
-  load_daily          daily rows for a set of permnos, plus per-month sufficient statistics
+  load_daily          daily rows for a set of permnos (plus their delisting-day rows, which
+                      the stage-1 filter cannot keep), and per-month sufficient statistics
   daily_inputs        long daily rows -> wide date x permno frames
   monthly_inputs      wide month x permno frames from the monthly file
   permno_gvkey        CRSP permno -> Compustat gvkey by month, via the CCM link table
@@ -41,6 +42,7 @@ class RawUS:
     ff_daily: pd.DataFrame
     ff_monthly: pd.DataFrame
     daily_dir: Path
+    delisting: pd.DataFrame = None   # crsp_delisting.parquet; empty frame if not pulled
 
     def truncate(self, cutoff: pd.Timestamp) -> "RawUS":
         """Everything dated after `cutoff` removed: the input of a prefix-invariance test.
@@ -53,6 +55,7 @@ class RawUS:
             ff_daily=self.ff_daily[self.ff_daily.index <= c],
             ff_monthly=self.ff_monthly[self.ff_monthly["date"] <= c],
             daily_dir=self.daily_dir,
+            delisting=self.delisting[self.delisting["date"] <= c],
         )
 
 
@@ -67,6 +70,11 @@ def load_raw(raw_dir: Path) -> RawUS:
         r.monthly[col] = r.monthly[col].astype("int64")
         r.ccm[col] = r.ccm[col].astype("int64")
     r.ff_daily = r.ff_daily.set_index("date").sort_index()
+    dl = raw_dir / "crsp_delisting.parquet"
+    r.delisting = pd.read_parquet(dl) if dl.exists() else pd.DataFrame(columns=DAILY_COLS)
+    r.delisting["date"] = pd.to_datetime(r.delisting["date"]).astype("datetime64[ns]")
+    for col in ("permno", "permco"):
+        r.delisting[col] = pd.to_numeric(r.delisting[col]).astype("int64")
     return r
 
 
@@ -134,11 +142,17 @@ DAILY_COLS = ["permno", "permco", "date", "ret", "prc", "vol", "bid", "ask", "hi
 
 
 def load_daily(daily_dir: Path, permnos, years, ff_daily: pd.DataFrame,
-               cutoff: pd.Timestamp | None = None) -> tuple[pd.DataFrame, pd.DataFrame]:
+               cutoff: pd.Timestamp | None = None, delisting: pd.DataFrame | None = None
+               ) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Daily rows for `permnos` over `years`, and the per-(permno, month) statistics
     that the monthly-from-daily characteristics are built from. One year at a time so
-    50M rows never sit in memory together."""
+    50M rows never sit in memory together.
+
+    `delisting` (crsp_delisting.parquet) supplies each permno's delisting-day row, whose
+    dlyret is the delisting return; the yearly files cannot contain it (module docstring
+    of wrds_us). It is appended to the year's rows; the daily-file row wins if both exist."""
     permnos = [int(p) for p in permnos]
+    dl = pd.DataFrame(columns=DAILY_COLS) if delisting is None else delisting[delisting["permno"].isin(permnos)]
     frames, stats = [], []
     for y in years:
         path = daily_dir / f"{y}.parquet"
@@ -147,6 +161,10 @@ def load_daily(daily_dir: Path, permnos, years, ff_daily: pd.DataFrame,
         df = pq.read_table(path, columns=DAILY_COLS, filters=[("permno", "in", permnos)]).to_pandas()
         df["date"] = pd.to_datetime(df["date"]).astype("datetime64[ns]")
         df["permno"], df["permco"] = df["permno"].astype("int64"), df["permco"].astype("int64")
+        extra = dl[dl["date"].dt.year == y][DAILY_COLS] if len(dl) else dl
+        if len(extra):
+            df = pd.concat([df, extra.astype(df.dtypes.to_dict())], ignore_index=True)
+            df = df.drop_duplicates(["permno", "date"], keep="first")
         if cutoff is not None:
             df = df[df["date"] <= cutoff]
         if len(df) == 0:
