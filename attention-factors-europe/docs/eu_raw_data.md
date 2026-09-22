@@ -1,6 +1,7 @@
 # European raw data: what was pulled, from where, in which currency, saved where
 
-Status: first pull 2026-09-21. Universe = pooled top-500 by market cap across the eleven
+Status: first pull 2026-09-21; stage 2a (EUR market data, section at the end) built the
+same day. Universe = pooled top-500 by market cap across the eleven
 1999 euro founders (AT BE DE ES FI FR IE IT LU NL PT), month ends 1999-01 to 2025-12,
 from the step-1 cap table (`docs/eu_mktcap_compustat_global.md`). Raw tables cover every
 company that was EVER a member (1,543 gvkeys, 1,725 listings), daily from 1994 so the
@@ -111,7 +112,8 @@ Absent in Global versus the US list: `pstkl`, `pstkrv` (BEME falls back to `pstk
 EUR per unit of local = `exratd(EUR) / exratd(local)` on the same day. EUR exists from
 1985-12-31 (synthetic before 1999-01-01), legacy currencies to 2018-06-04. Covers every
 currency seen in `secd_daily.curcdd` and `g_funda.curcd`, plus USD and GBP; no day is
-missing for any currency inside its range.
+missing for any currency inside its range. The derived table with the EUR and DEM legs
+is `data/eu/fx_to_eur_daily.parquet` (stage 2a below).
 
 ### jkp (Jensen-Kelly-Pedersen Global Factor Data, `contrib.global_factor`)
 
@@ -161,9 +163,8 @@ offline.
 
 ## Not pulled, and why
 
-- **Euro risk-free rate and European market factor.** Not on WRDS in a usable form:
-  `contrib.factors_daily` ends 2018, `ff` has only US series. Handled in the next PR
-  (EUR market-data layer): market from the data, rf from the Bundesbank.
+- **Euro risk-free rate and European market factor: not on WRDS**, so the market is
+  built from the data (stage 2a) and rf comes from the Bundesbank (below).
 - **Closing bid/ask.** Compustat Global has none, so the US `Spread` characteristic has
   no European counterpart; JKP's `bidaskhl_21d` (Corwin-Schultz high-low estimator) is
   the substitute.
@@ -171,3 +172,69 @@ offline.
 - **Preferred shares' daily data**: prefs are not in the cap and not traded (open
   decision in the cap doc).
 - Non-euro markets (GB, CH, SE, DK, NO) and the later euro entrants: not in this run.
+
+## Stage 2a: EUR market data (`scripts/build_eu_returns.py`, `src/afe/data/eu_panel.py`)
+
+Built 2026-09-21 from the raw tables above. Every value is in EUR; conventions are config
+keys in `configs/eu_data.yaml`:
+
+- **Numeraire**: EUR from 1994-01-01, Compustat's EUR series (synthetic, ECU-based,
+  before 1999); the Deutsche Mark at the irrevocable 1.95583 DEM/EUR before 1994, so the
+  unit is continuous. DEM is carried as a second leg: quoted to 2018-06-04, EUR x 1.95583
+  after. The only visible seam is 1999-01-04, the first EUR quotation day: Compustat's
+  synthetic EUR of 1998-12-31 sits 0.8% off the fixed conversion rates, so every
+  legacy-currency line shows an EUR return 0.8% below the fixed-rate return on that one
+  day (measured in the build report, uniform across currencies, cross-sectionally
+  almost neutral).
+- **Returns**: total return on the EUR price, `(p_eur/ajexdi*trfd)_t / (...)_{t-1} - 1`
+  with `p_eur = prccd/qunit x eur_per_unit(curcdd, t)`. Lines quoted in USD/GBP/GRD
+  (13,508 rows, 0.22%; 3,934 universe member-days) carry the currency move. A line whose
+  quotation switched DEM -> EUR has no break. `ret_local` (in the detail table) is
+  blanked at a quotation-currency change.
+- **One line per company**: the company's return in month M is that of the listing that
+  priced its cap at the end of M-1 (`iid` in the cap table). No splicing across venues.
+- **Calendar**: days with >= 100 traded closes (`prcstd 10`) across the pool: 8,195 days
+  1994-2025. Compustat carries prices for ~20 lines on Good Friday, Easter Monday,
+  Christmas and New Year; those days are out. Partial days (Whit Monday: Milan and
+  Madrid open, Frankfurt and Paris closed) are in, with a zero local return for the
+  closed lines (`traded` flag in the detail table).
+- **Universe**: month M = top-500 of the cap table at the end of M-1; `month` = first
+  pooled trading day of M; `sec_id` = gvkey. 323 months, 1999-02 .. 2025-12.
+- **Market**: value-weighted EUR return of the month's universe, weights = the cap that
+  set membership; equal-weighted alongside. No external index. Correlation with the
+  country value-weighted markets of `contrib.factors_daily` (to 2018): FR 0.98, NL 0.93,
+  IT 0.92, ES 0.90, DE 0.89.
+- **Delisting: OPEN, flagged.** None applied (`returns.delisting_return: null`); 762 of
+  1,540 companies' series end before 2025-12. Compustat Global has no delisting return.
+  JKP's blanket -30% is one config key away, but the US evidence (593 member
+  delistings, median +0.1%, mostly mergers; see `docs/us_characteristics.md`) says a
+  large-cap universe's delistings are acquisitions, not failures. Proposal to settle:
+  0 for mergers, a negative return only for bankruptcies/liquidations, using
+  `g_security.dlrsni` (delisting reason).
+- **Risk-free**: 1-month EURIBOR from 1999-01-01, 1-month FIBOR (Deutsche Mark) before,
+  both daily quotations, act/360, percent p.a., from the Bundesbank time-series API
+  (`api.statistiken.bundesbank.de`, dataflow BBIG1; the ECB portal carries Euribor only
+  as monthly averages). Files in `data/eu/raw/external/`: `bbk_ST0310_euribor_1m_daily.csv`
+  (1998-12-30 ..), `bbk_ST0262_fibor_1m_daily.csv` (1990-07-02 .. 1998-12-30),
+  `bbk_ST0104_frankfurt_1m_daily.csv` (Frankfurt banks' 1-month funds to 2012-05, a
+  cross-check: correlation 1.000 with both, 2-5 bp mean gap). `scripts/build_eu_rf.py`
+  splices them into `data/eu/raw/rf_euro.csv` (`date, rate_pct_pa, series`); the seam
+  is 3.23% FIBOR vs 3.26% EURIBOR on 1998-12-30. Stage 2a converts to a daily simple
+  rate (rate/100/360) and forward-fills onto the trading calendar -> `rf_daily.parquet`
+  (8,195 days, no gaps; negative 2015-2021). Note the Bundesbank's licence text: daily
+  Euribor is EMMI data, free for non-commercial use, which this is.
+
+| file (in `data/eu/`) | rows | one row per | currency |
+|---|---|---|---|
+| `fx_to_eur_daily.parquet` | 233,472 | (date, currency): eur_per_unit, dem_per_unit, eur_source, dem_source | EUR, DEM per unit |
+| `returns_detail_daily.parquet` | 7,065,748 | (gvkey, iid, date): prc_eur, fx_eur, ret (EUR), ret_local, prccd, ajexdi, trfd, cshoc, cshtrd, prchd, prcld, prcstd, traded | EUR / local |
+| `returns.parquet` | 5,975,845 | (date, sec_id): ret, mktcap_lag, country (ISO-2), currency (docs/schemas.md) | EUR |
+| `universe.parquet` | 161,500 | (month, sec_id): cap_rank (docs/schemas.md) | |
+| `market_daily.parquet` / `.csv` | 6,892 | date: mkt_vw, mkt_ew, n | EUR |
+| `rf_daily.parquet` | 8,195 | date: rf (daily simple, act/360), series | EUR (DEM before 1999) |
+| `returns_build_report.txt` | | coverage by year, the 1999 seam, foreign lines, market by year | |
+
+Checks: 99.6-99.9% of universe member-months have returns (462 of 161,500 have none:
+delisted inside the month); a rebuild from inputs truncated at 2010-09-15
+(`--cutoff`) reproduces the universe on all 140 common months and the returns and
+market on all 2.7M common rows exactly.
