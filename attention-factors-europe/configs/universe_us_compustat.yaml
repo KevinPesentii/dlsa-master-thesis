@@ -25,4 +25,4 @@ shares:
   fallback_max_stale_months: 12
 
 output:
-  dir: data/us
+  dir: data/us/private

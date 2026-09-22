@@ -4,8 +4,9 @@
     universe.parquet   month, sec_id, cap_rank                exactly N rows per month
     features.parquet   date, sec_id, char_*, med_*, rf        universe rows only
 
-plus, for inspection, the un-normalised characteristics (characteristics_monthly.parquet,
-characteristics_daily.parquet) and a build report.
+plus a build report, and, in `inspect_dir` (data/<market>/private, not shipped downstream),
+the un-normalised characteristics (characteristics_monthly.parquet, characteristics_daily.parquet)
+and the as-of ranking (universe_asof.parquet).
 
 Assembly rule, the one that matters for point-in-time correctness: a row (d, i) of
 features.parquet carries the MONTHLY characteristics of stock i as of the end of the
@@ -138,8 +139,11 @@ def returns_table(daily: pd.DataFrame, co: pd.DataFrame, start: pd.Period, end: 
 # ------------------------------------------------------------------ driver
 
 
-def build(cfg: dict, raw: up.RawUS, out_dir: Path, cutoff: pd.Timestamp | None = None, log=print) -> dict:
+def build(cfg: dict, raw: up.RawUS, out_dir: Path, cutoff: pd.Timestamp | None = None, log=print,
+          inspect_dir: Path | None = None) -> dict:
+    inspect_dir = out_dir if inspect_dir is None else inspect_dir
     out_dir.mkdir(parents=True, exist_ok=True)
+    inspect_dir.mkdir(parents=True, exist_ok=True)
     start, end = pd.Period(cfg["sample"]["start"], "M"), pd.Period(cfg["sample"]["end"], "M")
     if cutoff is not None:
         raw = raw.truncate(cutoff)
@@ -172,8 +176,8 @@ def build(cfg: dict, raw: up.RawUS, out_dir: Path, cutoff: pd.Timestamp | None =
     ac = annual_characteristics(raw, co, pool, M.ret.index, groups["annual"], cfg)
     mc = mc.join(ac, how="left")[[n for n in names if n in mc.columns or n in ac.columns]]
     dc = daily_characteristics(D, groups["daily"])
-    mc.reset_index().to_parquet(out_dir / "characteristics_monthly.parquet", index=False)
-    dc.reset_index().to_parquet(out_dir / "characteristics_daily.parquet", index=False)
+    mc.reset_index().to_parquet(inspect_dir / "characteristics_monthly.parquet", index=False)
+    dc.reset_index().to_parquet(inspect_dir / "characteristics_daily.parquet", index=False)
 
     log("features")
     rf = raw.ff_daily["rf"]
@@ -192,14 +196,14 @@ def build(cfg: dict, raw: up.RawUS, out_dir: Path, cutoff: pd.Timestamp | None =
     ret = returns_table(daily, co, start, end)
     ret.to_parquet(out_dir / "returns.parquet", index=False)
     uni.to_parquet(out_dir / "universe.parquet", index=False)
-    asof.to_parquet(out_dir / "universe_asof.parquet", index=False)
+    asof.to_parquet(inspect_dir / "universe_asof.parquet", index=False)
 
-    report = build_report(cfg, uni, asof, ret, pd.DataFrame(coverage), mc, raw, out_dir)
+    report = build_report(cfg, uni, asof, ret, pd.DataFrame(coverage), mc, raw, inspect_dir)
     (out_dir / "build_report.txt").write_text(report)
     return {"universe": uni, "coverage": pd.DataFrame(coverage), "report": report}
 
 
-def build_report(cfg, uni, asof, ret, coverage, mc, raw, out_dir: Path) -> str:
+def build_report(cfg, uni, asof, ret, coverage, mc, raw, inspect_dir: Path) -> str:
     L = [f"US dataset built {dt.datetime.now():%Y-%m-%d %H:%M}", f"config: {cfg}", "",
          f"universe: {uni['month'].nunique()} months x {cfg['sample']['universe_size']}, "
          f"{uni['sec_id'].nunique()} distinct permnos; returns.parquet {len(ret):,} rows, "
@@ -225,7 +229,7 @@ def build_report(cfg, uni, asof, ret, coverage, mc, raw, out_dir: Path) -> str:
     L += ["Coverage of each characteristic within the universe, share of rows non-missing before the "
           "median fill (rows = year):", coverage.round(3).to_string(), ""]
 
-    comp = out_dir / "top500_monthly.parquet"
+    comp = inspect_dir / "top500_monthly.parquet"   # step-1 Compustat universe, if built
     if comp.exists():
         c = pd.read_parquet(comp)
         c["rank_month"] = c["datadate"].dt.to_period("M")

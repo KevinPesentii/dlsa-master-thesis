@@ -4,20 +4,20 @@
 #   python scripts/fetch_eu_raw.py     --config configs/eu_data.yaml
 #   python scripts/build_eu_returns.py --config configs/eu_data.yaml
 # The universe and the listing to trade come from the step-1 cap table
-# (configs/universe_eu_compustat.yaml -> data/eu/company_month_mktcap.parquet).
+# (configs/universe_eu_compustat.yaml -> data/eu/private/company_month_mktcap.parquet).
 # Variables, sources, currencies and files are documented in docs/eu_raw_data.md;
 # the conventions of stage 2a in src/afe/data/eu_panel.py.
 
 market: eu
 
 universe:
-  mktcap_table: data/eu/company_month_mktcap.parquet   # step-1 output, eligible flag inside
+  mktcap_table: data/eu/private/company_month_mktcap.parquet   # step-1 output, eligible flag inside
   size: 500                 # pooled across the countries of the cap table, AS-OF month end
   start: 1999-01            # first ranked month end
   end: 2025-12
 
 raw:
-  dir: data/eu/raw
+  dir: data/eu/private/raw
   daily_start_year: 1994    # five years before the first ranked month: Beta needs 1260 days
   daily_end_year: 2025
   funda_start_year: 1992    # two fiscal years of lags before the first ranked month
@@ -45,5 +45,9 @@ market:
 
 risk_free:
   source: bundesbank        # 1-month EURIBOR from 1999, 1-month FIBOR (DEM) before; scripts/build_eu_rf.py
-  file: data/eu/raw/rf_euro.csv    # date, rate_pct_pa (annualised, percent, act/360), series
+  file: data/eu/private/raw/rf_euro.csv    # date, rate_pct_pa (annualised, percent, act/360), series
   day_count: 360
+
+output:
+  dir: data/eu/shared              # returns / universe / market / rf / fx table: what downstream reads
+  inspect_dir: data/eu/private     # returns_detail_daily, cutoff_<date>/ builds

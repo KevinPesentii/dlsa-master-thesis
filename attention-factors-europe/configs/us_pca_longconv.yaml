@@ -11,9 +11,9 @@ market: us
 seed: 0
 
 data:
-  dir: data/us
+  dir: data/us/shared
   history_start: 1989-01-01      # raw daily rows prepended so the first PCA date is Jan 1990
-  raw_daily_dir: data/us/raw/crsp_daily
+  raw_daily_dir: data/us/shared/raw/crsp_daily   # only 1989.parquet is needed (and shipped) here
 
 sample:
   start: 1998-01-01              # first out-of-sample day
@@ -25,7 +25,7 @@ factors:
   cov_window: 252                # correlation PCA window, ends the day before
   loading_window: 252            # regression of returns on the factors, no intercept.
                                  # 60 = GPZ's window (under-determined for K >= 60), 0 = PCA projection B = D V
-  out_dir: data/us/pca_l252      # stage-one output; the 60-day build lives in data/us/pca, projection in data/us/pca_proj
+  out_dir: data/us/shared/pca_l252   # stage-one output (default); the 60-day and projection variants live in data/us/private/pca, pca_proj
 
 policy:
   kind: longconv

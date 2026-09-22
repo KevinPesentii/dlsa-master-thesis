@@ -3,13 +3,13 @@
 Status: first build 2026-09-17, eleven 1999 euro founders (AT BE DE ES FI FR IE IT LU NL
 PT), 1999-01 to 2025-12, 324 month ends. Decisions below were checked against
 `comp.g_secd`, `g_security`, `g_company`, `g_exrt_dly` on WRDS that day; every number
-comes from `data/eu/mktcap_build_report.txt`. NO universe size is fixed yet: this build
+comes from `data/eu/private/mktcap_build_report.txt`. NO universe size is fixed yet: this build
 exists to choose one.
 
 Build: `python scripts/build_eu_mktcap.py` with `configs/universe_eu_compustat.yaml`
 (`--offline` reruns transform + report from the extracts on disk, ~1 min;
 `--offline --refresh-headers` refetches only the two header tables). Full pull ~12 min.
-Code: `src/afe/data/compustat_global.py`. Output under `data/eu/` (gitignored).
+Code: `src/afe/data/compustat_global.py`. Output under `data/eu/private/` (gitignored; step-1 tables are inputs to the build, not shipped downstream).
 Tests: `tests/test_compustat_global.py` (cross-listing collapse, eligibility, FX,
 turnover screen).
 
@@ -124,7 +124,7 @@ Per-country cap at rank 20 / 30 / 40 / 50 in 2005 and 2021, and eligible compani
 
 Composition of the pooled top-500 (Dec 2021): DEU 130, FRA 120, ITA 63, NLD 45, ESP 44,
 BEL 31, FIN 27, AUT 22, IRL 9, PRT 9, LUX 0. In 1999: FRA 129, DEU 94, ITA 78, NLD 59.
-Full tables: `data/eu/cutoffs_*.csv`, `composition_pooled.csv`.
+Full tables: `data/eu/private/cutoffs_*.csv`, `composition_pooled.csv`.
 
 Reading: the 500th euro-area company is EUR 0.5-1.6bn depending on the year. A pooled
 500 is 50% DE+FR (Dec 2021) and takes Austria to its 22nd company (its 20th is EUR

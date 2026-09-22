@@ -63,12 +63,14 @@ class RawEU:
         return RawEU(self.mktcap[self.mktcap["datadate"] <= c], self.fx[self.fx["datadate"] <= c], self.daily_dir)
 
 
-def load_raw(data_dir: Path) -> RawEU:
-    mk = pd.read_parquet(data_dir / "company_month_mktcap.parquet")
-    fx = pd.read_parquet(data_dir / "raw" / "fx_daily.parquet")
+def load_raw(mktcap_table: Path, raw_dir: Path) -> RawEU:
+    """`mktcap_table`: the step-1 cap table (configs/eu_data.yaml universe.mktcap_table);
+    `raw_dir`: the stage-1 WRDS pull (raw.dir) holding fx_daily.parquet and secd_daily/."""
+    mk = pd.read_parquet(mktcap_table)
+    fx = pd.read_parquet(raw_dir / "fx_daily.parquet")
     for df, col in [(mk, "datadate"), (fx, "datadate")]:
         df[col] = pd.to_datetime(df[col]).astype("datetime64[ns]")
-    return RawEU(mk, fx, data_dir / "raw" / "secd_daily")
+    return RawEU(mk, fx, raw_dir / "secd_daily")
 
 
 def load_daily(daily_dir: Path, pairs: pd.DataFrame | None, years, cutoff: pd.Timestamp | None = None) -> pd.DataFrame:

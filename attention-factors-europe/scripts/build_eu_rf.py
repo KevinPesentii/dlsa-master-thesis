@@ -2,12 +2,12 @@
 
     python scripts/build_eu_rf.py
 
-Reads data/eu/raw/external/ (downloaded from api.statistiken.bundesbank.de, dataflow
+Reads data/eu/private/raw/external/ (downloaded from api.statistiken.bundesbank.de, dataflow
 BBIG1, daily 1-month quotations, act/360, percent p.a.):
   bbk_ST0262_fibor_1m_daily.csv      FIBOR 1-month, DEM, 1990-07-02 .. 1998-12-30
   bbk_ST0310_euribor_1m_daily.csv    EURIBOR 1-month, EUR, 1998-12-30 ..
   bbk_ST0104_frankfurt_1m_daily.csv  Frankfurt banks' 1-month funds, .. 2012-05 (cross-check only)
-and writes data/eu/raw/rf_euro.csv: date, rate_pct_pa, series, with EURIBOR from
+and writes data/eu/private/raw/rf_euro.csv: date, rate_pct_pa, series, with EURIBOR from
 1999-01-01 and FIBOR before, the Mark-then-euro rule of the numeraire. Non-quoted days
 (weekends, holidays) are dropped here and forward-filled onto the trading calendar by
 build_eu_returns.py. EURIBOR daily values are fee-liable at EMMI for commercial use;
@@ -21,7 +21,8 @@ from pathlib import Path
 import pandas as pd
 
 ROOT = Path(__file__).resolve().parents[1]
-EXT = ROOT / "data" / "eu" / "raw" / "external"
+RAW = ROOT / "data" / "eu" / "private" / "raw"   # raw.dir of configs/eu_data.yaml
+EXT = RAW / "external"
 
 
 def read_bbk(name: str) -> pd.Series:
@@ -37,7 +38,7 @@ def main():
     rf = pd.concat([fibor[fibor.index < switch].rename("rate_pct_pa").to_frame().assign(series="FIBOR_1M_DEM"),
                     euribor[euribor.index >= switch].rename("rate_pct_pa").to_frame().assign(series="EURIBOR_1M_EUR")])
     rf = rf.rename_axis("date").reset_index()
-    rf.to_csv(ROOT / "data" / "eu" / "raw" / "rf_euro.csv", index=False)
+    rf.to_csv(RAW / "rf_euro.csv", index=False)
     print(f"rf_euro.csv: {len(rf):,} quoted days {rf['date'].min().date()} .. {rf['date'].max().date()}; "
           f"{rf['series'].value_counts().to_dict()}")
     # cross-checks: FIBOR vs Frankfurt banks' rate on the overlap, EURIBOR vs the same to 2012

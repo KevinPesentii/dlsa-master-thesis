@@ -9,7 +9,7 @@ five-year Beta window exists at the first ranked month.
 
 Build: `python scripts/fetch_eu_raw.py --config configs/eu_data.yaml` (resumable per
 year; `--universe-only` rewrites the universe files without WRDS). Code:
-`src/afe/data/wrds_eu.py`. Everything lands under `data/eu/raw/` (gitignored, licensed);
+`src/afe/data/wrds_eu.py`. Everything lands under `data/eu/private/raw/` (gitignored, licensed);
 `manifest.json` there records row counts and the pull time.
 
 Nothing in `raw/` is converted or computed: prices stay in the quotation currency,
@@ -32,7 +32,7 @@ downstream. Returns are NOT stored; they are one formula on the daily file (belo
 | `manifest.json` | | row counts, pull time, listing and company counts | |
 
 Headers (`security_header.parquet`, `company_header.parquet`) and the cap table
-(`company_month_mktcap.parquet`) sit one level up in `data/eu/`.
+(`company_month_mktcap.parquet`) sit one level up in `data/eu/private/`.
 
 ## Variables
 
@@ -113,7 +113,7 @@ EUR per unit of local = `exratd(EUR) / exratd(local)` on the same day. EUR exist
 1985-12-31 (synthetic before 1999-01-01), legacy currencies to 2018-06-04. Covers every
 currency seen in `secd_daily.curcdd` and `g_funda.curcd`, plus USD and GBP; no day is
 missing for any currency inside its range. The derived table with the EUR and DEM legs
-is `data/eu/fx_to_eur_daily.parquet` (stage 2a below).
+is `data/eu/shared/fx_to_eur_daily.parquet` (stage 2a below).
 
 ### jkp (Jensen-Kelly-Pedersen Global Factor Data, `contrib.global_factor`)
 
@@ -214,17 +214,17 @@ keys in `configs/eu_data.yaml`:
 - **Risk-free**: 1-month EURIBOR from 1999-01-01, 1-month FIBOR (Deutsche Mark) before,
   both daily quotations, act/360, percent p.a., from the Bundesbank time-series API
   (`api.statistiken.bundesbank.de`, dataflow BBIG1; the ECB portal carries Euribor only
-  as monthly averages). Files in `data/eu/raw/external/`: `bbk_ST0310_euribor_1m_daily.csv`
+  as monthly averages). Files in `data/eu/private/raw/external/`: `bbk_ST0310_euribor_1m_daily.csv`
   (1998-12-30 ..), `bbk_ST0262_fibor_1m_daily.csv` (1990-07-02 .. 1998-12-30),
   `bbk_ST0104_frankfurt_1m_daily.csv` (Frankfurt banks' 1-month funds to 2012-05, a
   cross-check: correlation 1.000 with both, 2-5 bp mean gap). `scripts/build_eu_rf.py`
-  splices them into `data/eu/raw/rf_euro.csv` (`date, rate_pct_pa, series`); the seam
+  splices them into `data/eu/private/raw/rf_euro.csv` (`date, rate_pct_pa, series`); the seam
   is 3.23% FIBOR vs 3.26% EURIBOR on 1998-12-30. Stage 2a converts to a daily simple
   rate (rate/100/360) and forward-fills onto the trading calendar -> `rf_daily.parquet`
   (8,195 days, no gaps; negative 2015-2021). Note the Bundesbank's licence text: daily
   Euribor is EMMI data, free for non-commercial use, which this is.
 
-| file (in `data/eu/`) | rows | one row per | currency |
+| file (in `data/eu/shared/`, except the detail table in `data/eu/private/`) | rows | one row per | currency |
 |---|---|---|---|
 | `fx_to_eur_daily.parquet` | 233,472 | (date, currency): eur_per_unit, dem_per_unit, eur_source, dem_source | EUR, DEM per unit |
 | `returns_detail_daily.parquet` | 7,065,748 | (gvkey, iid, date): prc_eur, fx_eur, ret (EUR), ret_local, prccd, ajexdi, trfd, cshoc, cshtrd, prchd, prcld, prcstd, traded | EUR / local |

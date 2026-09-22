@@ -2,14 +2,15 @@
 
     python scripts/build_eu_returns.py [--config configs/eu_data.yaml] [--cutoff YYYY-MM-DD]
 
-Writes to data/eu/ (gitignored):
+Writes to output.dir = data/eu/shared (gitignored):
   fx_to_eur_daily.parquet       (date, currency) -> eur_per_unit, dem_per_unit, sources
-  returns_detail_daily.parquet  (gvkey, iid, date): EUR price, local and EUR returns, volume
   returns.parquet               schema table: date, sec_id (gvkey), ret (EUR), mktcap_lag, country, currency
   universe.parquet              schema table: month (first trading day), sec_id, cap_rank
   market_daily.parquet/.csv     date, mkt_vw, mkt_ew, n: EUR return of the month's universe
   rf_daily.parquet              date, rf: daily simple euro money-market rate (if the ECB file exists)
   returns_build_report.txt      coverage, the numeraire seam, foreign-quoted lines, market stats
+and to output.inspect_dir = data/eu/private (not shipped downstream):
+  returns_detail_daily.parquet  (gvkey, iid, date): EUR price, local and EUR returns, volume
 
 Conventions are in src/afe/data/eu_panel.py and configs/eu_data.yaml. --cutoff rebuilds
 from inputs truncated at that date (prefix-invariance check, as for the US build).
@@ -118,12 +119,18 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--config", default=ROOT / "configs" / "eu_data.yaml")
     ap.add_argument("--cutoff", default=None, help="truncate every input at this date (prefix test)")
-    ap.add_argument("--out", default=None, help="output directory (default data/eu, or data/eu/cutoff_<date>)")
+    ap.add_argument("--out", default=None, help="output directory (default output.dir, or output.inspect_dir/cutoff_<date>)")
     args = ap.parse_args()
     cfg = yaml.safe_load(Path(args.config).read_text())
-    data_dir = ROOT / "data" / "eu"
-    out = Path(args.out) if args.out else (data_dir / f"cutoff_{args.cutoff}" if args.cutoff else data_dir)
+    raw_dir = ROOT / cfg["raw"]["dir"]
+    out = ROOT / cfg["output"]["dir"]
+    inspect = ROOT / cfg["output"].get("inspect_dir", cfg["output"]["dir"])
+    if args.out:
+        out = inspect = Path(args.out)
+    elif args.cutoff:
+        out = inspect = inspect / f"cutoff_{args.cutoff}"
     out.mkdir(parents=True, exist_ok=True)
+    inspect.mkdir(parents=True, exist_ok=True)
     cutoff = pd.Timestamp(args.cutoff) if args.cutoff else None
     cur, rc, u = cfg["currency"], cfg["returns"], cfg["universe"]
     n = int(u["size"])
@@ -131,7 +138,7 @@ def main():
     if cutoff is not None:
         end = min(pd.Period(end, "M"), cutoff.to_period("M")).strftime("%Y-%m")
 
-    raw = ep.load_raw(data_dir)
+    raw = ep.load_raw(ROOT / cfg["universe"]["mktcap_table"], raw_dir)
     if cutoff is not None:
         raw = raw.truncate(cutoff)
     fxtab = ep.fx_conversion_table(raw.fx, switch=str(cur["numeraire_switch"]), dem_per_eur=float(cur["dem_per_eur"]))
@@ -140,7 +147,7 @@ def main():
           f"{fxtab['date'].min().date()} .. {fxtab['date'].max().date()}", flush=True)
 
     # pool: every home line of an ever-member (the lines stage 1 pulled)
-    lines = pd.read_csv(data_dir / "raw" / "listings.csv", dtype=str)
+    lines = pd.read_csv(raw_dir / "listings.csv", dtype=str)
     years = range(int(cfg["raw"]["daily_start_year"]), int(cfg["raw"]["daily_end_year"]) + 1)
     daily = ep.load_daily(raw.daily_dir, lines, years, cutoff)
     for c in ("gvkey", "iid", "curcdd"):
@@ -149,7 +156,7 @@ def main():
     calendar = ep.trading_calendar(daily, int(rc["calendar_min_lines"]))
     dret = ep.daily_returns(daily, fxtab)
     del daily
-    dret.to_parquet(out / "returns_detail_daily.parquet", index=False)
+    dret.to_parquet(inspect / "returns_detail_daily.parquet", index=False)
     print(f"returns detail: {len(dret):,} rows", flush=True)
 
     # universe with the one-month lag, then the schema returns table and the market

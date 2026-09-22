@@ -42,4 +42,4 @@ sizing:                     # ranks reported in the build report (no universe_si
   snapshot_months: [1999-12, 2002-12, 2005-12, 2008-12, 2011-12, 2015-12, 2019-12, 2021-12, 2025-12]
 
 output:
-  dir: data/eu
+  dir: data/eu/private

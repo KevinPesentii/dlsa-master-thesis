@@ -9,7 +9,7 @@ number is known), `build_us.py` (assembly). Config: `configs/us_data.yaml`.
 Two stages, run separately:
 
 ```
-python scripts/fetch_us_raw.py        # once: WRDS -> data/us/raw/*.parquet (~2 h, resumable)
+python scripts/fetch_us_raw.py        # once: WRDS -> data/us/private/raw/*.parquet (~2 h, resumable)
 python scripts/build_us_dataset.py    # offline: raw -> returns / universe / features
 ```
 

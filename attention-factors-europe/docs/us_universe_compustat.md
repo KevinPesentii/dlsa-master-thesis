@@ -4,7 +4,7 @@ Status: first build 2026-09-15. Decisions below were checked against `comp.secm`
 that day; the numbers come from the probes, not from memory.
 
 Build: `python scripts/build_us_universe.py` with `configs/universe_us_compustat.yaml`.
-Code: `src/afe/data/compustat_us.py`. Output under `data/us/` (gitignored).
+Code: `src/afe/data/compustat_us.py`. Output under `data/us/private/` (gitignored; step-1 tables are a cross-check for the build, not shipped downstream).
 
 ## Definition
 

@@ -7,7 +7,7 @@
 market: us
 
 raw:
-  dir: data/us/raw
+  dir: data/us/private/raw
   start_year: 1986      # five years before the first ranked month: Beta needs a 5y window
   end_year: 2025
 
@@ -28,7 +28,7 @@ eligibility:
 # Company = permco. Market cap is summed over its eligible share classes; the class with
 # the largest cap is the company's sec_id (permno) for that month and supplies the
 # return/volume/quote series. Universe for month M ranks by cap at the end of M-1.
-# The Compustat-only universe of step 1 (data/us/top500_monthly.parquet) is not an
+# The Compustat-only universe of step 1 (data/us/private/top500_monthly.parquet) is not an
 # input here; the build report shows the overlap between the two by year.
 
 # Which permnos get characteristics. 'universe' = ever a member in the sample (a few
@@ -74,4 +74,5 @@ characteristics:             # the 39 of the paper; drop a name here to exclude 
   intangibles: [OA, OL, PCM]
 
 output:
-  dir: data/us
+  dir: data/us/shared              # returns / universe / features: the tables Kevin's code reads
+  inspect_dir: data/us/private     # characteristics_*, universe_asof, cutoff_<date>/ builds

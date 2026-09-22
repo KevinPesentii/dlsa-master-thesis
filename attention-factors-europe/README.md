@@ -58,3 +58,9 @@ Rules that keep this painless:
 
 Training runs happen on the shared cloud box. Two separate clones, one per person,
 pointing at one read-only shared data directory. Never two people in one working tree.
+
+That directory is `data/<market>/shared/` (see the conventions in `docs/schemas.md`):
+the schema tables plus the few files the model and policy scripts read alongside them.
+`data/<market>/private/` is the raw WRDS pull and the build intermediates; it stays on
+the machine that runs the data layer and is never copied. Every config points at the
+right half, so a fresh clone with `data/us/shared/` in place runs the US scripts as is.

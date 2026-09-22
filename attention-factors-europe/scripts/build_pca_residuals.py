@@ -1,10 +1,10 @@
 """Step one of the two-step benchmark: rolling PCA residuals and composition pieces.
 
     python scripts/build_pca_residuals.py [--config configs/us_pca_longconv.yaml]
-                                          [--K 3 30] [--end 1992-12-31] [--out data/us/pca_test]
+                                          [--K 3 30] [--end 1992-12-31] [--out data/us/private/pca_test]
                                           [--loading-window 252]
 
-Reads data/us/returns.parquet + universe.parquet (+ raw daily files for the year before
+Reads data/us/shared/returns.parquet + universe.parquet (+ raw daily files for the year before
 the sample so that the first PCA window is complete), writes factors.out_dir/K<K>/.
 """
 

@@ -3,11 +3,11 @@
     python scripts/fetch_eu_raw.py [--config configs/eu_data.yaml] [--universe-only]
 
 Step 1 (offline, from the cap table of build_eu_mktcap.py):
-  data/eu/raw/universe_top500_monthly.parquet/.csv   AS-OF: row m = the N largest eligible
+  data/eu/private/raw/universe_top500_monthly.parquet/.csv   AS-OF: row m = the N largest eligible
                                                       companies by cap at the END of m, with
                                                       the listing (iid) that priced the cap
-  data/eu/raw/universe_top500_gvkey_wide.csv          months x ranks of gvkey
-  data/eu/raw/listings.csv                            the (gvkey, iid) lines pulled daily
+  data/eu/private/raw/universe_top500_gvkey_wide.csv          months x ranks of gvkey
+  data/eu/private/raw/listings.csv                            the (gvkey, iid) lines pulled daily
 Step 2 (WRDS, resumable per year): secd_daily/<year>.parquet, g_funda.parquet,
   jkp/<year>.parquet, fx_daily.parquet, contrib_factors_daily.parquet, ff_daily.parquet,
   ff_monthly.parquet, manifest.json. See src/afe/data/wrds_eu.py and docs/eu_raw_data.md.
