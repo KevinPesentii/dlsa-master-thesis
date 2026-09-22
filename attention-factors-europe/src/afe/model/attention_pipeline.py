@@ -105,20 +105,58 @@ class AttentionArb(nn.Module):
         l1 = w.abs().sum(dim=1, keepdim=True)
         w = w / torch.where(l1 > 0, l1, torch.ones_like(l1))
         return {"w": w, "tradable": tradable, "eps": eps, "R": R_slot,
-                "in_universe": in_universe, "w_port": w_port, "l1": l1.squeeze(1)}
+                "in_universe": in_universe, "w_port": w_port, "l1": l1.squeeze(1),
+                "idx": idx, "n_pool": n_pool}
 
 
-def explained_variance(eps: torch.Tensor, R: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
-    """1 - SS(eps)/SS(R) over the names in the universe. The paper's second objective term.
+def explained_variance(eps: torch.Tensor, R: torch.Tensor, mask: torch.Tensor,
+                       idx: torch.Tensor | None = None, n_pool: int | None = None,
+                       min_obs: int = 20) -> torch.Tensor:
+    """The paper's second objective term, Section 3.3:
 
-    CONFIRM: the paper states the objective as net Sharpe plus explained variance without
-    fixing the normalisation. This is the pooled sum-of-squares version used in
-    scripts/bench_epstein.py; a per-date or per-name average would weight differently.
+        (1/N) sum_i ( 1 - Var(e_i) / Var(R_i) )
+
+    one explained-variance ratio per ASSET, over the dates of the block, then the plain
+    average across assets. Every name counts equally, whatever its volatility.
+
+    Asset means company, not slot: slots are reshuffled at every monthly rebalance, so the
+    series are rebuilt in pool space through `idx` before the variances are taken. A name
+    enters the average only if it is in the universe on at least `min_obs` dates of the
+    block (the paper does not say how it treats partial histories; with 125-day blocks and
+    a monthly universe this drops only names that enter or leave inside the block).
+    Variances are demeaned and use 1/n, over the dates the name is present.
+
+    Without idx the slots are taken to be assets, which is only right if membership does
+    not change inside the span; kept for tests.
+
+    Replaces the pooled 1 - SS(eps)/SS(R) of the first version, which weighted each name
+    by its return variance, so the volatile names dominated the factors.
     """
     m = mask.to(eps.dtype)
-    ss_eps = ((eps * m) ** 2).sum()
-    ss_ret = ((R * m) ** 2).sum()
-    return 1.0 - ss_eps / (ss_ret + 1e-12)
+    if idx is not None:
+        e = to_pool(eps * m, idx, n_pool)
+        r = to_pool(R * m, idx, n_pool)
+        m = to_pool(m, idx, n_pool)
+    else:
+        e, r = eps * m, R * m
+    n = m.sum(dim=0)
+    keep = n >= min_obs
+    n_safe = torch.where(keep, n, torch.ones_like(n))
+    e_mean = e.sum(dim=0) / n_safe
+    r_mean = r.sum(dim=0) / n_safe
+    var_e = (((e - e_mean) * m) ** 2).sum(dim=0) / n_safe
+    var_r = (((r - r_mean) * m) ** 2).sum(dim=0) / n_safe
+    keep = keep & (var_r > 0)
+    if not bool(keep.any()):
+        return eps.new_zeros(())
+    ratio = 1.0 - var_e[keep] / var_r[keep]
+    return ratio.mean()
+
+
+def explained_variance_pooled(eps: torch.Tensor, R: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
+    """First version, pooled 1 - SS(eps)/SS(R). NOT the paper's formula; kept for comparison."""
+    m = mask.to(eps.dtype)
+    return 1.0 - ((eps * m) ** 2).sum() / (((R * m) ** 2).sum() + 1e-12)
 
 
 def objective(out: dict, batch: trading.SlotBatch, tc: float, sc: float, lambda_var: float,
@@ -129,7 +167,7 @@ def objective(out: dict, batch: trading.SlotBatch, tc: float, sc: float, lambda_
                                                                 w_prev_pool)
     valid = out["tradable"].any(dim=1)
     sharpe = trading.sharpe_loss(net, batch.rf, valid, subtract_rf)
-    ev = explained_variance(out["eps"], out["R"], out["in_universe"])
+    ev = explained_variance(out["eps"], out["R"], out["in_universe"], out["idx"], out["n_pool"])
     return sharpe - lambda_var * ev, {"sharpe_loss": sharpe, "ev": ev, "net": net,
                                       "turnover": turnover, "short": short, "w_pool": wp}
 

@@ -7,6 +7,7 @@ w_port on the residual portfolios earns.
 
 from __future__ import annotations
 
+import numpy as np
 import torch
 
 from afe.model.attention_pipeline import AttentionArb, residual_windows, to_pool
@@ -80,3 +81,63 @@ def test_padding_never_gets_weight():
         out = model.forward_span(X, R, univ, idx, P)
     assert (out["w"][:, S - 5:] == 0).all()
     assert torch.isfinite(out["w"]).all()
+
+
+# ---------------------------------------------------------------- explained variance
+
+def _manual_ev(eps_pool, R_pool, present, min_obs):
+    vals = []
+    for j in range(eps_pool.shape[1]):
+        m = present[:, j]
+        if m.sum() < min_obs:
+            continue
+        e, r = eps_pool[m, j], R_pool[m, j]
+        if r.var() == 0:
+            continue
+        vals.append(1 - e.var() / r.var())          # numpy var: demeaned, 1/n
+    return float(np.mean(vals))
+
+
+def test_explained_variance_is_the_papers_per_asset_average_and_follows_companies():
+    import numpy as np
+    from afe.model.attention_pipeline import explained_variance
+    g = torch.Generator().manual_seed(3)
+    T, S, P = 60, 10, 14
+    R_pool = torch.randn(T, P, generator=g) * torch.linspace(0.005, 0.05, P)   # very unequal vols
+    eps_pool = R_pool * torch.rand(P, generator=g)                                # a different R^2 per name
+    idx = torch.empty(T, S, dtype=torch.long)
+    for m0 in range(0, T, 20):                                                   # monthly reshuffle of slots
+        idx[m0:m0 + 20] = torch.randperm(P, generator=g)[:S]
+    R = torch.gather(R_pool, 1, idx)
+    eps = torch.gather(eps_pool, 1, idx)
+    mask = torch.ones(T, S, dtype=torch.bool)
+    present = torch.zeros(T, P, dtype=torch.bool).scatter_(1, idx, True)
+    got = float(explained_variance(eps, R, mask, idx, P, min_obs=15))
+    want = _manual_ev(eps_pool.numpy(), R_pool.numpy(), present.numpy(), 15)
+    assert abs(got - want) < 1e-5, (got, want)
+
+
+def test_every_name_counts_equally_unlike_the_pooled_version():
+    """One volatile name fully explained, nine quiet names not explained at all."""
+    from afe.model.attention_pipeline import explained_variance, explained_variance_pooled
+    g = torch.Generator().manual_seed(4)
+    T, N = 100, 10
+    R = torch.randn(T, N, generator=g) * 0.005
+    R[:, 0] = torch.randn(T, generator=g) * 0.10
+    eps = R.clone()
+    eps[:, 0] = 0.0                                   # name 0: factors explain it all
+    mask = torch.ones(T, N, dtype=torch.bool)
+    per_asset = float(explained_variance(eps, R, mask))
+    pooled = float(explained_variance_pooled(eps, R, mask))
+    assert abs(per_asset - 0.1) < 1e-6                # 1 of 10 names explained
+    assert pooled > 0.95                              # dominated by the volatile name
+
+
+def test_gradient_reaches_factors_through_explained_variance():
+    X, R, univ, idx = panel(5)
+    model = AttentionArb(n_features=M, n_factors=4, embedding_dim=8, lookback=L)
+    from afe.model.attention_pipeline import explained_variance
+    out = model.forward_span(X, R, univ, idx, P)
+    explained_variance(out["eps"], out["R"], out["in_universe"], out["idx"], out["n_pool"],
+                       min_obs=5).backward()
+    assert model.factors.Q.grad is not None and model.factors.Q.grad.abs().sum() > 0
