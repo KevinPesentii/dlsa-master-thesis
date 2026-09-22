@@ -25,10 +25,13 @@ from afe.model.attention_pipeline import AttentionArb, objective, slot_batch
 log = logging.getLogger("attention")
 
 
-def synthetic_panel(n_days, n_pool, n_slots, n_chars, seed=0, rho=-0.15):
-    """Slot-layout arrays. Universe membership rotates, so slots really do move.
+def synthetic_panel(n_days, n_pool, n_slots, n_chars, seed=0, rho=-0.15, rebalance=21):
+    """Slot-layout arrays with a monthly universe and a variable number of names.
 
-    Characteristics are already lagged: row t holds what was known at the close of t-1.
+    Characteristics are computed and lagged in POOL space, and only then gathered into
+    slots. Lagging in slot space would be wrong: a slot holds a different company once
+    membership changes, so shifting a slot-space array attaches yesterday's neighbour's
+    characteristics to today's name. Row t of X holds what was known at the close of t-1.
     """
     rng = np.random.default_rng(seed)
     mkt = rng.normal(0.0003, 0.010, (n_days, 1))
@@ -40,30 +43,41 @@ def synthetic_panel(n_days, n_pool, n_slots, n_chars, seed=0, rho=-0.15):
         idio[t] = rho * idio[t - 1] + shock[t]
     R_pool = mkt * beta + idio
 
-    size = rng.normal(0, 1, n_pool)                 # a stable ranking to rotate membership
-    idx = np.zeros((n_days, n_slots), dtype=np.int64)
-    for t in range(n_days):
-        drift = size + rng.normal(0, 0.3, n_pool) * (t / n_days)
-        idx[t] = np.argsort(-drift)[:n_slots]
+    # Universe: re-ranked once per "month", with a size that varies around n_slots,
+    # so some slots are padding and the mask is exercised end to end.
+    size = rng.normal(0, 1, n_pool)
+    idx = np.full((n_days, n_slots), n_pool, dtype=np.int64)
+    in_universe = np.zeros((n_days, n_slots), dtype=bool)
+    for m0 in range(0, n_days, rebalance):
+        drift = size + rng.normal(0, 0.3, n_pool)
+        n_m = int(rng.integers(int(0.8 * n_slots), n_slots + 1))
+        members = np.argsort(-drift)[:n_m]
+        idx[m0:m0 + rebalance, :n_m] = members
+        in_universe[m0:m0 + rebalance, :n_m] = True
 
-    R_slot = np.take_along_axis(R_pool, idx, axis=1).astype(np.float32)
-    in_universe = np.ones((n_days, n_slots), dtype=bool)
-
-    # Characteristics: lagged returns over several horizons plus noise, rank-normalised.
-    X = np.zeros((n_days, n_slots, n_chars), dtype=np.float32)
+    # Characteristics in pool space: trailing returns over 1/5/21/63 days, plus noise.
+    feats = np.zeros((n_days, n_pool, n_chars), dtype=np.float32)
+    cs = np.vstack([np.zeros((1, n_pool)), np.cumsum(R_pool, 0)])      # cs[t] = sum R[:t]
     for j, h in enumerate([1, 5, 21, 63][:n_chars]):
-        cum = np.zeros_like(R_pool)
-        cum[h:] = np.cumsum(R_pool, 0)[h:] - np.cumsum(R_pool, 0)[:-h]
-        X[:, :, j] = np.take_along_axis(cum, idx, axis=1)
+        for t in range(n_days):
+            feats[t, :, j] = cs[t + 1] - cs[max(t + 1 - h, 0)]          # includes R_t
     for j in range(4, n_chars):
-        X[:, :, j] = rng.normal(0, 1, (n_days, n_slots))
-    ranks = X.argsort(axis=1).argsort(axis=1) / max(n_slots - 1, 1) - 0.5
-    X = ranks.astype(np.float32)
-    X = np.concatenate([X[:1], X[:-1]], axis=0)     # the lag, made explicit
+        feats[:, :, j] = rng.normal(0, 1, (n_days, n_pool))
 
+    lagged = np.concatenate([np.zeros_like(feats[:1]), feats[:-1]], axis=0)   # lag in POOL space
+
+    X = np.zeros((n_days, n_slots, n_chars), dtype=np.float32)
+    for t in range(n_days):
+        m = in_universe[t]
+        raw = lagged[t, idx[t, m]]                                      # gather AFTER the lag
+        ranks = raw.argsort(0).argsort(0) / max(m.sum() - 1, 1) - 0.5   # ranks within the universe
+        X[t, m] = ranks
+
+    R_ext = np.concatenate([R_pool, np.zeros((n_days, 1))], axis=1)
+    R_slot = (np.take_along_axis(R_ext, idx, axis=1) * in_universe).astype(np.float32)
     rf = np.zeros(n_days, dtype=np.float32)
     return (torch.from_numpy(X), torch.from_numpy(R_slot), torch.from_numpy(in_universe),
-            torch.from_numpy(idx), torch.from_numpy(rf), n_pool)
+            torch.from_numpy(idx), torch.from_numpy(rf), n_pool, R_pool, lagged)
 
 
 def run_block(model, X, R, univ, idx, rf, n_pool, t0, t1, cfg, train: bool):
@@ -92,14 +106,19 @@ def main():
     p.add_argument("--lr", type=float, default=3e-3)
     p.add_argument("--lambda-var", type=float, default=1.0)
     p.add_argument("--seed", type=int, default=0)
+    p.add_argument("--tc", type=float, default=0.0005, help="turnover cost, 5 bps")
+    p.add_argument("--sc", type=float, default=0.0001, help="short cost, 1 bp")
+    p.add_argument("--rho", type=float, default=-0.15,
+                   help="AR(1) of the idiosyncratic part; 0 means no signal at all")
     args = p.parse_args()
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s")
     torch.manual_seed(args.seed)
 
-    X, R, univ, idx, rf, n_pool = synthetic_panel(args.days, args.pool, args.slots, args.chars,
-                                                  seed=args.seed)
-    cfg = {"tc": 0.0005, "sc": 0.0001, "lambda_var": args.lambda_var, "cumulative": True,
+    X, R, univ, idx, rf, n_pool, _, _ = synthetic_panel(args.days, args.pool, args.slots,
+                                                        args.chars, seed=args.seed,
+                                                        rho=args.rho)
+    cfg = {"tc": args.tc, "sc": args.sc, "lambda_var": args.lambda_var, "cumulative": True,
            "scale": 100.0}
 
     L = 30
