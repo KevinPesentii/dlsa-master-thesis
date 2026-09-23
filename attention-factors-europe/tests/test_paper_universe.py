@@ -66,6 +66,20 @@ def test_fallback_uses_a_fiscal_year_six_months_old_and_carries_it_through_a_spl
     assert out.loc[P("1994-12"), "cap_source"] == "crsp"                          # nothing usable yet
 
 
+def test_fallback_counted_in_ordinary_shares_is_dropped_by_a_point_in_time_rule():
+    """Centaur Mining, 2000-09: funda csho 440m are ordinary shares, not receipts; at the
+    receipt's $30 close that is a $13.2bn 'company' against CRSP's $0.43m, 30,000x. Only
+    data of the time may judge it: above 20,000x the fallback is dropped, CRSP's cap kept."""
+    elig = _elig([dict(permno=87519, permco=3, month=P("1999-06"), prc=3.0, cap=500.0, cumfacpr=1.0),
+                  dict(permno=87519, permco=3, month=P("2000-09"), prc=30.0, cap=434.0, cumfacpr=1.0)])
+    funda = pd.DataFrame([dict(gvkey="220235", datadate=pd.Timestamp("1999-06-30"), csho=440.1)])
+    out = up.receipt_caps(elig, None, _link(87519, "220235", "90"), funda).set_index("month")
+    assert out.loc[P("2000-09"), "cap"] == 434.0 and out.loc[P("2000-09"), "cap_source"] == "crsp"
+    # the same count at a ratio a real company can have (Ecopetrol-like 1,000x) is kept
+    kept = up.receipt_caps(elig.assign(cap=elig["cap"] * 50), None, _link(87519, "220235", "90"), funda)
+    assert kept.set_index("month").loc[P("2000-09"), "cap_source"] == "funda"
+
+
 def test_receipt_cap_never_falls_below_crsp():
     elig = _elig([dict(permno=90857, permco=2, month=P("2020-12"), prc=216.24, cap=58_680_400.08, cumfacpr=1.0)])
     secm = pd.DataFrame([dict(gvkey="164532", iid="90", datadate=pd.Timestamp("2020-12-31"), cshom=26_956_000.0, adrrm=0.1, prccm=216.24)])

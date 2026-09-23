@@ -161,7 +161,8 @@ def line_month(elig: pd.DataFrame, co: pd.DataFrame) -> pd.DataFrame:
 
 
 def receipt_caps(elig: pd.DataFrame, secm: pd.DataFrame | None, ccm: pd.DataFrame, funda: pd.DataFrame,
-                 lag_months: int = 6, max_age_months: int = 30) -> pd.DataFrame:
+                 lag_months: int = 6, max_age_months: int = 30,
+                 max_fallback_ratio: float = 20_000.0) -> pd.DataFrame:
     """`elig` with the cap of each depositary receipt (sharetype AD) at company level:
     shares in receipt equivalents x the receipt's close, in CRSP units (USD thousands).
     CRSP's own cap counts only receipts outstanding (Mizuho 2020-12: $0.2bn, company $32bn).
@@ -172,6 +173,11 @@ def receipt_caps(elig: pd.DataFrame, secm: pd.DataFrame | None, ccm: pd.DataFram
          latest fiscal year that ended at least `lag_months` before the month (a 20-F is
          due six months after the year end) and at most `max_age_months`, carried to the
          month with CRSP's cumulative price factor so that a split in between does not bite.
+    Some funda csho are ordinary shares, not receipt equivalents, which inflates the cap by
+    the receipt ratio (Smith & Nephew 1999, Centaur Mining 2000). Only data known at the
+    time may judge it, so a fallback above `max_fallback_ratio` x CRSP's cap is dropped
+    (those two: 111,000x and 34,000x; secm caps reach 24,000x legitimately, Sanofi 2002,
+    so the rule is for the fallback only; smaller errors, Fiat's ~4x, stay).
     Never below CRSP's cap (a class-A-only cshom understates, e.g. Baidu). CRSP's cap is
     kept as cap_crsp; cap_source says which of secm / funda / crsp was used."""
     out = elig.copy()
@@ -221,6 +227,7 @@ def receipt_caps(elig: pd.DataFrame, secm: pd.DataFrame | None, ccm: pd.DataFram
     age = (fb["key"].dt.year - fb["datadate"].dt.year) * 12 + (fb["key"].dt.month - fb["datadate"].dt.month)
     fb["sh_f"] = (fb["csho"] * 1e6 * carry).where(age <= max_age_months)
     ad = ad.merge(fb[["_i", "sh_f"]], on="_i", how="left")
+    ad.loc[ad["prc"].abs() * ad["sh_f"] / 1000.0 > max_fallback_ratio * ad["cap"], "sh_f"] = np.nan
     use_f = ad["sh"].isna() & ad["sh_f"].notna()
     ad.loc[use_f, "sh"], ad.loc[use_f, "src"] = ad.loc[use_f, "sh_f"], "funda"
 
