@@ -26,8 +26,11 @@ weaken a test to make code pass.
   available at t. Universe membership for month m is set by market cap in month m-1.
 - Prefix invariance is the operational form: rebuilding features from data truncated
   at t must leave the values at t unchanged. `tests/test_no_lookahead.py` enforces it.
-- One line per company. No secondary listings, no depositary receipts, no secondary
-  share classes.
+- Europe: one line per company. No secondary listings, no depositary receipts, no
+  secondary share classes. The US replication follows the paper instead (decided
+  2026-09-23): its Figures 3-4 name depositary receipts (Mizuho, NatWest, Ecopetrol),
+  Canadian listings, MLP units, REITs and Alphabet twice, so the US universe ranks every
+  listed common-equity line, receipts at company-level cap (docs/us_characteristics.md).
 - Weights refit ANNUALLY, on rolling 8-year windows. Not the 125/1000-day schedule of
   Guijarro-Ordonez, Pelger & Zanotti.
 - Europe uses the US-validated config. No European hyperparameter search.
