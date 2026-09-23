@@ -31,7 +31,7 @@ Conventions common to all tables:
 | date        | date32  | yes      |                                              |
 | sec_id      | string  | yes      | permno on US, gvkey+iid mapped to one company on EU |
 | ret         | float32 | yes      | simple daily return, delisting-adjusted      |
-| mktcap_lag  | float32 | yes      | market cap as of the prior month end         |
+| mktcap_lag  | float32 | yes      | market cap as of the prior month end, the one that sets membership (US: the line's, a depositary receipt at company level) |
 | country     | string  | EU only  | ISO-2                                        |
 | currency    | string  | EU only  | native currency before conversion            |
 
