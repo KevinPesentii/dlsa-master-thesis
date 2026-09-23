@@ -79,3 +79,23 @@ def test_zeroing_after_the_softmax_is_wrong(setup):
     leaked = 1.0 - naive.sum(-1)
     assert leaked.mean() > 0.05, "the fixture is too easy to show the bug"
     assert not torch.allclose(naive.sum(-1), torch.ones(T, K), atol=1e-3)
+
+
+def test_a_level_shared_by_all_names_does_not_move_the_weights_in_float32():
+    """The cross-sectional medians are the same for every name on a date and are raw
+    levels: med_Vol reaches 3.4e7 in 2008-2011. In exact arithmetic such a column cancels
+    in the softmax over names; in float32 its offset in X @ W_K rounds the +-0.5 rank
+    signal away unless X is centred per date. Weights sharpened x5, nearer a trained model."""
+    torch.manual_seed(1)
+    model = AttentionFactors(n_features=M, n_factors=K, embedding_dim=D)
+    with torch.no_grad():
+        model.W_K.mul_(5.0)
+        model.Q.mul_(5.0)
+    ranks = torch.rand(T, S, M - 1) - 0.5
+    level = torch.linspace(1.0e7, 3.4e7, T).view(T, 1, 1).expand(T, S, 1)
+    tradable = torch.arange(S)[None, :] < torch.randint(50, S, (T,))[:, None]
+    with_level = model.factor_weights(torch.cat([ranks, level], -1), tradable)
+    without = model.factor_weights(torch.cat([ranks, torch.zeros_like(level)], -1), tradable)
+    assert (with_level - without).abs().sum(-1).max() < 1e-4          # L1 per factor and date
+    exact = model.double().factor_weights(torch.cat([ranks, level], -1).double(), tradable)
+    assert (with_level.double() - exact).abs().sum(-1).max() < 1e-4

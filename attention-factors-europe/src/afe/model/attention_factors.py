@@ -22,6 +22,18 @@ calendar gap) would give a row of all -inf, whose softmax is NaN and whose gradi
 NaN. With a finite floor such a row comes back uniform and the multiplication by the
 mask zeroes it, so the date simply does not trade.
 
+Why X is centred on each date's tradable names. A column that is the same for every
+name on a date (the cross-sectional medians med_*, rf) adds the same amount to every
+score of a factor, which the softmax over names ignores, so centring changes nothing in
+exact arithmetic; the same holds for the mean of any column. In float32 it matters: the
+medians are raw levels (med_Vol up to 3.4e7 in 2008-2011), so X @ W_K carried an offset
+of 1e6-1e7 whose rounding step (0.06-4) swamped the +-0.5 rank signal and made w_F jitter
+from day to day with the level. Measured on the US panel (2026-09-23): October 2008 with
+sharpened weights, raw vs zeroed medians moved w_F by 0.71 in L1 per factor-day; in
+trained models by 0.11-0.13, with 80% more day-to-day factor-weight change and daily
+turnover 0.79 against 0.66 (2008). Under this linear embedding those columns carry no
+information anyway; an embedding meant to use the levels would need them rescaled.
+
 Two things this module does NOT do. Characteristics that are missing for a name that is
 in the universe must be imputed upstream; padding is zero-filled here, but a NaN on a
 tradable slot propagates through the embedding into every score of that date. And the
@@ -65,6 +77,8 @@ class AttentionFactors(nn.Module):
             raise ValueError(f"X {tuple(X.shape)} and tradable {tuple(tradable.shape)} disagree")
         m = tradable.unsqueeze(-1)
         Xz = torch.where(m, X, torch.zeros_like(X))           # padding may hold NaN
+        n = m.sum(dim=1, keepdim=True).clamp_min(1).to(Xz.dtype)
+        Xz = torch.where(m, Xz - Xz.sum(dim=1, keepdim=True) / n, torch.zeros_like(Xz))  # centre per date
         scores = torch.einsum("kd,tsd->tks", self.Q, Xz @ self.W_K) / math.sqrt(self.d)
         keep = tradable.unsqueeze(1)                          # (T, 1, S)
         scores = scores.masked_fill(~keep, torch.finfo(scores.dtype).min)
