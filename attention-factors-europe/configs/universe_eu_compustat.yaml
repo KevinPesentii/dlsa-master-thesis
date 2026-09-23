@@ -1,0 +1,45 @@
+# Monthly company market caps for the European leg from Compustat Global Security Daily
+# (comp.g_secd month-end rows on WRDS). Step 1 of the European data build: the AS-OF
+# cap table used to size the universe. No top-N is fixed yet; the build report prints
+# the cap at candidate cutoffs, pooled and per country, so that decision can be taken
+# on the numbers. See src/afe/data/compustat_global.py for the decisions.
+
+market: eu
+source: comp.g_secd (monthend = 1)
+
+sample:
+  start: 1999-01            # first month end; euro introduced 1999-01-01
+  end: 2025-12              # last month end
+
+countries:                  # exchange countries (g_security.excntry) that define the market
+  # the eleven 1999 euro founders; add GRC (2001), SVN (2007), CYP/MLT (2008), SVK (2009),
+  # EST (2011), LVA (2014), LTU (2015), HRV (2023) or the non-euro markets later
+  - AUT
+  - BEL
+  - DEU
+  - ESP
+  - FIN
+  - FRA
+  - IRL
+  - ITA
+  - LUX
+  - NLD
+  - PRT
+
+filters:
+  issue_types: ["0"]        # tpci: common/ordinary. "1" (preferred) is in the extract, not the cap
+  currency: EUR             # target currency; conversion via comp.g_exrt_dly GBP cross rates
+  fx_max_stale_days: 7
+  # eligibility = header link (fic, loc or prirow's exchange country in `countries`) AND an
+  # active home listing: trailing median over `turnover_window` month ends of month-end-day
+  # volume / shares >= min_turnover. Missing volume is skipped; no volume at all = kept.
+  min_turnover: 3.0e-5
+  turnover_window: 6
+
+sizing:                     # ranks reported in the build report (no universe_size yet)
+  pooled_ranks: [100, 200, 300, 400, 500, 750, 1000]
+  country_ranks: [10, 20, 30, 40, 50, 75, 100, 150, 200]
+  snapshot_months: [1999-12, 2002-12, 2005-12, 2008-12, 2011-12, 2015-12, 2019-12, 2021-12, 2025-12]
+
+output:
+  dir: data/eu/private

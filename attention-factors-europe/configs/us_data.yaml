@@ -7,7 +7,7 @@
 market: us
 
 raw:
-  dir: data/us/raw
+  dir: data/us/private/raw
   start_year: 1986      # five years before the first ranked month: Beta needs a 5y window
   end_year: 2025
 
@@ -17,19 +17,28 @@ sample:
   universe_size: 500
 
 # CRSP CIZ flags, applied to the MONTHLY file to define the eligible pool. They are
-# historical per row, unlike Compustat's header fields. This is the CIZ spelling of the
-# classic share code 10/11 + exchange code 1/2/3 filter.
+# historical per row, unlike Compustat's header fields. Since 2026-09-23 this is the
+# paper's universe, not share codes 10/11: its Figures 3-4 name depositary receipts
+# (Toyota, Mizuho, NatWest, Ecopetrol), Canadian listings (Imperial Oil, Suncor), MLP
+# units (Energy Transfer), REITs and Alphabet twice. Receipts and units need the extra
+# pull (scripts/fetch_us_raw.py --extra). The 2026-09-22 build ([NS], [Y], [CORP],
+# unit: company) is kept in data/us/private/prev_20260922.
 eligibility:
-  usincflg: [Y]              # US-incorporated
-  issuertype: [CORP]         # corporates; add REIT to keep real estate trusts
-  primaryexch: [N, A, Q]     # NYSE, NYSE American, Nasdaq
-  min_price: 0.0             # no penny-stock filter; the top-500 cut makes it moot
+  sharetype: [NS, AD, UG, SB, CE]   # plain shares, receipts, units, beneficial interest, certificates
+  usincflg: [Y, N]                  # US- and foreign-incorporated
+  issuertype: [CORP, ACOR, REIT]    # ACOR: corporations CRSP later marks as acquired (Kraft, RCA)
+  primaryexch: [N, A, Q]            # NYSE, NYSE American, Nasdaq
+  min_price: 0.0                    # no penny-stock filter; the top-500 cut makes it moot
 
-# Company = permco. Market cap is summed over its eligible share classes; the class with
-# the largest cap is the company's sec_id (permno) for that month and supplies the
-# return/volume/quote series. Universe for month M ranks by cap at the end of M-1.
-# The Compustat-only universe of step 1 (data/us/top500_monthly.parquet) is not an
+# Company = permco: market cap summed over its eligible lines, a receipt at company level
+# (us_panel.receipt_caps); it is LME and the December ME of the value ratios.
+# universe.unit: line ranks every eligible line on its own cap, so a company with two
+# listed classes can hold two slots (the paper's "500 largest stocks"); company keeps one
+# line per permco, its largest. Universe for month M ranks by cap at the end of M-1.
+# The Compustat-only universe of step 1 (data/us/private/top500_monthly.parquet) is not an
 # input here; the build report shows the overlap between the two by year.
+universe:
+  unit: line
 
 # Which permnos get characteristics. 'universe' = ever a member in the sample (a few
 # thousand names, minutes to build). 'all' = every eligible stock (needed only if the
@@ -74,4 +83,5 @@ characteristics:             # the 39 of the paper; drop a name here to exclude 
   intangibles: [OA, OL, PCM]
 
 output:
-  dir: data/us
+  dir: data/us/shared              # returns / universe / features: the tables Kevin's code reads
+  inspect_dir: data/us/private     # characteristics_*, universe_asof, cutoff_<date>/ builds

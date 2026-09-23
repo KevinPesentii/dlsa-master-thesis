@@ -2,7 +2,7 @@
 
     python scripts/run_pca_longconv.py [--config configs/us_pca_longconv.yaml]
                                        [--K 30] [--seed 0] [--years 1998 1999] [--epochs 2]
-                                       [--pca-dir data/us/pca_l252] [--input cumulative]
+                                       [--pca-dir data/us/shared/pca_l252] [--input cumulative]
 
 For each K: rolling 8-year training windows refit every January, out-of-sample
 Jan 1998 - Dec 2021, one run directory runs/<stamp>_pca_longconv_K<K>_s<seed>/ with the

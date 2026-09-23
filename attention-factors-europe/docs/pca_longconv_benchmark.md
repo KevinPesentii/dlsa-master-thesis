@@ -28,7 +28,7 @@ Not specified, settled here as follows. Each is a config key so it can be varied
 
 | choice | taken | why |
 |---|---|---|
-| loadings | OLS of returns on the PCA factors over the same 252-day window, no intercept (`factors.loading_window: 252`) | the paper says only "PCA using the past 252 trading days". GPZ regress on the last 60 days (`60`, built in `data/us/pca`); the PCA projection `B = D V` needs no regression (`0`, built in `data/us/pca_proj`). See the variant grid below |
+| loadings | OLS of returns on the PCA factors over the same 252-day window, no intercept (`factors.loading_window: 252`) | the paper says only "PCA using the past 252 trading days". GPZ regress on the last 60 days (`60`, built in `data/us/private/pca`); the PCA projection `B = D V` needs no regression (`0`, built in `data/us/private/pca_proj`). See the variant grid below |
 | K = 100 with a 60-day regression | if `loading_window: 60` is used: numpy `lstsq` returns the minimum-norm solution, as sklearn's `LinearRegression` in the GPZ code does | under-determined (perfect in-sample fit, noisy out of sample) |
 | PCA set | universe members with a full 252-day return history and non-zero volatility | GPZ requires the full window; recent IPOs are excluded until they have it (463-496 of 500 names per day) |
 | residuals for non-members | computed for every pool name with a full history, using the members' factors | a name entering the universe then already has the 30-day residual lookback; nothing about the factors uses non-members |

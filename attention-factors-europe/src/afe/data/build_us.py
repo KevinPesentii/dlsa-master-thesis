@@ -4,8 +4,9 @@
     universe.parquet   month, sec_id, cap_rank                exactly N rows per month
     features.parquet   date, sec_id, char_*, med_*, rf        universe rows only
 
-plus, for inspection, the un-normalised characteristics (characteristics_monthly.parquet,
-characteristics_daily.parquet) and a build report.
+plus a build report, and, in `inspect_dir` (data/<market>/private, not shipped downstream),
+the un-normalised characteristics (characteristics_monthly.parquet, characteristics_daily.parquet)
+and the as-of ranking (universe_asof.parquet).
 
 Assembly rule, the one that matters for point-in-time correctness: a row (d, i) of
 features.parquet carries the MONTHLY characteristics of stock i as of the end of the
@@ -95,7 +96,9 @@ def assemble_year(year: int, uni_members: dict, D: ch.DailyInputs, mc: pd.DataFr
         monthly_vals.index = rows.index
         rows = rows.join(monthly_vals, how="left")
         parts.append(rows)
-    raw = pd.concat(parts)[names]
+    # float64, not nullable Float64: pandas' masked-array rank ignores the NA mask and
+    # ranks the garbage under it (diagnosed 2026-09-16 on the first build)
+    raw = pd.concat(parts)[names].astype("float64")
     coverage = raw.notna().mean().rename(year)
 
     date_key = raw.index.get_level_values("date")
@@ -117,14 +120,21 @@ def assemble_year(year: int, uni_members: dict, D: ch.DailyInputs, mc: pd.DataFr
     return feat, coverage
 
 
-def returns_table(daily: pd.DataFrame, co: pd.DataFrame, start: pd.Period, end: pd.Period) -> pd.DataFrame:
+def returns_table(daily: pd.DataFrame, co: pd.DataFrame, start: pd.Period, end: pd.Period,
+                  lines: pd.DataFrame | None = None) -> pd.DataFrame:
     """docs/schemas.md returns table: every day with a return for every pool stock,
-    mktcap_lag = company cap (USD mn) at the end of the previous month."""
+    mktcap_lag = the cap that sets membership (USD mn) at the end of the previous month:
+    the line's own cap when the universe ranks lines (`lines`), else the company cap."""
     d = daily[["date", "permno", "permco", "ret"]].copy()
     d["month_prev"] = d["date"].dt.to_period("M") - 1
     d = d[(d["month_prev"] + 1 >= start) & (d["month_prev"] + 1 <= end)]
-    d = d.merge(co[["permco", "month", "cap_co"]].rename(columns={"month": "month_prev", "cap_co": "mktcap_lag"}),
-                on=["permco", "month_prev"], how="left")
+    if lines is None:
+        d = d.merge(co[["permco", "month", "cap_co"]].rename(columns={"month": "month_prev", "cap_co": "mktcap_lag"}),
+                    on=["permco", "month_prev"], how="left")
+    else:
+        d = d.merge(lines[["primary_permno", "month", "cap_co"]].rename(
+            columns={"primary_permno": "permno", "month": "month_prev", "cap_co": "mktcap_lag"}),
+            on=["permno", "month_prev"], how="left")
     d = d[d["ret"].notna() & d["mktcap_lag"].notna()]
     out = pd.DataFrame({"date": d["date"].astype("datetime64[ns]"), "sec_id": d["permno"].astype(str),
                         "ret": d["ret"].astype("float32"), "mktcap_lag": d["mktcap_lag"].astype("float32")})
@@ -136,8 +146,11 @@ def returns_table(daily: pd.DataFrame, co: pd.DataFrame, start: pd.Period, end: 
 # ------------------------------------------------------------------ driver
 
 
-def build(cfg: dict, raw: up.RawUS, out_dir: Path, cutoff: pd.Timestamp | None = None, log=print) -> dict:
+def build(cfg: dict, raw: up.RawUS, out_dir: Path, cutoff: pd.Timestamp | None = None, log=print,
+          inspect_dir: Path | None = None) -> dict:
+    inspect_dir = out_dir if inspect_dir is None else inspect_dir
     out_dir.mkdir(parents=True, exist_ok=True)
+    inspect_dir.mkdir(parents=True, exist_ok=True)
     start, end = pd.Period(cfg["sample"]["start"], "M"), pd.Period(cfg["sample"]["end"], "M")
     if cutoff is not None:
         raw = raw.truncate(cutoff)
@@ -148,9 +161,12 @@ def build(cfg: dict, raw: up.RawUS, out_dir: Path, cutoff: pd.Timestamp | None =
 
     log("eligibility and companies")
     elig = up.eligible_monthly(raw.monthly, cfg)
+    elig = up.receipt_caps(elig, raw.secm, raw.ccm, raw.funda)
     co = up.company_month(elig)
+    lines = up.line_month(elig, co) if cfg.get("universe", {}).get("unit", "company") == "line" else None
     calendar = raw.ff_daily.index
-    uni, asof = up.build_universe(co, {**cfg, "sample": {**cfg["sample"], "end": str(end)}}, calendar)
+    uni, asof = up.build_universe(co if lines is None else lines,
+                                  {**cfg, "sample": {**cfg["sample"], "end": str(end)}}, calendar)
     uni_members = {M: sorted(g["primary_permno"].astype(int).tolist()) for M, g in asof.groupby("month")}
     pool = sorted({p for ms in uni_members.values() for p in ms}) if cfg["pool"] == "universe" \
         else sorted(elig["permno"].unique().tolist())
@@ -158,18 +174,21 @@ def build(cfg: dict, raw: up.RawUS, out_dir: Path, cutoff: pd.Timestamp | None =
 
     log("daily data")
     years = range(int(cfg["raw"]["start_year"]), end.year + 1)
-    daily, stats = up.load_daily(raw.daily_dir, pool, years, raw.ff_daily, cutoff=cutoff)
+    dirs = [raw.daily_dir] + ([raw.daily_extra_dir] if raw.daily_extra_dir is not None else [])
+    daily, stats = up.load_daily(dirs, pool, years, raw.ff_daily, cutoff=cutoff, delisting=raw.delisting)
     D = up.daily_inputs(daily, raw.ff_daily, windows)
     M = up.monthly_inputs(raw.monthly, co, pool, stats, D, windows)
-    log(f"  {len(daily):,} daily rows, {D.ret.shape[0]} days x {D.ret.shape[1]} stocks")
+    n_del = int(raw.delisting["permno"].isin(pool).sum()) if len(raw.delisting) else 0
+    log(f"  {len(daily):,} daily rows, {D.ret.shape[0]} days x {D.ret.shape[1]} stocks, "
+        f"{n_del} delisting-day rows merged")
 
     log("characteristics")
     mc = monthly_characteristics(M, groups["monthly"])
     ac = annual_characteristics(raw, co, pool, M.ret.index, groups["annual"], cfg)
     mc = mc.join(ac, how="left")[[n for n in names if n in mc.columns or n in ac.columns]]
     dc = daily_characteristics(D, groups["daily"])
-    mc.reset_index().to_parquet(out_dir / "characteristics_monthly.parquet", index=False)
-    dc.reset_index().to_parquet(out_dir / "characteristics_daily.parquet", index=False)
+    mc.reset_index().to_parquet(inspect_dir / "characteristics_monthly.parquet", index=False)
+    dc.reset_index().to_parquet(inspect_dir / "characteristics_daily.parquet", index=False)
 
     log("features")
     rf = raw.ff_daily["rf"]
@@ -185,31 +204,60 @@ def build(cfg: dict, raw: up.RawUS, out_dir: Path, cutoff: pd.Timestamp | None =
     writer.close()
 
     log("returns and universe")
-    ret = returns_table(daily, co, start, end)
+    ret = returns_table(daily, co, start, end, lines)
     ret.to_parquet(out_dir / "returns.parquet", index=False)
     uni.to_parquet(out_dir / "universe.parquet", index=False)
-    asof.to_parquet(out_dir / "universe_asof.parquet", index=False)
+    flags = elig[["permno", "month", "sharetype", "usincflg", "issuertype", "cap_source", "cap_crsp"]].rename(
+        columns={"permno": "primary_permno", "month": "rank_month"})
+    asof = asof.assign(rank_month=asof["month"] - 1).merge(flags, on=["primary_permno", "rank_month"], how="left")
+    asof.to_parquet(inspect_dir / "universe_asof.parquet", index=False)
 
-    report = build_report(cfg, uni, asof, ret, pd.DataFrame(coverage), mc, raw, out_dir)
+    report = build_report(cfg, uni, asof, ret, pd.DataFrame(coverage), mc, raw, inspect_dir)
     (out_dir / "build_report.txt").write_text(report)
     return {"universe": uni, "coverage": pd.DataFrame(coverage), "report": report}
 
 
-def build_report(cfg, uni, asof, ret, coverage, mc, raw, out_dir: Path) -> str:
+def build_report(cfg, uni, asof, ret, coverage, mc, raw, inspect_dir: Path) -> str:
     L = [f"US dataset built {dt.datetime.now():%Y-%m-%d %H:%M}", f"config: {cfg}", "",
          f"universe: {uni['month'].nunique()} months x {cfg['sample']['universe_size']}, "
          f"{uni['sec_id'].nunique()} distinct permnos; returns.parquet {len(ret):,} rows, "
          f"{ret['sec_id'].nunique()} permnos", ""]
+    if len(raw.delisting):
+        dl = raw.delisting[raw.delisting["permno"].isin(ret["sec_id"].astype(int).unique())]
+        key = dl.assign(sec_id=dl["permno"].astype(str))[["sec_id", "date"]]
+        inret = ret.merge(key, on=["sec_id", "date"])
+        um = uni.assign(month=uni["month"].dt.to_period("M"))[["month", "sec_id"]]
+        held = inret.assign(month=inret["date"].dt.to_period("M")).merge(um, on=["month", "sec_id"])
+        L += [f"Delisting-day rows (crsp_delisting.parquet, dlydelflg = Y) of pool permnos: {len(dl):,}; in "
+              f"returns.parquet: {len(inret):,}; while a universe member that month: {len(held):,}; their returns: "
+              f"mean {held['ret'].mean():+.4f}, median {held['ret'].median():+.4f}, min {held['ret'].min():+.3f}, "
+              f"max {held['ret'].max():+.3f}", ""]
+    else:
+        L += ["Delisting-day rows: crsp_delisting.parquet NOT present; returns lack the delisting return (see wrds_us).", ""]
     yr = asof["month"].dt.year
     per_year = asof.groupby(yr).agg(cutoff_usd_bn=("cap_co", lambda s: s.min() / 1e3),
                                     largest_usd_bn=("cap_co", lambda s: s.max() / 1e3),
                                     multi_class=("n_classes", lambda s: (s > 1).mean()))
     L += ["Universe per year (cap in USD bn; multi_class = share of members with >1 class):",
           per_year.round(3).to_string(), ""]
+    if "sharetype" in asof:
+        a = asof.assign(receipt=asof["sharetype"] == "AD", units=asof["sharetype"] == "UG",
+                        trusts=asof["sharetype"].isin(["SB", "CE"]), foreign_inc=asof["usincflg"] == "N",
+                        reit=asof["issuertype"] == "REIT", acquired_corp=asof["issuertype"] == "ACOR",
+                        receipt_cap_secm=asof["cap_source"] == "secm", receipt_cap_funda=asof["cap_source"] == "funda")
+        cols = ["receipt", "units", "trusts", "foreign_inc", "reit", "acquired_corp", "receipt_cap_secm",
+                "receipt_cap_funda"]
+        L += ["Members per month by type (mean over the year's months; receipts sized from secm / funda, "
+              "the rest of the receipts keep CRSP's cap):",
+              (a.groupby(yr)[cols].sum() / a.groupby(yr)["month"].nunique().to_numpy()[:, None]).round(1).to_string(), ""]
+    if "curcd" in raw.funda:
+        L += [f"comp_funda rows by reporting currency (converted to USD at the fiscal year end): "
+              f"{raw.funda['curcd'].value_counts().to_dict()}; non-USD rows without a rate: "
+              f"{int((raw.funda['curcd'].ne('USD') & raw.funda['fx_usd'].isna()).sum())}", ""]
     L += ["Coverage of each characteristic within the universe, share of rows non-missing before the "
           "median fill (rows = year):", coverage.round(3).to_string(), ""]
 
-    comp = out_dir / "top500_monthly.parquet"
+    comp = inspect_dir / "top500_monthly.parquet"   # step-1 Compustat universe, if built
     if comp.exists():
         c = pd.read_parquet(comp)
         c["rank_month"] = c["datadate"].dt.to_period("M")

@@ -9,7 +9,7 @@ number is known), `build_us.py` (assembly). Config: `configs/us_data.yaml`.
 Two stages, run separately:
 
 ```
-python scripts/fetch_us_raw.py        # once: WRDS -> data/us/raw/*.parquet (~2 h, resumable)
+python scripts/fetch_us_raw.py        # once: WRDS -> data/us/private/raw/*.parquet (~2 h, resumable)
 python scripts/build_us_dataset.py    # offline: raw -> returns / universe / features
 ```
 
@@ -17,28 +17,41 @@ python scripts/build_us_dataset.py    # offline: raw -> returns / universe / fea
 
 | table | used for |
 |---|---|
-| `crsp.dsf_v2` (CIZ daily) | returns (delisting folded in), prices, volume, closing bid/ask, daily high, cap, adjustment factor |
+| `crsp.dsf_v2` (CIZ daily) | returns, prices, volume, closing bid/ask, daily high, cap, adjustment factor |
+| `crsp.dsf_v2`, `dlydelflg = 'Y'` rows | the delisting-day row of every security: its `dlyret` is the delisting return. Pulled separately into `crsp_delisting.parquet` because CRSP blanks the share/security/trading flags on it and the common-share filter drops it; merged into the pool's daily rows in `us_panel.load_daily`. Lehman: -60% on 2008-09-18 after -56.7% on 09-17. The 2026-09-15 build had none of these rows (1,205 for the pool, 593 while a universe member; median +0.1%, mean +0.8%, min -60%). The monthly file needs no fix: its delisting-month row keeps normal flags and `mthret` already spans to the delisting price. |
 | `crsp.msf_v2` (CIZ monthly) | monthly returns, prices, volume, shares, cap, eligibility flags |
 | `crsp.ccmxpf_lnkhist` | permno <-> gvkey with date ranges (LU/LC links; P, C, J) |
 | `comp.funda` | annual fundamentals (items listed in `wrds_us.FUNDA_ITEMS`) |
 | `ff.factors_daily` | mktrf, smb, hml, rf for Resid_Var, Beta and the `rf` feature |
 
-Compustat is NOT used for prices or shares in this build (that was step 1, the
-Compustat-only universe, kept as a cross-check). CLAUDE.md fixes CRSP CIZ for the US.
+Compustat is NOT used for prices in this build (that was step 1, the Compustat-only
+universe, kept as a cross-check). CLAUDE.md fixes CRSP CIZ for the US. It supplies the
+share base of depositary receipts (below) and, via `curcd`, the currency of the
+fundamentals: Canadian filers report in CAD and are converted to USD at the fiscal year
+end (`comp_funda_currency.parquet`, `fx_daily.parquet`; every other row is USD).
 
 ## Who is in
 
-Eligible pool, from the monthly CIZ flags (historical per row, so safe to filter on):
-`sharetype NS, securitytype EQTY, securitysubtype COM, usincflg Y, issuertype CORP,
-primaryexch N/A/Q, conditionaltype RW, tradingstatusflg A`, cap > 0. This is the CIZ
-spelling of share code 10/11 + exchange 1/2/3. REITs are `issuertype REIT` and are out
-by default (config `eligibility.issuertype`).
+Since 2026-09-23 the paper's universe, whose Figures 3-4 name depositary receipts
+(Toyota, Mizuho, NatWest, Ecopetrol), Canadian listings, MLP units, REITs and Alphabet
+twice. Eligible pool, from the monthly CIZ flags (historical per row, so safe to filter
+on): `sharetype NS/AD/UG/SB/CE, securitytype EQTY, securitysubtype COM, usincflg Y/N,
+issuertype CORP/ACOR/REIT, primaryexch N/A/Q, conditionaltype RW, tradingstatusflg A`,
+cap > 0 (config `eligibility`). ACOR marks corporations CRSP later records as acquired
+(Kraft, RCA); securitysubtype COM keeps out ETFs and closed-end funds. The 2026-09-22
+build (share codes 10/11: NS, Y, CORP, one line per company) is in
+`data/us/private/prev_20260922`.
 
-Company = permco. Company cap = sum of the caps of its eligible share classes (Alphabet
-GOOGL + GOOG, Berkshire A + B). The class with the largest cap is the company's `sec_id`
-(its permno, as a string) for that month and supplies the return / volume / quote series.
-Universe for month M = the 500 largest companies by cap at the end of M-1; `month` in
-`universe.parquet` is the first trading day of M. The same cap is `LME` and `mktcap_lag`.
+Each line (permno) is ranked on its own cap (config `universe.unit: line`), so a company
+with two listed classes can hold two slots. A depositary receipt's cap is its company-level
+cap, not CRSP's, which counts receipts outstanding only (Mizuho 2020-12: $0.2bn against
+$32bn): underlying shares of its class over the receipt ratio x its close, from
+`comp.secm` (cshom / adrrm) from 1998-04, before that `comp.funda` csho (receipt
+equivalents) of a fiscal year at least six months old, never below CRSP's cap
+(`us_panel.receipt_caps`). Company = permco; company cap = sum of its eligible lines' caps,
+which is `LME` and the December ME of the value ratios. Universe for month M = the 500
+largest lines by cap at the end of M-1; `month` in `universe.parquet` is the first trading
+day of M; `mktcap_lag` in `returns.parquet` is the line's cap.
 
 Pool for characteristics = every permno that is ever a member (config `pool`). Ranks and
 medians are over the 500 members of the day (`median_over`; CONFIRM 3 in schemas.md).

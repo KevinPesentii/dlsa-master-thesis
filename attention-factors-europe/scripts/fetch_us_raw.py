@@ -1,11 +1,16 @@
 """Stage 1: pull the raw US tables from WRDS once.
 
-    python scripts/fetch_us_raw.py [--config configs/us_data.yaml] [--years 2025 2024 ...]
+    python scripts/fetch_us_raw.py [--config configs/us_data.yaml] [--years 2025 2024 ...] [--delisting]
+                                   [--extra]
 
 Resumable: yearly CRSP daily files that already exist are skipped, so a dropped
 connection costs one year, not the whole pull. --years pulls only the listed daily years
 (in that order, skipping existing files), so a second worker can run from the other end
-of the range in parallel. Output goes to raw.dir from the config, with a manifest.json.
+of the range in parallel. --delisting pulls only crsp_delisting.parquet (seconds; added
+2026-09-22 to an existing raw directory). --extra adds what a paper-style universe needs
+(depositary receipts, units, trusts; receipt caps from comp.secm; funda currency; FX;
+see wrds_us.pull_extra) to an existing raw directory, with manifest_extra.json. Output
+goes to raw.dir from the config, with a manifest.json.
 """
 
 from __future__ import annotations
@@ -26,13 +31,22 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--config", default=ROOT / "configs" / "us_data.yaml")
     ap.add_argument("--years", type=int, nargs="+", help="pull only these CRSP daily years, in order")
+    ap.add_argument("--delisting", action="store_true", help="pull only the delisting-day rows")
+    ap.add_argument("--extra", action="store_true", help="pull the paper-style universe additions")
     args = ap.parse_args()
     cfg = yaml.safe_load(Path(args.config).read_text())
     raw_dir = ROOT / cfg["raw"]["dir"]
 
     db = compustat_us.connect(ROOT)  # same .env / pgpass login as the universe build
     try:
-        if args.years:
+        if args.extra:
+            m = wrds_us.pull_extra(db, raw_dir, cfg["raw"]["start_year"], cfg["raw"]["end_year"])
+            print({k: v["rows"] for k, v in m["tables"].items()})
+        elif args.delisting:
+            df = wrds_us.fetch_crsp_delisting(db, cfg["raw"]["start_year"], cfg["raw"]["end_year"])
+            df.to_parquet(raw_dir / "crsp_delisting.parquet", index=False)
+            print(f"crsp_delisting: {len(df):,} rows -> {raw_dir / 'crsp_delisting.parquet'}", flush=True)
+        elif args.years:
             raw_dir.joinpath("crsp_daily").mkdir(parents=True, exist_ok=True)
             for year in args.years:
                 path = raw_dir / "crsp_daily" / f"{year}.parquet"

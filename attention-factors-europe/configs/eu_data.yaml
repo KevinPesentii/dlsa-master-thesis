@@ -1,0 +1,53 @@
+# European data build: raw WRDS pull (stage 1, once) and the EUR market-data layer
+# (stage 2a: returns, universe, market, rf). Stage 2b (characteristics) is not written
+# yet; the US/EU characteristic intersection is an open decision (CLAUDE.md).
+#   python scripts/fetch_eu_raw.py     --config configs/eu_data.yaml
+#   python scripts/build_eu_returns.py --config configs/eu_data.yaml
+# The universe and the listing to trade come from the step-1 cap table
+# (configs/universe_eu_compustat.yaml -> data/eu/private/company_month_mktcap.parquet).
+# Variables, sources, currencies and files are documented in docs/eu_raw_data.md;
+# the conventions of stage 2a in src/afe/data/eu_panel.py.
+
+market: eu
+
+universe:
+  mktcap_table: data/eu/private/company_month_mktcap.parquet   # step-1 output, eligible flag inside
+  size: 500                 # pooled across the countries of the cap table, AS-OF month end
+  start: 1999-01            # first ranked month end
+  end: 2025-12
+
+raw:
+  dir: data/eu/private/raw
+  daily_start_year: 1994    # five years before the first ranked month: Beta needs 1260 days
+  daily_end_year: 2025
+  funda_start_year: 1992    # two fiscal years of lags before the first ranked month
+  jkp_start_year: 1998      # JKP characteristics are point-in-time per month end
+  fx_start_year: 1990       # covers the fiscal years 1991-93 that carry lags into 1994
+  # Which listings get daily data: every (gvkey, iid) that was the home line of an
+  # ever-member of the top-N in any month of the cap table (all months, not only
+  # member months, so entrants carry history).
+  listings: home_lines_of_ever_members
+
+currency:
+  target: EUR               # every value downstream of stage 2a is in EUR
+  fx_source: comp.g_exrt_dly
+  numeraire_switch: 1994-01-01   # EUR (Compustat's series, synthetic before 1999) from here on;
+  dem_per_eur: 1.95583           # Deutsche Mark at the irrevocable rate before it
+  fx_max_stale_days: 7
+  robustness: USD           # second panel at data/eu_usd/ (docs/schemas.md), not built yet
+
+returns:
+  delisting_return: null    # Global has no delisting return; JKP impute -0.30 on the last month
+  calendar_min_lines: 100   # a pooled trading day needs rows on >= this many listings
+
+market:
+  source: universe          # value-weighted EUR return of the month's universe, weights = cap at end of M-1
+
+risk_free:
+  source: bundesbank        # 1-month EURIBOR from 1999, 1-month FIBOR (DEM) before; scripts/build_eu_rf.py
+  file: data/eu/private/raw/rf_euro.csv    # date, rate_pct_pa (annualised, percent, act/360), series
+  day_count: 360
+
+output:
+  dir: data/eu/shared              # returns / universe / market / rf / fx table: what downstream reads
+  inspect_dir: data/eu/private     # returns_detail_daily, cutoff_<date>/ builds

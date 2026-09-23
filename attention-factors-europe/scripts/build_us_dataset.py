@@ -2,9 +2,10 @@
 
     python scripts/build_us_dataset.py [--config configs/us_data.yaml] [--cutoff 2005-06-30]
 
-Runs offline against raw.dir from stage 1. --cutoff rebuilds from inputs truncated at a
-date (the prefix-invariance check of CLAUDE.md) into <output.dir>/cutoff_<date>/ so it
-can be diffed against the full build.
+Runs offline against raw.dir from stage 1. The schema tables go to output.dir
+(data/us/shared), the inspection tables to output.inspect_dir (data/us/private).
+--cutoff rebuilds from inputs truncated at a date (the prefix-invariance check of
+CLAUDE.md) into <output.inspect_dir>/cutoff_<date>/ so it can be diffed against the full build.
 """
 
 from __future__ import annotations
@@ -31,10 +32,11 @@ def main():
 
     raw = us_panel.load_raw(ROOT / cfg["raw"]["dir"])
     out = ROOT / cfg["output"]["dir"]
+    inspect = ROOT / cfg["output"].get("inspect_dir", cfg["output"]["dir"])
     cutoff = pd.Timestamp(args.cutoff) if args.cutoff else None
     if cutoff is not None:
-        out = out / f"cutoff_{cutoff:%Y%m%d}"
-    result = build_us.build(cfg, raw, out, cutoff=cutoff)
+        out = inspect = inspect / f"cutoff_{cutoff:%Y%m%d}"
+    result = build_us.build(cfg, raw, out, cutoff=cutoff, inspect_dir=inspect)
     print(result["report"])
     print(f"\nwrote {out}")
 

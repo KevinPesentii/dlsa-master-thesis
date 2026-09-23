@@ -7,7 +7,15 @@ Status: DRAFT of 2026-09-08. Three items marked CONFIRM are not settled yet.
 
 Conventions common to all tables:
 
-- Parquet, one file per market and stage, under `data/<market>/<stage>.parquet`.
+- Parquet, one file per market and stage, under `data/<market>/shared/<stage>.parquet`.
+  `data/<market>/shared/` holds exactly what runs downstream of the data layer (these
+  tables, `build_report.txt`, and for the US the rf series `raw/ff_daily.parquet`, the
+  PCA history year `raw/crsp_daily/1989.parquet` and the stage-one PCA output
+  `pca_l252/`); it is the directory that gets copied to the shared cloud box.
+  `data/<market>/private/` holds the raw WRDS pulls (`raw/`), the step-1 Compustat cap
+  tables and every build intermediate; only the build scripts read it, and only the
+  machine that talks to WRDS needs it. Configs: `output.dir` and `data.dir` point at
+  `shared`, `raw.dir` and `output.inspect_dir` at `private`.
 - `market` is `us` or `eu`. It is a config key, never a code fork. European handling
   lives in adapters that produce these same tables.
 - `date` is a trading date, dtype `date32`. `sec_id` is a string, stable through time,
@@ -23,7 +31,7 @@ Conventions common to all tables:
 | date        | date32  | yes      |                                              |
 | sec_id      | string  | yes      | permno on US, gvkey+iid mapped to one company on EU |
 | ret         | float32 | yes      | simple daily return, delisting-adjusted      |
-| mktcap_lag  | float32 | yes      | market cap as of the prior month end         |
+| mktcap_lag  | float32 | yes      | market cap as of the prior month end, the one that sets membership (US: the line's, a depositary receipt at company level) |
 | country     | string  | EU only  | ISO-2                                        |
 | currency    | string  | EU only  | native currency before conversion            |
 

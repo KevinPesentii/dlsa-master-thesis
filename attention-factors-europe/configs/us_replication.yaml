@@ -7,7 +7,7 @@ market: us
 seed: 0
 
 data:
-  dir: data/us                   # the three tables of docs/schemas.md; --data-dir overrides
+  dir: data/us/shared            # the three tables of docs/schemas.md; --data-dir overrides
 
 sample:
   start: 1998-01-01              # first out-of-sample day; training reaches back window_years
