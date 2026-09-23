@@ -99,3 +99,45 @@ def test_a_level_shared_by_all_names_does_not_move_the_weights_in_float32():
     assert (with_level - without).abs().sum(-1).max() < 1e-4          # L1 per factor and date
     exact = model.double().factor_weights(torch.cat([ranks, level], -1).double(), tradable)
     assert (with_level.double() - exact).abs().sum(-1).max() < 1e-4
+
+
+# ---------------------------------------------------------------- score temperature
+
+def test_temperature_is_exactly_a_rescaling_of_Q():
+    """tau does not widen the model class of Equation (1): it reparameterises it."""
+    torch.manual_seed(7)
+    a = AttentionFactors(n_features=M, n_factors=K, embedding_dim=D)
+    b = AttentionFactors(n_features=M, n_factors=K, embedding_dim=D)
+    with torch.no_grad():
+        b.W_K.copy_(a.W_K)
+        b.Q.copy_(a.Q * 7.0)                      # same model, written with a bigger Q
+        a.log_tau.fill_(math.log(7.0))
+    X = torch.randn(6, S, M)
+    tr = torch.ones(6, S, dtype=torch.bool)
+    assert torch.allclose(a.factor_weights(X, tr), b.factor_weights(X, tr), atol=1e-6)
+
+
+def test_calibration_hits_the_target_spread_and_concentrates_the_factors():
+    torch.manual_seed(8)
+    f = AttentionFactors(n_features=M, n_factors=K, embedding_dim=D)
+    X = torch.rand(40, S, M) - 0.5                # rank quantiles
+    tr = torch.ones(40, S, dtype=torch.bool)
+    flat = f.factor_weights(X, tr)
+    eff_flat = float((1.0 / (flat.detach() ** 2).sum(-1)).median())
+    assert eff_flat > 0.95 * S, "before calibration the factors should be near equal weight"
+
+    tau = f.calibrate_temperature(X, tr, target_std=1.0)
+    assert tau > 1.0
+    sharp = f.factor_weights(X, tr)
+    eff_sharp = float((1.0 / (sharp.detach() ** 2).sum(-1)).median())
+    assert eff_sharp < 0.6 * eff_flat, (eff_flat, eff_sharp)
+    assert torch.allclose(sharp.sum(-1), torch.ones(40, K), atol=1e-5)
+
+
+def test_gradient_reaches_the_temperature():
+    torch.manual_seed(9)
+    f = AttentionFactors(n_features=M, n_factors=K, embedding_dim=D)
+    X = torch.rand(6, S, M) - 0.5
+    tr = torch.ones(6, S, dtype=torch.bool)
+    (f.factor_weights(X, tr) * torch.randn(6, K, S)).sum().backward()
+    assert f.log_tau.grad is not None and f.log_tau.grad.abs() > 0

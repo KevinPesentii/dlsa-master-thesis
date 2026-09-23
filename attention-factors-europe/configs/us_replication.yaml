@@ -24,6 +24,8 @@ model:
   kind: attention
   n_factors: 30                  # K
   embedding_dim: 32
+  score_std_target: 1.0          # initial cross-sectional spread of the attention scores;
+                                 # a scalar temperature, equivalent to rescaling Q (not in the paper)
   lambda_ridge: 0.0001           # ridge in the loading solve, Section 3.2
 
 policy:

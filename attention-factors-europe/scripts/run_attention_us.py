@@ -60,6 +60,13 @@ def train_window(model, p: slots.SlotPanel, t_tr0: int, t_te0: int, cfg: dict,
         {"params": model.policy.parameters(), "weight_decay": tr["weight_decay"]},
         {"params": model.factors.parameters(), "weight_decay": 0.0},
     ], lr=tr["lr"])
+    target = cfg["model"].get("score_std_target")
+    if target:
+        # Calibrated on the training dates of this window only; see
+        # AttentionFactors.calibrate_temperature for why the scores need a scale at all.
+        tau = model.factors.calibrate_temperature(p.X[t_tr0:t_te0], p.in_universe[t_tr0:t_te0],
+                                                  float(target))
+        log(f"      score temperature calibrated to {tau:.1f} (target spread {target})")
     starts = list(range(t_tr0 + model.lookback, t_te0, tr["batch_days"]))
     blocks = [(b0, min(b0 + tr["batch_days"], t_te0)) for b0 in starts]
     blocks = [(b0, b1) for b0, b1 in blocks if b1 - b0 >= 20]

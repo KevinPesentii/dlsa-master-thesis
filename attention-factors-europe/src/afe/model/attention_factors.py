@@ -1,6 +1,7 @@
 """Attention factors (Epstein, Wang, Choi & Pelger 2025, Section 3.2), universe-masked.
 
-Equation (1) of the paper, in the slot layout of model/pca_factors.py and
+Equation (1) of the paper, with a scalar score temperature (see calibrate_temperature),
+in the slot layout of model/pca_factors.py and
 policy/trading.py: on each date the universe fills slots 0..n_t-1 of a fixed-width
 (T, S) array and the rest is padding.
 
@@ -67,9 +68,39 @@ class AttentionFactors(nn.Module):
         super().__init__()
         self.W_K = nn.Parameter(torch.randn(n_features, embedding_dim) / math.sqrt(n_features))
         self.Q = nn.Parameter(torch.randn(n_factors, embedding_dim) / math.sqrt(embedding_dim))
+        self.log_tau = nn.Parameter(torch.zeros(()))
         self.d = embedding_dim
         self.K = n_factors
         self.lambda_ridge = lambda_ridge
+
+    def calibrate_temperature(self, X: torch.Tensor, tradable: torch.Tensor,
+                              target_std: float = 1.0, max_dates: int = 200) -> float:
+        """Set the temperature so the scores start with a cross-sectional spread of target_std.
+
+        Softmax over 500 names needs score differences of order one to concentrate weight; at
+        initialisation the spread here is around 0.03, because the characteristics are rank
+        quantiles in [-0.5, 0.5] and the scores are divided by sqrt(d). The softmax is then
+        flat, every factor is the equal-weighted universe, and the gradient that would sharpen
+        it has to grow K*d + M*d parameters coherently from an almost flat surface.
+
+        tau multiplies the scores, so it is exactly equivalent to rescaling Q: the model class
+        of Equation (1) is unchanged. What changes is the parameterisation, and a single scalar
+        collects the sharpening signal from every factor and every asset at once.
+
+        MUST be called on training dates only, never on the dates being traded.
+        """
+        with torch.no_grad():
+            step = max(1, X.shape[0] // max_dates)
+            Xs, ms = X[::step], tradable[::step]
+            m = ms.unsqueeze(-1)
+            Xz = torch.where(m, Xs, torch.zeros_like(Xs))
+            n = m.sum(dim=1, keepdim=True).clamp_min(1).to(Xz.dtype)
+            Xz = torch.where(m, Xz - Xz.sum(dim=1, keepdim=True) / n, torch.zeros_like(Xz))
+            raw = torch.einsum("kd,tsd->tks", self.Q, Xz @ self.W_K) / math.sqrt(self.d)
+            keep = ms.unsqueeze(1).expand_as(raw)
+            spread = raw[keep].std()
+            self.log_tau.fill_(math.log(target_std / max(float(spread), 1e-12)))
+        return float(self.log_tau.detach().exp())
 
     def factor_weights(self, X: torch.Tensor, tradable: torch.Tensor) -> torch.Tensor:
         """X: (T, S, M), tradable: (T, S) bool. Returns w_F: (T, K, S), zero on padding."""
@@ -80,6 +111,7 @@ class AttentionFactors(nn.Module):
         n = m.sum(dim=1, keepdim=True).clamp_min(1).to(Xz.dtype)
         Xz = torch.where(m, Xz - Xz.sum(dim=1, keepdim=True) / n, torch.zeros_like(Xz))  # centre per date
         scores = torch.einsum("kd,tsd->tks", self.Q, Xz @ self.W_K) / math.sqrt(self.d)
+        scores = scores * self.log_tau.exp()
         keep = tradable.unsqueeze(1)                          # (T, 1, S)
         scores = scores.masked_fill(~keep, torch.finfo(scores.dtype).min)
         return torch.softmax(scores, dim=-1) * keep.to(scores.dtype)
