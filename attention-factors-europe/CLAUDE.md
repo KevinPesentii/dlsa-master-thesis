@@ -46,8 +46,11 @@ weaken a test to make code pass.
 - LongConv time-series filter: 1 layer, 32 hidden. Residual lookback 30 days.
 - lambda_Var = 100.
 - Cost term in the objective: 0.0005 * ||w_t - w_{t-1}||_1 + 0.0001 * ||max(-w_t, 0)||_1.
-- Reference results: attention K=30 gross SR 4.20, net 2.28, market beta 0.05.
-  PCA + LongConv gross 5.3-5.9 falls to 1.2-1.6 net. PCA + OU goes negative net.
+- Reference results (Table 2): attention K=30 gross SR 3.97 (mu 16.66%, sigma 4.20%),
+  net SR 2.28 (mu 9.52%), market beta 0.05. Costs mu - mu_net = 7.14% a year, ~2.8bp
+  a day, imply turnover ~0.47/day at 5bp/1bp with a short leg of 0.5 (||w||_1 = 1).
+  PCA + LongConv, K = 1-100: gross SR 2.3-2.8 (sigma 5.3-5.9%) falls to 1.2-1.6 net.
+  PCA + OU goes negative net for every K.
 
 ## Trading costs: limits, not replication
 
