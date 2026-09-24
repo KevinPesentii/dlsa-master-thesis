@@ -24,7 +24,8 @@ convention). Three update frequencies:
 
 All wide frames are float32 or float64 with NaN for "no data"; every rolling window
 states its minimum number of observations, below which the value is NaN. Nothing here
-fills NaN: the cross-sectional median fill happens after ranking, in build_us.py.
+fills NaN: the last-observed carry and the cross-sectional median fill after ranking both
+happen in build_us.py.
 """
 
 from __future__ import annotations

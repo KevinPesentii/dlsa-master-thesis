@@ -71,7 +71,13 @@ windows:                     # in trading days unless stated
 
 normalisation:
   method: rank_quantile      # cross-sectional rank within the universe, mapped to (-0.5, 0.5]
-  missing: median            # NaN characteristic -> cross-sectional median (0 after ranking)
+  # A missing characteristic takes the stock's last observed value, else the cross-sectional
+  # median (0 after ranking): Epstein et al. (2025), Section 4.1. 'median' skips the first
+  # step (Chen-Pelger-Zhu; every build before 2026-09-24). A carried value is at most
+  # carry_max old, in trading days for daily and months for monthly characteristics; an
+  # annual one comes from the latest fiscal year that has it, within max_age_months.
+  missing: last_observed     # last_observed | median
+  carry_max: {daily: 5, monthly: 12}
   median_over: universe      # CONFIRM 3: universe | pool
 
 characteristics:             # the 39 of the paper; drop a name here to exclude it
