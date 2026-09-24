@@ -67,9 +67,11 @@ from afe.model.attention_pipeline import AttentionArb, to_pool  # noqa: E402
 DEFAULT_GRID = [0.1, 1.0, 10.0, 100.0]
 
 
-def with_lambda(cfg: dict, lam: float) -> dict:
+def with_params(cfg: dict, lam: float, tau: float | None = None) -> dict:
     c = copy.deepcopy(cfg)
     c["objective"]["lambda_var"] = float(lam)
+    if tau is not None:
+        c["model"]["score_std_target"] = float(tau)
     return c
 
 
@@ -83,8 +85,15 @@ def fresh_model(cfg: dict, K: int, n_features: int, init_seed: int) -> Attention
 
 
 def select_lambda(K: int, cfg: dict, seed: int, p: slots.SlotPanel, year: int,
-                  grid: list[float], val_years: int) -> tuple[float, dict]:
-    """Train one fresh model per lambda on [Y-W, Y-V), score its net Sharpe on [Y-V, Y)."""
+                  grid: list[float], val_years: int,
+                  tau_grid: list[float] | None = None) -> tuple[tuple, dict]:
+    """One fresh model per (lambda, tau) on [Y-W, Y-V), scored by net Sharpe on [Y-V, Y).
+
+    tau is the target spread of the attention scores (model.score_std_target). Every
+    candidate starts from the same weights and sees the same block order, so the
+    comparison is about the pair and not about the draw. Returns the winning pair and
+    every score. The test year is never touched.
+    """
     W = cfg["training"]["window_years"]
     dates = p.dates
     t_tr0 = dates.searchsorted(pd.Timestamp(year - W, 1, 1))
@@ -93,21 +102,24 @@ def select_lambda(K: int, cfg: dict, seed: int, p: slots.SlotPanel, year: int,
     if dates[t_tr0].year > year - W:
         raise SystemExit(f"{year}: the panel starts {dates[0]:%Y-%m-%d}, too late for a {W}-year window")
     init_seed = seed * 10007 + year
+    taus = tau_grid if tau_grid else [None]
     scores = {}
     for lam in grid:
-        c = with_lambda(cfg, lam)
-        model = fresh_model(c, K, len(p.features), init_seed)
-        base.train_window(model, p, t_tr0, t_va0, c, np.random.default_rng(init_seed), lambda s: None)
-        model.eval()
-        with torch.no_grad():
-            _, parts, _ = base.span(model, p, t_va0, t_te0, c)
-        scores[lam] = float(metrics.annualised(parts["net"].numpy())["SR"])
-    return max(grid, key=lambda g: scores[g]), scores
+        for tau in taus:
+            c = with_params(cfg, lam, tau)
+            model = fresh_model(c, K, len(p.features), init_seed)
+            base.train_window(model, p, t_tr0, t_va0, c, np.random.default_rng(init_seed),
+                              lambda s: None)
+            model.eval()
+            with torch.no_grad():
+                _, parts, _ = base.span(model, p, t_va0, t_te0, c)
+            scores[(lam, tau)] = float(metrics.annualised(parts["net"].numpy())["SR"])
+    return max(scores, key=lambda k: scores[k]), scores
 
 
 def run_K_val(K: int, cfg: dict, seed: int, p: slots.SlotPanel, years: list[int],
               grid: list[float], val_years: int, log, select: str = "once",
-              select_year: int | None = None) -> dict:
+              select_year: int | None = None, tau_grid: list[float] | None = None) -> dict:
     pc, ob, ev = cfg["policy"], cfg["objective"], cfg["evaluation"]
     assert pc["layers"] == 1
     W = cfg["training"]["window_years"]
@@ -125,13 +137,16 @@ def run_K_val(K: int, cfg: dict, seed: int, p: slots.SlotPanel, years: list[int]
     if select == "once":
         sy = select_year if select_year is not None else min(years)
         t_s = time.time()
-        once_star, once_scores = select_lambda(K, cfg, seed, p, sy, grid, val_years)
+        once_star, once_scores = select_lambda(K, cfg, seed, p, sy, grid, val_years, tau_grid)
         val_scores["selection"] = {"window_ends": sy, "validation_years": val_years,
-                                   **{str(k): v for k, v in once_scores.items()}}
+                                   **{f"lambda={k[0]:g},tau={k[1]}": v for k, v in once_scores.items()}}
         log(f"  selection once, window ending {sy - 1}: train {sy - W}..{sy - val_years - 1}, "
             f"validate {sy - val_years}..{sy - 1}  net SR  "
-            + "  ".join(f"{g:g}:{once_scores[g]:+.2f}" for g in grid)
-            + f"  ->  lambda {once_star:g} for every year  [{time.time() - t_s:.0f}s]")
+            + "  ".join(f"[lam {k[0]:g}" + (f", tau {k[1]:g}" if k[1] is not None else "")
+                        + f"] {v:+.2f}" for k, v in once_scores.items())
+            + f"  ->  lambda {once_star[0]:g}"
+            + (f", tau {once_star[1]:g}" if once_star[1] is not None else "")
+            + f" for every year  [{time.time() - t_s:.0f}s]")
 
     for year in years:
         t_tr0 = dates.searchsorted(pd.Timestamp(year - W, 1, 1))
@@ -143,13 +158,14 @@ def run_K_val(K: int, cfg: dict, seed: int, p: slots.SlotPanel, years: list[int]
         t0 = time.time()
 
         if select == "yearly":
-            lam_star, scores = select_lambda(K, cfg, seed, p, year, grid, val_years)
-            chosen[str(year)], val_scores[str(year)] = lam_star, {str(k): v for k, v in scores.items()}
+            lam_star, scores = select_lambda(K, cfg, seed, p, year, grid, val_years, tau_grid)
+            chosen[str(year)] = list(lam_star)
+            val_scores[str(year)] = {f"lambda={k[0]:g},tau={k[1]}": v for k, v in scores.items()}
         else:
             lam_star, scores = once_star, once_scores
-            chosen[str(year)] = lam_star
+            chosen[str(year)] = list(lam_star)
 
-        c = with_lambda(cfg, lam_star)
+        c = with_params(cfg, lam_star[0], lam_star[1])
         model = fresh_model(c, K, len(p.features), init_seed)
         base.train_window(model, p, t_tr0, t_te0, c, np.random.default_rng(init_seed), quiet)
         model.eval()
@@ -159,9 +175,10 @@ def run_K_val(K: int, cfg: dict, seed: int, p: slots.SlotPanel, years: list[int]
         w_slot_all.append(w.numpy())
         w_pool_all.append(to_pool(w, p.idx[t_te0:t_te1], p.n_pool).numpy())
         t_all.append(np.arange(t_te0, t_te1))
-        score_txt = ("validation " + "  ".join(f"{g:g}:{scores[g]:+.2f}" for g in grid) + "  ->  "
-                     if select == "yearly" else "")
-        log(f"  {year}: {score_txt}lambda {lam_star:g}   | test net SR "
+        score_txt = ("validation best  ->  " if select == "yearly" else "")
+        log(f"  {year}: {score_txt}lambda {lam_star[0]:g}"
+            + (f", tau {lam_star[1]:g}" if lam_star[1] is not None else "")
+            + "   | test net SR "
             f"{metrics.annualised(parts['net'].numpy())['SR']:+.2f}  [{time.time() - t0:.0f}s]")
 
     t_idx = np.concatenate(t_all)
@@ -183,8 +200,8 @@ def run_K_val(K: int, cfg: dict, seed: int, p: slots.SlotPanel, years: list[int]
         tt, ss = np.nonzero(ws != 0)
         pd.DataFrame({"date": dates[t_idx[tt]], "sec_id": p.sec_ids[p.idx.numpy()[t_idx[tt], ss]],
                       "w": ws[tt, ss].astype(np.float32)}).to_parquet(run_dir / "weights.parquet", index=False)
-    counts = pd.Series(list(chosen.values())).value_counts().sort_index()
-    log(f"lambda chosen: " + ", ".join(f"{k:g} x{v}" for k, v in counts.items()))
+    counts = pd.Series([str(v) for v in chosen.values()]).value_counts()
+    log("(lambda, tau) chosen: " + ", ".join(f"{k} x{v}" for k, v in counts.items()))
     log(f"K={K:3d}  {metrics.table_row(m)}   turnover {m['turnover_daily']:.3f}  "
         f"short {m['short_exposure']:.3f}  break-even {m['break_even_turnover_cost_bps']:.1f}bp")
     return m
@@ -202,6 +219,8 @@ def main():
     ap.add_argument("--grid", type=float, nargs="+", default=DEFAULT_GRID)
     ap.add_argument("--select", choices=["once", "yearly"], default="once",
                     help="once: the paper's procedure (first window, last 2 years); yearly: per refit")
+    ap.add_argument("--tau-grid", type=float, nargs="*",
+                    help="target spreads for the attention scores; omit to keep the config value")
     ap.add_argument("--val-years", type=int, help="default 2 for once (the paper), 1 for yearly")
     args = ap.parse_args()
     cfg = yaml.safe_load(Path(args.config).read_text())
@@ -226,10 +245,12 @@ def main():
     p = slots.load_slots(data_dir, f"{first - cfg['training']['window_years']}-01-01", f"{max(years)}-12-31")
     log(f"panel {tuple(p.X.shape)} from {data_dir} in {time.time() - t0:.0f}s, "
         f"{p.dates[0]:%Y-%m-%d}..{p.dates[-1]:%Y-%m-%d}, torch threads {torch.get_num_threads()}, "
-        f"lambda grid {args.grid}, select {args.select}, validation {val_years}y")
+        f"lambda grid {args.grid}, tau grid {args.tau_grid}, select {args.select}, "
+        f"validation {val_years}y")
     log("      K    SR     mu   sigma   SRnet  munet signet   beta")
     for K in Ks:
-        run_K_val(K, cfg, seed, p, years, args.grid, val_years, log, args.select, select_year)
+        run_K_val(K, cfg, seed, p, years, args.grid, val_years, log, args.select, select_year,
+                  args.tau_grid)
 
 
 if __name__ == "__main__":
