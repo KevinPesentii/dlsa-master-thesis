@@ -454,12 +454,15 @@ def annual_frame(funda: pd.DataFrame, ccm: pd.DataFrame, co: pd.DataFrame, cfg: 
     return f
 
 
-def align_annual(annual: pd.DataFrame, mapping: pd.DataFrame, cols: list[str], max_age_months: int) -> pd.DataFrame:
+def align_annual(annual: pd.DataFrame, mapping: pd.DataFrame, cols: list[str], max_age_months: int,
+                 last_observed: bool = False) -> pd.DataFrame:
     """For each (permno, month, gvkey) in `mapping`, the latest fiscal record whose
     avail_month <= month and whose datadate is at most max_age_months old. Returns
-    (permno, month) + `cols`."""
+    (permno, month) + `cols`. With last_observed, each column comes instead from the latest
+    such record in which it is not missing: the stock's last observed value."""
     left = mapping.copy()
     left["key"] = left["month"].dt.to_timestamp(how="end").dt.normalize()
+    left = left.sort_values("key", ignore_index=True)
     right = annual[["gvkey", "datadate", "avail_month"] + cols].copy()
     right["key"] = right["avail_month"].dt.to_timestamp(how="end").dt.normalize()
     # A fiscal-year-end change puts two records in one calendar year (AMD: 1987-03 and 1987-12),
@@ -467,8 +470,12 @@ def align_annual(annual: pd.DataFrame, mapping: pd.DataFrame, cols: list[str], m
     # sort_values("key") alone is unstable and picked either, depending on the frame's length,
     # which broke prefix invariance (found 2026-09-23 with the 2010-09-15 cutoff build).
     right = right.sort_values(["key", "datadate"], kind="mergesort")
-    out = pd.merge_asof(left.sort_values("key"), right.drop(columns="avail_month"), on="key", by="gvkey",
-                        direction="backward")
-    age = (out["key"].dt.year - out["datadate"].dt.year) * 12 + (out["key"].dt.month - out["datadate"].dt.month)
-    out.loc[~(age <= max_age_months), cols] = np.nan
-    return out[["permno", "month"] + cols]
+    out = left[["permno", "month"]].copy()
+    for group in ([[c] for c in cols] if last_observed else [cols]):
+        r = right.dropna(subset=group) if last_observed else right
+        m = pd.merge_asof(left, r[["gvkey", "key", "datadate"] + group], on="key", by="gvkey",
+                          direction="backward")
+        age = (m["key"].dt.year - m["datadate"].dt.year) * 12 + (m["key"].dt.month - m["datadate"].dt.month)
+        m.loc[~(age <= max_age_months), group] = np.nan
+        out[group] = m[group].to_numpy()
+    return out
