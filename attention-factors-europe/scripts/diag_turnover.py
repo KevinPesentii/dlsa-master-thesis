@@ -92,10 +92,16 @@ def main():
         w_port = model.policy(windows) * tradable                      # (T, S), test dates
         wF, bT = w_F[L:], betaT[L:]
         w = l1_normalise(compose(w_port, wF, bT))                      # what we traded
-        # counterfactual: yesterday's policy signal, today's composition
-        w_mixed = l1_normalise(compose(torch.cat([w_port[:1], w_port[:-1]]), wF, bT))
-
+        # counterfactual: yesterday's policy signal, today's composition. Shifted by company,
+        # not by slot: slots are re-sorted by cap_rank every month, so the previous slot row
+        # holds other companies on each month's first day. Names not tradable today get 0.
         idx_test = p.idx[t_te0:t_te1]
+        pp = to_pool(w_port, idx_test, p.n_pool)
+        pp_prev = torch.cat([pp[:1], pp[:-1]])
+        pp_prev = torch.cat([pp_prev, pp_prev.new_zeros(pp_prev.shape[0], 1)], dim=1)   # padding column
+        w_port_prev = torch.gather(pp_prev, 1, idx_test) * tradable
+        w_mixed = l1_normalise(compose(w_port_prev, wF, bT))
+
         wp = to_pool(w, idx_test, p.n_pool)
         wm = to_pool(w_mixed, idx_test, p.n_pool)
         total = (wp[1:] - wp[:-1]).abs().sum(1)
