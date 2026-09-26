@@ -13,6 +13,11 @@ one new run directory runs/<stamp>_<name>_merged/ whose manifest lists its sourc
 
     python scripts/merge_year_runs.py runs/2026..._attention_val_K30_s0 runs/... [--dry-run]
 
+--walk-forward groups by (name, seed) only, so years run with different configs (e.g.
+hyperparameters re-selected inside the sample) become one strategy, <name>_walkforward/,
+whose manifest lists each segment's years, commit and config. The segments must share the
+cost settings; the trade at a switch is charged like any other seam.
+
 run_attention_us_val.py seeds each year from (seed, year), so a merged val run reproduces a
 sequential one. run_attention_us.py seeds once per process, so every standalone year starts
 from the same draw: a valid run, but not the same numbers as a sequential one.
@@ -49,8 +54,10 @@ def load(d: Path) -> dict:
             "daily": daily, "w": w}
 
 
-def group_key(r: dict) -> str:
+def group_key(r: dict, walk_forward: bool = False) -> str:
     m = r["manifest"]
+    if walk_forward:            # one group per (name, seed): the config may change between years
+        return json.dumps([m["name"], m["seed"]])
     cfg = {k: v for k, v in m["config"].items() if k != "years"}
     return json.dumps([m["name"], m["seed"], m["git_commit"], cfg], sort_keys=True, default=str)
 
@@ -59,9 +66,23 @@ def book(w: pd.DataFrame, date) -> pd.Series:
     return w[w["date"] == date].groupby("sec_id")["w"].sum().astype(np.float64)
 
 
-def merge_group(rs: list[dict], dry_run: bool) -> None:
+def merge_group(rs: list[dict], dry_run: bool, walk_forward: bool = False) -> None:
     rs = sorted(rs, key=lambda r: r["daily"]["date"].min())
     name, man0 = rs[0]["manifest"]["name"], rs[0]["manifest"]
+    segments: dict[str, dict] = {}
+    for r in rs:                # consecutive years that share one config and commit
+        c = {k: v for k, v in r["manifest"]["config"].items() if k != "years"}
+        seg = segments.setdefault(json.dumps([r["manifest"]["git_commit"], c], sort_keys=True, default=str),
+                                  {"git_commit": r["manifest"]["git_commit"], "config": c, "years": []})
+        seg["years"] += r["manifest"]["config"]["years"]
+    if walk_forward:
+        costs = {json.dumps([s["config"]["objective"]["turnover_cost"], s["config"]["objective"]["short_cost"],
+                             s["config"]["evaluation"]["cost_grid_bps"]]) for s in segments.values()}
+        if len(costs) > 1:
+            raise SystemExit(f"{name}: the segments use different cost settings {costs}; not one strategy")
+        for s in segments.values():
+            print(f"  segment {min(s['years'])}-{max(s['years'])}: "
+                  f"{s['config'].get('selection', {}).get('candidate', 'config')} (commit {s['git_commit'][:7]})")
     daily = pd.concat([r["daily"] for r in rs], ignore_index=True)
     if daily["date"].duplicated().any():
         raise SystemExit(f"{name}: the runs overlap in dates; pass each year once")
@@ -100,10 +121,15 @@ def merge_group(rs: list[dict], dry_run: bool) -> None:
           f"short {m['short_exposure']:.3f}  break-even {m['break_even_turnover_cost_bps']:.1f}bp")
     if dry_run:
         return
-    out = runs.create_run(f"{name}_merged", {**man0["config"], "years": years,
-                                             "merged_from": m["merged_from"]},
-                          man0["seed"], root=rs[0]["dir"].parent)
-    if runs.git_commit(ROOT) != man0["git_commit"]:
+    if walk_forward:
+        out = runs.create_run(f"{name}_walkforward", {"walk_forward": list(segments.values()), "years": years,
+                                                      "merged_from": m["merged_from"]},
+                              man0["seed"], root=rs[0]["dir"].parent)
+    else:
+        out = runs.create_run(f"{name}_merged", {**man0["config"], "years": years,
+                                                 "merged_from": m["merged_from"]},
+                              man0["seed"], root=rs[0]["dir"].parent)
+    if not walk_forward and runs.git_commit(ROOT) != man0["git_commit"]:
         print(f"  WARNING: this checkout is at {runs.git_commit(ROOT)}, the runs at {man0['git_commit']}")
     runs.write_metrics(out, m)
     daily.to_csv(out / "oos_daily.csv", index=False)
@@ -115,13 +141,15 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("run_dirs", nargs="+", type=Path)
     ap.add_argument("--dry-run", action="store_true", help="print the merged metrics, write nothing")
+    ap.add_argument("--walk-forward", action="store_true",
+                    help="merge years run with different configs (e.g. re-selected hyperparameters) per seed")
     args = ap.parse_args()
     groups: dict[str, list[dict]] = {}
     for d in args.run_dirs:
         r = load(d)
-        groups.setdefault(group_key(r), []).append(r)
+        groups.setdefault(group_key(r, args.walk_forward), []).append(r)
     for rs in groups.values():
-        merge_group(rs, args.dry_run)
+        merge_group(rs, args.dry_run, args.walk_forward)
 
 
 if __name__ == "__main__":
