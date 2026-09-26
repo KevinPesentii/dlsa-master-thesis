@@ -82,6 +82,10 @@ def draw(spec: dict, u: float):
 def sobol_points(space: dict, n: int, seed: int) -> list[dict]:
     if n < 1 or n & (n - 1):
         raise SystemExit(f"n_points {n}: use a power of 2, Sobol points are balanced only then")
+    for key, spec in space.items():
+        if not set(spec) <= {"log", "off", "choice"}:
+            raise SystemExit(f"{key}: unknown keys {set(spec) - {'log', 'off', 'choice'}} "
+                             "(in YAML, quote \"off\": bare off is the boolean false)")
     u = qmc.Sobol(d=len(space), scramble=True, seed=seed).random_base2(int(math.log2(n)))
     return [{k: draw(spec, float(x)) for x, (k, spec) in zip(row, space.items())} for row in u]
 

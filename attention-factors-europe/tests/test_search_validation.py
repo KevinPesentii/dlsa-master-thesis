@@ -62,6 +62,15 @@ def test_sobol_draws_stay_in_the_space():
     assert pts == sv.sobol_points(space, 64, 0)
     with pytest.raises(SystemExit):
         sv.sobol_points(space, 60, 0)
+    with pytest.raises(SystemExit):                      # what PyYAML makes of a bare `off:`
+        sv.sobol_points({"model.score_std_target": {"log": [0.3, 3], False: 0.25}}, 64, 0)
+
+
+def test_committed_search_space_parses_as_written():
+    """The first search ran without its switched-off quarter: PyYAML read `off` as False."""
+    S = yaml.safe_load((ROOT / "configs" / "us_search.yaml").read_text())["search"]
+    pts = sv.sobol_points(S["space"], S["n_points"], S["sobol_seed"])
+    assert sum(q["model.score_std_target"] is None for q in pts) == S["n_points"] // 4
 
 
 def test_overrides_reject_unknown_keys():

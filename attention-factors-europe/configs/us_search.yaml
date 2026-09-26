@@ -12,7 +12,9 @@ validation_years: 2           # its last two years
 eval_epochs: [10, 20, 30, 45] # extra points on each learning curve; the final epoch is always scored
 
 # Stage 1. Sobol points over what the paper leaves open, or where our units differ from the
-# paper's. log: log-uniform on [lo, hi]; off: probability of null (switched off); choice: one of.
+# paper's. log: log-uniform on [lo, hi]; "off": probability of null (switched off); choice: one of.
+# Keep "off" quoted: bare off is the boolean false in YAML 1.1 (PyYAML), which silently
+# dropped it in the first run (20260926T091942Z, superseded).
 search:
   n_points: 64                # a power of 2
   sobol_seed: 0
@@ -20,7 +22,7 @@ search:
   space:
     objective.lambda_var: {log: [0.1, 300]}            # paper 100, but its loss units are not ours
     policy.input_scale: {log: [0.3, 300]}              # not in the paper: decimal (1) to percent (100)
-    model.score_std_target: {log: [0.3, 3], off: 0.25} # not in the paper: score temperature
+    model.score_std_target: {log: [0.3, 3], "off": 0.25}  # not in the paper: score temperature
     model.lambda_ridge: {log: [1.0e-5, 1.0e-2]}        # paper: "a ridge penalty for stability", no value
     training.batch_days: {choice: [63, 125, 250]}      # paper: not stated
     policy.input: {choice: [cumulative, raw]}          # paper: not stated
