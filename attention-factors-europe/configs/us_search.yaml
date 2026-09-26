@@ -1,0 +1,48 @@
+# Hyperparameter search on the FIRST training window, the paper's protocol (Appendix B:
+# "We use the last two years of the first training window to select tuning parameters").
+# For the 1998 start: fit 1990-1995, score the net Sharpe on 1996-1997. The search loads
+# nothing dated after 1997. Commit this file before the search runs and do not edit it
+# afterwards: it is the pre-registration of the space, the budget and the rule.
+#   python scripts/search_validation.py --config configs/us_search.yaml [--jobs 3 --threads 2]
+
+base_config: configs/us_replication.yaml   # everything not listed below comes from here
+K: 30
+first_oos_year: 1998          # first training window = [first_oos_year - window_years, first_oos_year)
+validation_years: 2           # its last two years
+eval_epochs: [10, 20, 30, 45] # extra points on each learning curve; the final epoch is always scored
+
+# Stage 1. Sobol points over what the paper leaves open, or where our units differ from the
+# paper's. log: log-uniform on [lo, hi]; off: probability of null (switched off); choice: one of.
+search:
+  n_points: 64                # a power of 2
+  sobol_seed: 0
+  seed: 0
+  space:
+    objective.lambda_var: {log: [0.1, 300]}            # paper 100, but its loss units are not ours
+    policy.input_scale: {log: [0.3, 300]}              # not in the paper: decimal (1) to percent (100)
+    model.score_std_target: {log: [0.3, 3], off: 0.25} # not in the paper: score temperature
+    model.lambda_ridge: {log: [1.0e-5, 1.0e-2]}        # paper: "a ridge penalty for stability", no value
+    training.batch_days: {choice: [63, 125, 250]}      # paper: not stated
+    policy.input: {choice: [cumulative, raw]}          # paper: not stated
+
+# Stage 2. The best `top` points of stage 1 and the base config are rerun with these seeds;
+# the winner is the best MEAN validation net Sharpe. selected.yaml = base config + its values.
+finalists:
+  top: 5
+  seeds: [0, 1, 2]
+
+# Stage 3. Table 4 values of the paper, moved one at a time on the winner: about a third and
+# three times the paper's value (sizes and counts: half and double). REPORTED, NOT ADOPTED:
+# Table 4 is the paper's own selection under this protocol, and 16 comparisons on three
+# seeds would adopt noise.
+robustness:
+  seeds: [0, 1, 2]
+  knobs:
+    training.lr: [0.001, 0.01]                # 0.003
+    training.weight_decay: [0.015, 0.15]      # 0.05
+    training.epochs: [15, 60]                 # 30
+    policy.dropout: [0.0, 0.3]                # 0.1
+    policy.hidden: [16, 64]                   # 32
+    policy.lambda_squash: [0.0003, 0.003]     # 0.001
+    policy.residual_lookback: [15, 60]        # 30
+    model.embedding_dim: [16, 64]             # 32
