@@ -50,7 +50,10 @@ def span(model, p: slots.SlotPanel, t0: int, t1: int, cfg: dict, w_prev=None):
 
 
 def train_window(model, p: slots.SlotPanel, t_tr0: int, t_te0: int, cfg: dict,
-                 rng: np.random.Generator, log) -> None:
+                 rng: np.random.Generator, log, on_epoch=None) -> None:
+    """`on_epoch(epoch, model)`, if given, runs after every epoch (1-based), e.g. to score a
+    validation span in eval mode; tests/test_search_validation.py checks that this leaves
+    the training path unchanged."""
     tr = cfg["training"]
     # Table 4 of the paper: weight decay 0.05 is "Adam weight decay in LongConv model", so it
     # applies to the sequence model only. The attention factor parameters (Q, W_K) are not
@@ -86,6 +89,8 @@ def train_window(model, p: slots.SlotPanel, t_tr0: int, t_te0: int, cfg: dict,
         if epoch == 0 or (epoch + 1) % 10 == 0:
             log(f"      epoch {epoch + 1:2d}: loss {tot / len(blocks):+.3f}  "
                 f"(sharpe part {parts['sharpe_loss'].item():+.3f}, EV {ev / len(blocks):.3f})")
+        if on_epoch is not None:
+            on_epoch(epoch + 1, model)
 
 
 def run_K(K: int, cfg: dict, seed: int, p: slots.SlotPanel, years: list[int], log) -> dict:

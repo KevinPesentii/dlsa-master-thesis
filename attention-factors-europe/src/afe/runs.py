@@ -11,6 +11,7 @@ import json
 import platform
 import subprocess
 import sys
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -51,10 +52,19 @@ def package_versions() -> dict[str, str]:
 
 
 def create_run(name: str, config: dict[str, Any], seed: int, root: Path = RUNS_ROOT) -> Path:
-    """Make runs/<timestamp>_<name>/ and write the manifest. Returns the directory."""
-    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-    run_dir = root / f"{stamp}_{name}"
-    run_dir.mkdir(parents=True, exist_ok=False)
+    """Make runs/<timestamp>_<name>/ and write the manifest. Returns the directory.
+
+    Parallel processes (scripts/run_years_parallel.sh) can reach this in the same second
+    with the same name; mkdir is atomic, so the loser waits for the next second's stamp.
+    """
+    while True:
+        stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        run_dir = root / f"{stamp}_{name}"
+        try:
+            run_dir.mkdir(parents=True, exist_ok=False)
+            break
+        except FileExistsError:
+            time.sleep(0.25)
     manifest = {
         "name": name,
         "created_utc": stamp,
