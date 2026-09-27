@@ -141,3 +141,45 @@ def test_gradient_reaches_the_temperature():
     tr = torch.ones(6, S, dtype=torch.bool)
     (f.factor_weights(X, tr) * torch.randn(6, K, S)).sum().backward()
     assert f.log_tau.grad is not None and f.log_tau.grad.abs() > 0
+
+
+# ---------------------------------------------------------------- level conditioning
+
+def _levels_panel(seed=11):
+    torch.manual_seed(seed)
+    ranks = torch.rand(8, S, 39) - 0.5
+    med = (torch.rand(8, 1, 39) * 3.4e7).expand(8, S, 39)     # same for every asset on a date
+    rf = (torch.rand(8, 1, 1) * 2e-4).expand(8, S, 1)
+    return torch.cat([ranks, med, rf], -1), torch.ones(8, S, dtype=torch.bool)
+
+
+def test_levels_are_dropped_without_conditioning():
+    """The paper's Equation (1): a column constant across assets cannot move the weights."""
+    X, tr = _levels_panel()
+    f = AttentionFactors(n_features=79, n_factors=K, embedding_dim=D)
+    X0 = X.clone(); X0[..., 39:] = 0.0
+    assert (f.factor_weights(X, tr) - f.factor_weights(X0, tr)).abs().max() < 1e-6
+
+
+def test_query_conditioning_starts_as_the_paper_and_then_uses_the_levels():
+    X, tr = _levels_panel()
+    torch.manual_seed(3)
+    plain = AttentionFactors(n_features=79, n_factors=K, embedding_dim=D)
+    torch.manual_seed(3)
+    cond = AttentionFactors(n_features=79, n_factors=K, embedding_dim=D, level_hidden=16)
+    # the last layer of g starts at zero, so the two models start identical
+    assert torch.allclose(plain.factor_weights(X, tr), cond.factor_weights(X, tr), atol=1e-6)
+
+    with torch.no_grad():                                      # give g something to say
+        cond.level[2].weight.normal_(0, 0.1)
+    X0 = X.clone(); X0[..., 39:] = 0.0
+    moved = (cond.factor_weights(X, tr) - cond.factor_weights(X0, tr)).abs().max()
+    assert moved > 1e-3, moved                                 # now the levels matter
+
+
+def test_gradient_reaches_the_level_network():
+    X, tr = _levels_panel()
+    f = AttentionFactors(n_features=79, n_factors=K, embedding_dim=D, level_hidden=16)
+    (f.factor_weights(X, tr) * torch.randn(8, K, S)).sum().backward()
+    g = f.level[2].weight.grad
+    assert g is not None and g.abs().sum() > 0

@@ -42,7 +42,8 @@ def span(model, p: slots.SlotPanel, t0: int, t1: int, cfg: dict, w_prev=None):
     L, pc, ob = model.lookback, cfg["policy"], cfg["objective"]
     s = t0 - L
     out = model.forward_span(p.X[s:t1], p.R[s:t1], p.in_universe[s:t1], p.idx[s:t1], p.n_pool,
-                             cumulative=pc["input"] == "cumulative", scale=pc["input_scale"])
+                             cumulative=pc["input"] == "cumulative", scale=pc["input_scale"],
+                             normalise=pc.get("input_normalise", "none"))
     b = slot_batch(p.R[t0:t1], p.idx[t0:t1], p.rf[t0:t1], out["tradable"], p.n_pool)
     loss, parts = objective(out, b, ob["turnover_cost"], ob["short_cost"], ob["lambda_var"],
                             ob["subtract_rf"], w_prev)
@@ -115,7 +116,7 @@ def run_K(K: int, cfg: dict, seed: int, p: slots.SlotPanel, years: list[int], lo
         log(f"  {year}: train {dates[t_tr0]:%Y-%m-%d}..{dates[t_te0 - 1]:%Y-%m-%d} "
             f"({t_te0 - t_tr0} days), test {t_te1 - t_te0} days")
         model = AttentionArb(n_features=len(p.features), n_factors=K, embedding_dim=mc["embedding_dim"],
-                             lambda_ridge=mc["lambda_ridge"], hidden=pc["hidden"], lookback=L,
+                             lambda_ridge=mc["lambda_ridge"], level_hidden=mc.get("level_hidden", 0), hidden=pc["hidden"], lookback=L,
                              dropout=pc["dropout"], lambda_squash=pc["lambda_squash"])
         train_window(model, p, t_tr0, t_te0, cfg, rng, log)
         model.eval()

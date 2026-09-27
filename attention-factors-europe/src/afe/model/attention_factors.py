@@ -64,7 +64,7 @@ class AttentionFactors(nn.Module):
     """
 
     def __init__(self, n_features: int, n_factors: int = 30, embedding_dim: int = 32,
-                 lambda_ridge: float = 1e-4):
+                 lambda_ridge: float = 1e-4, level_hidden: int = 0):
         super().__init__()
         self.W_K = nn.Parameter(torch.randn(n_features, embedding_dim) / math.sqrt(n_features))
         self.Q = nn.Parameter(torch.randn(n_factors, embedding_dim) / math.sqrt(embedding_dim))
@@ -72,6 +72,28 @@ class AttentionFactors(nn.Module):
         self.d = embedding_dim
         self.K = n_factors
         self.lambda_ridge = lambda_ridge
+        self.level = None
+        if level_hidden:
+            # Level conditioning, NOT in the paper. The paper adds the cross-sectional medians
+            # and the risk-free rate to X "in order to keep the level information", but a column
+            # that is the same for every asset adds the same constant to every entry of a score
+            # row, and the row-wise softmax drops constants: measured here, zeroing those 40
+            # columns moves the factor weights by 1e-9 and their rows of W_K get a gradient
+            # 2e5 times smaller than the rank columns. Level information cannot reach the model
+            # through the keys.
+            #
+            # It can through the QUERIES. A score is <q_k, key_i>, so shifting q_k by the same
+            # vector changes each asset's score differently, because the keys differ: the shift
+            # survives the softmax. So q_k(t) = q_k + g(z_t), with z_t the cross-sectional mean
+            # of X on that date (the level of every characteristic, which is exactly what the
+            # medians carry; the rank columns average to about zero and contribute little) and g
+            # shared across factors. The last layer starts at zero, so the model starts out
+            # identical to Equation (1) and learns the deviation.
+            self.level = nn.Sequential(
+                nn.Linear(n_features, level_hidden), nn.GELU(),
+                nn.Linear(level_hidden, embedding_dim))
+            nn.init.zeros_(self.level[2].weight)
+            nn.init.zeros_(self.level[2].bias)
 
     def calibrate_temperature(self, X: torch.Tensor, tradable: torch.Tensor,
                               target_std: float = 1.0, max_dates: int = 200) -> float:
@@ -95,7 +117,8 @@ class AttentionFactors(nn.Module):
             m = ms.unsqueeze(-1)
             Xz = torch.where(m, Xs, torch.zeros_like(Xs))
             n = m.sum(dim=1, keepdim=True).clamp_min(1).to(Xz.dtype)
-            Xz = torch.where(m, Xz - Xz.sum(dim=1, keepdim=True) / n, torch.zeros_like(Xz))
+            lv = Xz.sum(dim=1) / n.squeeze(1)
+            Xz = torch.where(m, Xz - lv.unsqueeze(1), torch.zeros_like(Xz))
             raw = torch.einsum("kd,tsd->tks", self.Q, Xz @ self.W_K) / math.sqrt(self.d)
             keep = ms.unsqueeze(1).expand_as(raw)
             spread = raw[keep].std()
@@ -109,8 +132,14 @@ class AttentionFactors(nn.Module):
         m = tradable.unsqueeze(-1)
         Xz = torch.where(m, X, torch.zeros_like(X))           # padding may hold NaN
         n = m.sum(dim=1, keepdim=True).clamp_min(1).to(Xz.dtype)
-        Xz = torch.where(m, Xz - Xz.sum(dim=1, keepdim=True) / n, torch.zeros_like(Xz))  # centre per date
-        scores = torch.einsum("kd,tsd->tks", self.Q, Xz @ self.W_K) / math.sqrt(self.d)
+        levels = Xz.sum(dim=1) / n.squeeze(1)                                  # (T, M) date levels
+        Xz = torch.where(m, Xz - levels.unsqueeze(1), torch.zeros_like(Xz))  # centre per date
+        keys = Xz @ self.W_K
+        if self.level is None:
+            scores = torch.einsum("kd,tsd->tks", self.Q, keys) / math.sqrt(self.d)
+        else:
+            q = self.Q.unsqueeze(0) + self.level(levels).unsqueeze(1)          # (T, K, d)
+            scores = torch.einsum("tkd,tsd->tks", q, keys) / math.sqrt(self.d)
         scores = scores * self.log_tau.exp()
         keep = tradable.unsqueeze(1)                          # (T, 1, S)
         scores = scores.masked_fill(~keep, torch.finfo(scores.dtype).min)

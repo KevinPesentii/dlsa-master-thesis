@@ -16,7 +16,7 @@ eval_epochs: [10, 20, 30, 45] # extra points on each learning curve; the final e
 # Keep "off" quoted: bare off is the boolean false in YAML 1.1 (PyYAML), which silently
 # dropped it in the first run (20260926T091942Z, superseded).
 search:
-  n_points: 64                # a power of 2
+  n_points: 128               # a power of 2; 64 before the two knobs below were added
   sobol_seed: 0
   seed: 0
   space:
@@ -26,6 +26,10 @@ search:
     model.lambda_ridge: {log: [1.0e-5, 1.0e-2]}        # paper: "a ridge penalty for stability", no value
     training.batch_days: {choice: [63, 125, 250]}      # paper: not stated
     policy.input: {choice: [cumulative, raw]}          # paper: not stated
+    policy.input_normalise: {choice: [none, window_vol]}  # not in the paper: scale-free policy input
+    model.level_hidden: {choice: [0, 8, 32]}           # not in the paper: queries conditioned on the
+                                                       # date's characteristic levels (medians + rf),
+                                                       # which the row-wise softmax otherwise drops
 
 # Stage 2. The best `top` points of stage 1 and the base config are rerun with these seeds;
 # the winner is the best MEAN validation net Sharpe. selected.yaml = base config + its values.

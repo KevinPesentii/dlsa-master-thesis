@@ -73,7 +73,7 @@ def main():
 
     torch.manual_seed(cfg["seed"])
     model = AttentionArb(n_features=len(p.features), n_factors=K, embedding_dim=mc["embedding_dim"],
-                         lambda_ridge=mc["lambda_ridge"], hidden=pc["hidden"], lookback=L,
+                         lambda_ridge=mc["lambda_ridge"], level_hidden=mc.get("level_hidden", 0), hidden=pc["hidden"], lookback=L,
                          dropout=pc["dropout"], lambda_squash=pc["lambda_squash"])
     t0 = time.time()
     base.train_window(model, p, t_tr0, t_te0, cfg, np.random.default_rng(cfg["seed"]),
@@ -88,7 +88,8 @@ def main():
         eps_pool = to_pool(eps, p.idx[s:t_te1], p.n_pool)
         valid_pool = to_pool(p.in_universe[s:t_te1].float(), p.idx[s:t_te1], p.n_pool) > 0
         windows, tradable = residual_windows(eps_pool, valid_pool, p.idx[s:t_te1], L,
-                                             pc["input"] == "cumulative", pc["input_scale"])
+                                             pc["input"] == "cumulative", pc["input_scale"],
+                                             pc.get("input_normalise", "none"))
         w_port = model.policy(windows) * tradable                      # (T, S), test dates
         wF, bT = w_F[L:], betaT[L:]
         w = l1_normalise(compose(w_port, wF, bT))                      # what we traded

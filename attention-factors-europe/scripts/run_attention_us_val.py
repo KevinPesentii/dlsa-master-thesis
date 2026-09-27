@@ -79,7 +79,7 @@ def fresh_model(cfg: dict, K: int, n_features: int, init_seed: int) -> Attention
     mc, pc = cfg["model"], cfg["policy"]
     torch.manual_seed(init_seed)
     return AttentionArb(n_features=n_features, n_factors=K, embedding_dim=mc["embedding_dim"],
-                        lambda_ridge=mc["lambda_ridge"], hidden=pc["hidden"],
+                        lambda_ridge=mc["lambda_ridge"], level_hidden=mc.get("level_hidden", 0), hidden=pc["hidden"],
                         lookback=pc["residual_lookback"], dropout=pc["dropout"],
                         lambda_squash=pc["lambda_squash"])
 

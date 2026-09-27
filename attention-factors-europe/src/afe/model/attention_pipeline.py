@@ -40,7 +40,8 @@ def to_pool(x: torch.Tensor, idx: torch.Tensor, n_pool: int) -> torch.Tensor:
 
 
 def residual_windows(eps_pool: torch.Tensor, valid_pool: torch.Tensor, idx: torch.Tensor,
-                     lookback: int, cumulative: bool = True, scale: float = 1.0):
+                     lookback: int, cumulative: bool = True, scale: float = 1.0,
+                     normalise: str = "none", vol_floor: float = 1e-4):
     """Windows of past residuals per slot, differentiable in eps_pool.
 
     eps_pool: (T, P) residuals by company. valid_pool: (T, P) bool. idx: (T, S) company of
@@ -69,6 +70,17 @@ def residual_windows(eps_pool: torch.Tensor, valid_pool: torch.Tensor, idx: torc
     tradable = history_ok & own_ok & (cols < P)
 
     windows = windows * tradable.unsqueeze(-1)
+    if normalise == "window_vol":
+        # Each name's window divided by its own residual volatility over that window. Not in the
+        # paper. Two reasons: a volatile name and a quiet one otherwise enter the policy with very
+        # different amplitudes and the policy has to undo that itself; and the input scale stops
+        # mattering, since the ratio is scale-free (policy.input_scale then only rescales a
+        # standardised signal). Uses the L past residuals only, so it is as backward-looking as
+        # the window itself. The floor keeps a near-zero-volatility window from exploding.
+        sd = windows.std(dim=-1, keepdim=True, unbiased=False).clamp_min(vol_floor)
+        windows = windows / sd
+    elif normalise != "none":
+        raise ValueError(f"unknown policy.input_normalise: {normalise}")
     if cumulative:
         windows = windows.cumsum(dim=-1)
     return windows * scale, tradable
@@ -79,13 +91,15 @@ class AttentionArb(nn.Module):
 
     def __init__(self, n_features: int, n_factors: int = 30, embedding_dim: int = 32,
                  lambda_ridge: float = 1e-4, hidden: int = 32, lookback: int = 30,
-                 dropout: float = 0.1, lambda_squash: float = 1e-3):
+                 dropout: float = 0.1, lambda_squash: float = 1e-3, level_hidden: int = 0):
         super().__init__()
-        self.factors = AttentionFactors(n_features, n_factors, embedding_dim, lambda_ridge)
+        self.factors = AttentionFactors(n_features, n_factors, embedding_dim, lambda_ridge,
+                                        level_hidden)
         self.policy = LongConvPolicy(hidden, lookback, dropout, lambda_squash)
         self.lookback = lookback
 
-    def forward_span(self, X, R_slot, in_universe, idx, n_pool, cumulative=True, scale=1.0):
+    def forward_span(self, X, R_slot, in_universe, idx, n_pool, cumulative=True, scale=1.0,
+                     normalise="none"):
         """X: (T,S,M) lagged characteristics. R_slot: (T,S). in_universe: (T,S) bool.
         idx: (T,S) int64 company column, n_pool for padding.
 
@@ -98,7 +112,8 @@ class AttentionArb(nn.Module):
 
         eps_pool = to_pool(eps, idx, n_pool)
         valid_pool = to_pool(in_universe.to(eps.dtype), idx, n_pool) > 0
-        windows, tradable = residual_windows(eps_pool, valid_pool, idx, L, cumulative, scale)
+        windows, tradable = residual_windows(eps_pool, valid_pool, idx, L, cumulative, scale,
+                                             normalise)
 
         w_port = self.policy(windows) * tradable
         w = compose(w_port, w_F[L:], betaT[L:])

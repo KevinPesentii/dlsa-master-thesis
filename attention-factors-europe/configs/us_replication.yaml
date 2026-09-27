@@ -24,6 +24,9 @@ model:
   kind: attention
   n_factors: 30                  # K
   embedding_dim: 32
+  level_hidden: 0                # >0 conditions the queries on the date's characteristic levels
+                                 # (medians + rf), which the row-wise softmax otherwise drops.
+                                 # NOT in the paper: 0 reproduces Equation (1)
   score_std_target: 1.0          # initial cross-sectional spread of the attention scores;
                                  # a scalar temperature, equivalent to rescaling Q (not in the paper)
   lambda_ridge: 0.0001           # ridge in the loading solve, Section 3.2
@@ -36,6 +39,8 @@ policy:
   dropout: 0.1
   lambda_squash: 0.001
   input: cumulative              # cumulative residual path, as in the two-step benchmark
+  input_normalise: none          # none | window_vol: divide each window by its own residual
+                                 # volatility. NOT in the paper; makes the input scale-free
   input_scale: 1.0               # residuals as decimal returns, LongConv(eps) as written in the paper.
                                  # NOT a harmless unit: the encoder bias, GELU and the GLU gate make the
                                  # policy depend on it; x100 traded 47% more (1998-2021, see the commit)
