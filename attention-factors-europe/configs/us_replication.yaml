@@ -36,7 +36,9 @@ policy:
   dropout: 0.1
   lambda_squash: 0.001
   input: cumulative              # cumulative residual path, as in the two-step benchmark
-  input_scale: 100.0             # residuals fed in percent; the L1-normalised output is scale-free
+  input_scale: 1.0               # residuals as decimal returns, LongConv(eps) as written in the paper.
+                                 # NOT a harmless unit: the encoder bias, GELU and the GLU gate make the
+                                 # policy depend on it; x100 traded 47% more (1998-2021, see the commit)
 
 objective:
   lambda_var: 100
