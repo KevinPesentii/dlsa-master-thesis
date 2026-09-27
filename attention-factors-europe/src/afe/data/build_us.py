@@ -5,8 +5,9 @@
     features.parquet   date, sec_id, char_*, med_*, rf        universe rows only
 
 plus a build report, and, in `inspect_dir` (data/<market>/private, not shipped downstream),
-the un-normalised characteristics (characteristics_monthly.parquet, characteristics_daily.parquet)
-and the as-of ranking (universe_asof.parquet).
+the un-normalised characteristics as they enter the ranking, after the last-observed carry
+(characteristics_monthly.parquet, characteristics_daily.parquet) and the as-of ranking
+(universe_asof.parquet).
 
 Assembly rule, the one that matters for point-in-time correctness: a row (d, i) of
 features.parquet carries the MONTHLY characteristics of stock i as of the end of the
@@ -43,34 +44,42 @@ def characteristic_names(cfg: dict) -> list[str]:
 # ------------------------------------------------------------------ characteristic tables
 
 
-def monthly_characteristics(M: ch.MonthlyInputs, chars: list[ch.Characteristic]) -> pd.DataFrame:
-    """Long table (month, permno) x monthly characteristics, un-normalised."""
+def monthly_characteristics(M: ch.MonthlyInputs, chars: list[ch.Characteristic], carry: int = 0) -> pd.DataFrame:
+    """Long table (month, permno) x monthly characteristics, un-normalised. With carry > 0
+    a missing value takes the stock's last observed one, at most `carry` months old."""
     cols = {}
     for c in chars:
         w = c.fn(M).reindex(index=M.ret.index, columns=M.ret.columns)
+        if carry:
+            w = w.ffill(limit=carry)
         cols[c.name] = w.stack(future_stack=True)
     out = pd.DataFrame(cols)
     out.index.names = ["month", "permno"]
     return out
 
 
-def daily_characteristics(D: ch.DailyInputs, chars: list[ch.Characteristic]) -> pd.DataFrame:
-    cols = {c.name: c.fn(D).stack(future_stack=True) for c in chars}
+def daily_characteristics(D: ch.DailyInputs, chars: list[ch.Characteristic], carry: int = 0) -> pd.DataFrame:
+    """Long table (date, permno) x daily characteristics; `carry` in trading days, as above."""
+    cols = {}
+    for c in chars:
+        w = c.fn(D)
+        cols[c.name] = (w.ffill(limit=carry) if carry else w).stack(future_stack=True)
     out = pd.DataFrame(cols)
     out.index.names = ["date", "permno"]
     return out
 
 
 def annual_characteristics(raw: up.RawUS, co: pd.DataFrame, pool, months: pd.PeriodIndex,
-                           chars: list[ch.Characteristic], cfg: dict) -> pd.DataFrame:
+                           chars: list[ch.Characteristic], cfg: dict, last_observed: bool = False) -> pd.DataFrame:
     """Long table (month, permno) x annual characteristics, each month carrying the
-    fiscal year usable at that month end."""
+    fiscal year usable at that month end (per characteristic, the latest fiscal year that
+    has it, with last_observed)."""
     annual = up.annual_frame(raw.funda, raw.ccm, co, cfg)
     for c in chars:
         annual[c.name] = c.fn(annual)
     mapping = up.permno_gvkey(raw.ccm, pool, months)
     names = [c.name for c in chars]
-    aligned = up.align_annual(annual, mapping, names, int(cfg["fundamentals"]["max_age_months"]))
+    aligned = up.align_annual(annual, mapping, names, int(cfg["fundamentals"]["max_age_months"]), last_observed)
     return aligned.set_index(["month", "permno"])[names]
 
 
@@ -79,7 +88,9 @@ def annual_characteristics(raw: up.RawUS, co: pd.DataFrame, pool, months: pd.Per
 
 def assemble_year(year: int, uni_members: dict, D: ch.DailyInputs, mc: pd.DataFrame, dc: pd.DataFrame,
                   names: list[str], rf: pd.Series, start: pd.Period, end: pd.Period) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """features rows for one calendar year, plus the raw (pre-normalisation) coverage."""
+    """features rows for one calendar year, plus the raw (pre-normalisation) coverage.
+    mc and dc arrive with the last-observed carry already applied, if it is on; what is
+    still missing here gets the cross-sectional median."""
     dates = D.ret.index[D.ret.index.year == year]
     dc = dc[dc.index.get_level_values("date").year == year]
     parts = []
@@ -182,11 +193,15 @@ def build(cfg: dict, raw: up.RawUS, out_dir: Path, cutoff: pd.Timestamp | None =
     log(f"  {len(daily):,} daily rows, {D.ret.shape[0]} days x {D.ret.shape[1]} stocks, "
         f"{n_del} delisting-day rows merged")
 
-    log("characteristics")
-    mc = monthly_characteristics(M, groups["monthly"])
-    ac = annual_characteristics(raw, co, pool, M.ret.index, groups["annual"], cfg)
+    missing = cfg["normalisation"].get("missing", "median")
+    if missing not in ("last_observed", "median"):
+        raise ValueError(f"normalisation.missing must be last_observed or median, not {missing!r}")
+    carry = cfg["normalisation"]["carry_max"] if missing == "last_observed" else {"daily": 0, "monthly": 0}
+    log(f"characteristics (missing: {missing}, carry {carry})")
+    mc = monthly_characteristics(M, groups["monthly"], int(carry["monthly"]))
+    ac = annual_characteristics(raw, co, pool, M.ret.index, groups["annual"], cfg, missing == "last_observed")
     mc = mc.join(ac, how="left")[[n for n in names if n in mc.columns or n in ac.columns]]
-    dc = daily_characteristics(D, groups["daily"])
+    dc = daily_characteristics(D, groups["daily"], int(carry["daily"]))
     mc.reset_index().to_parquet(inspect_dir / "characteristics_monthly.parquet", index=False)
     dc.reset_index().to_parquet(inspect_dir / "characteristics_daily.parquet", index=False)
 
@@ -255,7 +270,8 @@ def build_report(cfg, uni, asof, ret, coverage, mc, raw, inspect_dir: Path) -> s
               f"{raw.funda['curcd'].value_counts().to_dict()}; non-USD rows without a rate: "
               f"{int((raw.funda['curcd'].ne('USD') & raw.funda['fx_usd'].isna()).sum())}", ""]
     L += ["Coverage of each characteristic within the universe, share of rows non-missing before the "
-          "median fill (rows = year):", coverage.round(3).to_string(), ""]
+          f"median fill (normalisation.missing = {cfg['normalisation'].get('missing', 'median')}; with "
+          "last_observed, after the carry) (rows = year):", coverage.round(3).to_string(), ""]
 
     comp = inspect_dir / "top500_monthly.parquet"   # step-1 Compustat universe, if built
     if comp.exists():

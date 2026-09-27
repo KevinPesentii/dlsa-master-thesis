@@ -68,8 +68,15 @@ medians are over the 500 members of the day (`median_over`; CONFIRM 3 in schemas
   end of the fiscal year's calendar year, via the CCM link valid on that date.
 - Missing items treated as zero: `txditc txdb pstk mib ivao xrd xad txp dlc`
   (config `fundamentals.fill_zero`). Everything else missing propagates to NaN.
-- After ranking, a missing characteristic is set to the cross-sectional median (0 in
-  rank units), as in Chen-Pelger-Zhu. The build report shows coverage before the fill.
+- A missing characteristic takes the stock's last observed value if it has one, else,
+  after ranking, the cross-sectional median (0 in rank units): Epstein et al. (2025),
+  Section 4.1 (config `normalisation.missing: last_observed`, since 2026-09-24). The carry
+  only looks back, so it is point in time. A daily characteristic carries at most 5
+  trading days, a monthly one 12 months (`carry_max`); an annual one comes from the
+  latest fiscal year in which it is not missing, within `max_age_months` of that year's
+  end. `missing: median` is the median-only rule of Chen-Pelger-Zhu, used by every build
+  before 2026-09-24 (kept in `data/us/private/prev_20260923_medianfill`). The build report
+  shows coverage after the carry, before the median fill.
 
 ## Definitions
 
