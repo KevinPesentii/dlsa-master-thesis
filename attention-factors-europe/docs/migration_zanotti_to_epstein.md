@@ -56,6 +56,9 @@ in the repo.
 - `preprocess.py:63-109` (`preprocess_ou`) and `models/OUFFN.py`. Epstein's Table 2 uses
   PCA+OU-Threshold "implemented as in (Guijarro-Ordonez et al., 2025)", so keeping this
   verbatim is the *correct* choice for comparability. Do not rewrite it.
+  (2026-09-28: `preprocess_ou` is only the signal and OUFFN is GPZ's OU + FFN model; the
+  threshold rule is not in the clone. The Table 2 row is `src/afe/policy/ou_threshold.py`,
+  tested against `preprocess_ou`; see `docs/pca_ou_threshold_benchmark.md`.)
 - `train_test.py:100-116` and `158-169`: residual-to-asset mapping, L1 normalisation, cost
   formula. Port the logic, change what it multiplies by.
 - `factor_models/pca.py` as the specification for the PCA + LongConv benchmark row. The

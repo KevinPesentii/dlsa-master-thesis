@@ -1,10 +1,11 @@
-"""Collect runs/*_pca_longconv_K*/metrics.json into one table in the layout of Table 2.
+"""Collect runs/*_pca_<policy>_K*/metrics.json into one table in the layout of Table 2.
 
     python scripts/summarize_runs.py [--glob "runs/*_pca_longconv_K*"] [--paper]
+    python scripts/summarize_runs.py --glob "runs/*_pca_ou_threshold_K*" --paper
 
---paper prints the published "PCA Factors (Two-Step Approach)" rows underneath, marked
-as such.  They are the authors' numbers, not ours; per CLAUDE.md they are for
-comparison only.
+--paper prints the published rows of each policy found underneath ("PCA Factors (Two-Step
+Approach)", "PCA + OU Thresh"), marked as such.  They are the authors' numbers, not ours;
+per CLAUDE.md they are for comparison only.
 """
 
 from __future__ import annotations
@@ -23,7 +24,15 @@ PAPER_PCA_TWO_STEP = {  # Epstein et al. (2025), Table 2, PCA Factors (Two-Step 
     10: (2.66, 14.94, 5.61, 1.52, 8.48, 5.59, 0.09), 15: (2.56, 14.74, 5.75, 1.41, 8.08, 5.73, 0.09),
     30: (2.79, 15.15, 5.42, 1.57, 8.47, 5.40, 0.09), 100: (2.66, 14.36, 5.40, 1.44, 7.75, 5.38, 0.09),
 }
-COLS = ["K", "SR", "mu", "sigma", "SR_net", "mu_net", "sigma_net", "beta"]
+PAPER_PCA_OU = {  # Epstein et al. (2025), Table 2, Parametric Benchmark, PCA + OU Thresh
+    1: (0.40, 1.85, 4.57, -2.54, -11.62, 4.57, 0.02), 3: (1.26, 4.18, 3.33, -2.72, -9.04, 3.33, 0.01),
+    5: (0.99, 2.91, 2.93, -3.44, -10.11, 2.93, 0.00), 8: (0.78, 2.04, 2.61, -4.15, -10.83, 2.61, 0.00),
+    10: (0.80, 1.99, 2.50, -4.32, -10.80, 2.50, 0.00), 15: (0.51, 1.12, 2.20, -5.24, -11.53, 2.20, 0.00),
+    30: (0.18, 0.40, 2.24, -6.45, -14.74, 2.29, -0.00), 100: (-0.35, -0.66, 1.87, -7.05, -13.23, 1.88, -0.00),
+}
+PAPER = {"longconv": ("PCA Factors (Two-Step Approach)", PAPER_PCA_TWO_STEP),
+         "ou_threshold": ("PCA + OU Thresh", PAPER_PCA_OU)}
+COLS =["K", "SR", "mu", "sigma", "SR_net", "mu_net", "sigma_net", "beta"]
 
 
 def collect(pattern: str) -> pd.DataFrame:
@@ -35,7 +44,7 @@ def collect(pattern: str) -> pd.DataFrame:
         m = json.loads(f.read_text())
         cfg = json.loads((d / "manifest.json").read_text())["config"]
         rows.append({
-            "run": d.name, "K": m["K"], "seed": m["seed"],
+            "run": d.name, "policy": cfg["policy"].get("kind", "longconv"), "K": m["K"], "seed": m["seed"],
             "loadings": cfg["factors"]["loading_window"] or "proj", "input": cfg["policy"]["input"],
             "SR": m["gross"]["SR"], "mu": m["gross"]["mu_pct"], "sigma": m["gross"]["sigma_pct"],
             "SR_net": m["net"]["SR"], "mu_net": m["net"]["mu_pct"], "sigma_net": m["net"]["sigma_pct"],
@@ -56,15 +65,17 @@ def main():
         print("no runs found")
         return
     pd.set_option("display.width", 200)
-    df = df.sort_values(["loadings", "input", "seed", "K"])
+    df = df.sort_values(["policy", "loadings", "input", "seed", "K"])
     print(df.drop(columns=["run"]).to_string(index=False, float_format=lambda x: f"{x:6.2f}"))
     print("\nruns:")
     for r in df.itertuples():
         print(f"  K={r.K:<3} {r.run}")
     if args.paper:
-        print("\nEpstein et al. (2025) Table 2, PCA Factors (Two-Step Approach) -- published, not ours:")
-        print(pd.DataFrame([(k, *v) for k, v in PAPER_PCA_TWO_STEP.items()], columns=COLS)
-              .to_string(index=False, float_format=lambda x: f"{x:6.2f}"))
+        for kind in df["policy"].unique():
+            title, rows = PAPER[kind]
+            print(f"\nEpstein et al. (2025) Table 2, {title} -- published, not ours:")
+            print(pd.DataFrame([(k, *v) for k, v in rows.items()], columns=COLS)
+                  .to_string(index=False, float_format=lambda x: f"{x:6.2f}"))
 
 
 if __name__ == "__main__":

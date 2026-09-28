@@ -1,13 +1,16 @@
-"""Step two of the two-step benchmark: LongConv policy on fixed PCA residuals.
+"""Step two of the PCA benchmarks of Table 2: a trading policy on fixed PCA residuals.
 
     python scripts/run_pca_longconv.py [--config configs/us_pca_longconv.yaml]
                                        [--K 30] [--seed 0] [--years 1998 1999] [--epochs 2]
                                        [--pca-dir data/us/shared/pca_l252] [--input cumulative]
+    python scripts/run_pca_longconv.py --config configs/us_pca_ou.yaml [--c-thresh 1.25] [--c-crit 0.25]
 
-For each K: rolling 8-year training windows refit every January, out-of-sample
-Jan 1998 - Dec 2021, one run directory runs/<stamp>_pca_longconv_K<K>_s<seed>/ with the
-manifest, a daily out-of-sample series, the asset-space weights and metrics.json in the
-units of Table 2.  Needs the stage-one output of scripts/build_pca_residuals.py.
+policy.kind longconv: "PCA Factors (Two-Step Approach)", rolling 8-year training windows refit
+every January.  policy.kind ou_threshold: "PCA + OU Thresh", the parametric rule of
+policy/ou_threshold.py, nothing trained.  Both: out-of-sample Jan 1998 - Dec 2021, one run
+directory runs/<stamp>_pca_<kind>_K<K>_s<seed>/ with the manifest, a daily out-of-sample
+series, the asset-space weights and metrics.json in the units of Table 2.  Needs the
+stage-one output of scripts/build_pca_residuals.py.
 """
 
 from __future__ import annotations
@@ -30,7 +33,7 @@ sys.path.insert(0, str(ROOT / "src"))
 from afe import runs  # noqa: E402
 from afe.evaluation import metrics  # noqa: E402
 from afe.model import pca_factors  # noqa: E402
-from afe.policy import trading  # noqa: E402
+from afe.policy import ou_threshold, trading  # noqa: E402
 from afe.policy.longconv import LongConvPolicy  # noqa: E402
 
 
@@ -113,27 +116,39 @@ def run_K(K: int, cfg: dict, seed: int, panel: pca_factors.Panel, years: list[in
     s1 = Stage1(ROOT / cfg["factors"]["out_dir"], K, panel)
     meta = json.loads((ROOT / cfg["factors"]["out_dir"] / "meta.json").read_text())
     cfg = {**cfg, "factors": {**cfg["factors"], "loading_window": meta["loading_window"], "cov_window": meta["cov_window"]}}
-    run_dir = runs.create_run(f"pca_longconv_K{K}_s{seed}", {**cfg, "K": K, "years": years}, seed)
+    kind = pc["kind"]
+    assert kind in ("longconv", "ou_threshold"), kind
+    run_dir = runs.create_run(f"pca_{kind}_K{K}_s{seed}", {**cfg, "K": K, "years": years}, seed)
     log(f"K={K}: run dir {run_dir}")
     L, scale, cum = pc["residual_lookback"], pc["input_scale"], pc["input"] == "cumulative"
+    if kind == "ou_threshold" and not cum:
+        raise ValueError("the OU model is fitted to the cumulative residual path (policy.input)")
     torch.manual_seed(seed)
     rng = np.random.default_rng(seed)
     dates = s1.dates
     w_pool_all, w_slot_all, date_all = [], [], []
     for year in years:
-        t_tr0 = dates.searchsorted(pd.Timestamp(year - cfg["training"]["window_years"], 1, 1))
         t_te0 = dates.searchsorted(pd.Timestamp(year, 1, 1))
         t_te1 = dates.searchsorted(pd.Timestamp(year + 1, 1, 1))
         t0 = time.time()
-        train_b = s1.batch(t_tr0, t_te0, L, scale, cum)
-        log(f"  {year}: train {dates[t_tr0]:%Y-%m-%d}..{dates[t_te0 - 1]:%Y-%m-%d} "
-            f"({t_te0 - t_tr0} days, {int(train_b.tradable.sum(1).float().mean())} tradable/day), "
-            f"test {t_te1 - t_te0} days")
-        model = LongConvPolicy(pc["hidden"], L, pc["dropout"], pc["lambda_squash"], pc["layers"])
-        train_one_window(model, train_b, cfg, rng, log)
-        del train_b
-        test_b = s1.batch(t_te0, t_te1, L, scale, cum)
-        w = evaluate_window(model, test_b)
+        if kind == "longconv":
+            t_tr0 = dates.searchsorted(pd.Timestamp(year - cfg["training"]["window_years"], 1, 1))
+            train_b = s1.batch(t_tr0, t_te0, L, scale, cum)
+            log(f"  {year}: train {dates[t_tr0]:%Y-%m-%d}..{dates[t_te0 - 1]:%Y-%m-%d} "
+                f"({t_te0 - t_tr0} days, {int(train_b.tradable.sum(1).float().mean())} tradable/day), "
+                f"test {t_te1 - t_te0} days")
+            model = LongConvPolicy(pc["hidden"], L, pc["dropout"], pc["lambda_squash"], pc["layers"])
+            train_one_window(model, train_b, cfg, rng, log)
+            del train_b
+            test_b = s1.batch(t_te0, t_te1, L, scale, cum)
+            w = evaluate_window(model, test_b)
+        else:
+            test_b = s1.batch(t_te0, t_te1, L, scale, cum)
+            w_port = torch.from_numpy(ou_threshold.threshold_weights(
+                test_b.windows.numpy(), test_b.tradable.numpy(), pc["c_thresh"], pc["c_crit"]))
+            w = trading.compose(w_port, test_b)
+            log(f"  {year}: {t_te1 - t_te0} days, {int(test_b.tradable.sum(1).float().mean())} "
+                f"tradable/day, {(w_port != 0).sum(1).float().mean():.0f} residuals traded/day")
         w_slot_all.append(w.numpy())
         w_pool_all.append(trading.to_pool(w, test_b).numpy())
         date_all.append(np.arange(t_te0, t_te1))
@@ -147,7 +162,7 @@ def run_K(K: int, cfg: dict, seed: int, panel: pca_factors.Panel, years: list[in
     daily = pd.DataFrame({"date": dates[t_idx], "gross": gross, "turnover": turnover, "short": short,
                           "n_traded": (wp != 0).sum(axis=1), "mkt_ew": s1.mkt_ew[t_idx], "rf": s1.rf[t_idx]})
     m = metrics.performance(daily, ob["turnover_cost"], ob["short_cost"], ev["cost_grid_bps"])
-    m.update({"K": K, "seed": seed, "policy_input": pc["input"],
+    m.update({"K": K, "seed": seed, "policy": kind, "policy_input": pc["input"],
               "factor_model": f"pca_cov{meta['cov_window']}_loadings{meta['loading_window'] or 'projection'}"})
     runs.write_metrics(run_dir, m)
     daily.to_csv(run_dir / "oos_daily.csv", index=False)
@@ -172,10 +187,16 @@ def main():
     ap.add_argument("--threads", type=int)
     ap.add_argument("--pca-dir", help="override factors.out_dir (a stage-one output directory)")
     ap.add_argument("--input", choices=["returns", "cumulative"], help="override policy.input")
+    ap.add_argument("--c-thresh", type=float, help="override policy.c_thresh (ou_threshold)")
+    ap.add_argument("--c-crit", type=float, help="override policy.c_crit (ou_threshold)")
     args = ap.parse_args()
     cfg = yaml.safe_load(Path(args.config).read_text())
     if args.epochs:
         cfg["training"]["epochs"] = args.epochs
+    if args.c_thresh is not None:
+        cfg["policy"]["c_thresh"] = args.c_thresh
+    if args.c_crit is not None:
+        cfg["policy"]["c_crit"] = args.c_crit
     if args.pca_dir:
         cfg["factors"]["out_dir"] = args.pca_dir
     if args.input:
