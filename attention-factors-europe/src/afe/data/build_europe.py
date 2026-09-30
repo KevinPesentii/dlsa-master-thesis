@@ -3,8 +3,10 @@ docs/schemas.md in the ECU/EUR numeraire, plus the JKP table and the coverage ta
 availability report reads.
 
     shared/  returns.parquet, universe.parquet, features.parquet (schema tables),
-             market_daily.parquet, factors_daily.parquet (mktrf, smb, hml, rf),
-             rf_daily.parquet, fx_to_numeraire_daily.parquet, build_report.txt
+             market_daily.parquet (top-N mkt_vw / mkt_ew / n, FF Europe mkt_ff, mkt = the
+             market behind mktrf), factors_daily.parquet (mktrf, smb, hml, rf per config
+             factors.source; smb_top_n / hml_top_n = the top N's own sort), rf_daily.parquet,
+             fx_to_numeraire_daily.parquet, build_report.txt
     private/ returns_detail_daily.parquet, company_daily.parquet, universe_asof.parquet,
              characteristics_monthly.parquet, characteristics_daily.parquet,
              jkp_monthly.parquet, coverage_member_months.parquet, jkp_coverage.parquet
@@ -80,6 +82,14 @@ def build(cfg: dict, root: Path, out_dir: Path, inspect_dir: Path, cutoff: pd.Ti
     mkt = xp.value_weighted(cd, members).reindex(calendar)
     rf = xp.risk_free(root / cfg["risk_free"]["external_dir"], calendar, int(cfg["risk_free"]["day_count"]))
     rf_s = rf.set_index("date")["rf"]
+    fc = cfg["factors"]
+    if fc.get("source", "top_n") not in ("top_n", "ff_europe"):
+        raise ValueError(f"factors.source: {fc['source']}")
+    ffe = None
+    if fc.get("source") == "ff_europe":
+        tb = root / fc["tbill_monthly"] if fc.get("tbill_monthly") else None
+        ffe = xp.ff_europe(root / fc["file"], fxtab, calendar, tb)
+        mkt["mkt_ff"] = ffe["mkt"]
     f = xa.funda_numeraire(raw.funda, fxtab)
     annual = xa.annual_frame(f, raw.mktcap, cfg)
     for c in groups["annual"]:
@@ -92,11 +102,18 @@ def build(cfg: dict, root: Path, out_dir: Path, inspect_dir: Path, cutoff: pd.Ti
     aligned = up.align_annual(annual, mapping, a_names, int(cfg["fundamentals"]["max_age_months"]),
                               missing == "last_observed")
     beme = aligned[["month", "permno", "BEME"]].rename(columns={"permno": "gvkey"})
-    fac = xp.smb_hml(cd, members, beme, int(cfg["factors"]["min_per_portfolio"])).reindex(calendar)
-    ff = pd.DataFrame({"mktrf": mkt["mkt_vw"] - rf_s, "smb": fac["smb"], "hml": fac["hml"], "rf": rf_s}, index=calendar)
+    fac = xp.smb_hml(cd, members, beme, int(fc["min_per_portfolio"])).reindex(calendar)
+    own = pd.DataFrame({"mkt": mkt["mkt_vw"], "smb": fac["smb"], "hml": fac["hml"]}, index=calendar)
+    used = own.copy()
+    if ffe is not None and ffe["mkt"].first_valid_index() is not None:
+        on = calendar >= ffe["mkt"].first_valid_index()                        # the top N's own before the file
+        used.loc[on] = ffe.loc[on, ["mkt", "smb", "hml"]].to_numpy()
+    mkt["mkt"] = used["mkt"]
+    ff = pd.DataFrame({"mktrf": used["mkt"] - rf_s, "smb": used["smb"], "hml": used["hml"], "rf": rf_s}, index=calendar)
     ff.index.name = "date"
     mkt.rename_axis("date").reset_index().to_parquet(out_dir / "market_daily.parquet", index=False)
-    ff.reset_index().to_parquet(out_dir / "factors_daily.parquet", index=False)
+    ff.assign(smb_top_n=fac["smb"], hml_top_n=fac["hml"]).reset_index().to_parquet(
+        out_dir / "factors_daily.parquet", index=False)
     rf.to_parquet(out_dir / "rf_daily.parquet", index=False)
 
     log("characteristics")
@@ -135,7 +152,8 @@ def build(cfg: dict, root: Path, out_dir: Path, inspect_dir: Path, cutoff: pd.Ti
     inputs.to_parquet(inspect_dir / "input_coverage_member_months.parquet", index=False)
     jkp_cov = build_jkp(cfg, root, detail, fxtab, rf, pool, end, inspect_dir, log) if jkp else None
 
-    report = xc.build_report(cfg, uni, detail, ret, calendar, mkt, ff, rf, coverage, cmm, fxtab, raw, f, jkp_cov)
+    report = xc.build_report(cfg, uni, detail, ret, calendar, mkt, ff.assign(smb_top_n=fac["smb"], hml_top_n=fac["hml"]),
+                             rf, coverage, cmm, fxtab, raw, f, jkp_cov)
     (out_dir / "build_report.txt").write_text(report, encoding="utf-8")
     return {"universe": uni, "coverage": coverage, "report": report}
 

@@ -51,6 +51,7 @@ risk_free:
   # 1-month interbank rates from the Bundesbank, daily, act/360: Frankfurt banks' 1-month
   # funds to 1990-06, FIBOR to 1998-12, EURIBOR from 1999. A Mark rate before 1999, not an
   # ECU rate: no daily ECU money-market series is on WRDS or the Bundesbank API (open item).
+  # Day t earns the previous trading day's quote over the calendar days in between.
   external_dir: data/eu/private/raw/external
   day_count: 360
 
@@ -78,10 +79,19 @@ windows:                             # as configs/us_data.yaml
   weekly_days: 5
 
 factors:
-  # Resid_Var's three factors, built from the data like the market: the value-weighted
-  # numeraire return of the month's top-N minus rf, and SMB / HML from a 2x3 sort of the
-  # same companies on cap (median) and BEME (30/70), value-weighted, formed at the end of
-  # M-1 with the BEME usable then. min_per_portfolio below: that month's SMB/HML are NaN.
+  # Beta's market and Resid_Var's three factors (factors_daily): Ken French's Europe three
+  # factors (value-weighted, all sizes, 16 countries: these less Luxembourg; from 1990-07-02).
+  # Every column of FF's file is in USD: the market's USD total return (Mkt-RF + RF, RF from
+  # FF's monthly T-bill because the daily file rounds it to 0.01%) is converted to the
+  # numeraire, minus the numeraire rf; SMB and HML are USD long-short returns, times the day's
+  # change of the numeraire per USD (the same on both legs). Before 1990-07-02, which Beta's
+  # five-year window needs, the top N's own: its value-weighted market and a 2x3 sort on cap
+  # (median) and BEME (30/70), value-weighted, formed at the end of M-1 (fewer than
+  # min_per_portfolio in a portfolio: that month's SMB/HML are NaN). source top_n = the own
+  # ones throughout.
+  source: ff_europe
+  file: data/europe/private/raw/external/Europe_3_Factors_Daily_CSV.zip
+  tbill_monthly: data/eu/private/raw/ff_monthly.parquet
   min_per_portfolio: 5
 
 normalisation:                       # as configs/us_data.yaml

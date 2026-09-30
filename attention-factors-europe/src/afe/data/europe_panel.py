@@ -16,11 +16,13 @@ Global lacks:
                      overnight adjustment of their Section IV.A, negative estimates set to
                      zero, dated on the second day; monthly = the mean over the month (>= 10
                      days, the US rule). JKP's bidaskhl_21d is the same estimator.
-  market / factors   no external index: value-weighted numeraire return of the month's
+  market / factors   Ken French's Europe three factors (USD) in the numeraire (ff_europe),
+                     and the top N's own: the value-weighted numeraire return of the month's
                      top-N (the universe from 1990; the as-of top-N of the ranking before),
-                     weights = cap at the end of M-1. SMB and HML for Resid_Var from a 2x3
-                     sort of the same companies (cap median, BEME 30/70), value-weighted,
-                     formed with the BEME usable at the end of M-1.
+                     weights = cap at the end of M-1, and SMB / HML from a 2x3 sort of the
+                     same companies (cap median, BEME 30/70), value-weighted, formed with the
+                     BEME usable at the end of M-1. Which feeds Beta and Resid_Var: config
+                     `factors.source` (build_europe).
 Fundamentals and the JKP table are in europe_accounts.py.
 
 Index names: the company id level is called `permno` inside the characteristic frames so
@@ -29,6 +31,7 @@ characteristics.py and build_us's assembly run unchanged; its values are gvkeys.
 
 from __future__ import annotations
 
+import zipfile
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -89,9 +92,12 @@ def load_raw(root: Path, cfg: dict) -> RawEurope:
 
 
 def risk_free(external_dir: Path, calendar: pd.DatetimeIndex, day_count: int = 360) -> pd.DataFrame:
-    """Daily simple rate on the calendar from the Bundesbank 1-month series: Frankfurt
+    """Daily risk-free return on the calendar from the Bundesbank 1-month series: Frankfurt
     banks' 1-month funds before 1990-07-02 (the first FIBOR day), FIBOR to 1998-12-31,
-    EURIBOR from 1999-01-01; each forward-filled over non-quoted days."""
+    EURIBOR from 1999-01-01; each forward-filled over non-quoted days. Trading day t earns
+    the rate quoted on the previous trading day over the calendar days in between, act/360
+    (Friday to Monday: three days), so a year of it adds up to the quoted rate x 365/360;
+    one day's rate/360 per trading day would give only ~72% of the rate."""
     def read(name):
         df = pd.read_csv(external_dir / name, skiprows=1, header=None, usecols=[0, 1], names=["date", "v"])
         df = df[df["date"].astype(str).str.match(r"^\d{4}-\d{2}-\d{2}$")]
@@ -106,8 +112,75 @@ def risk_free(external_dir: Path, calendar: pd.DatetimeIndex, day_count: int = 3
     q = pd.concat(parts).sort_index()
     q = q[~q.index.duplicated(keep="last")]
     out = q.reindex(q.index.union(calendar)).ffill().reindex(calendar)
-    return pd.DataFrame({"date": calendar, "rf": (out["pct"] / 100.0 / day_count).to_numpy(),
-                         "rate_pct_pa": out["pct"].to_numpy(), "series": out["series"].to_numpy()})
+    prev = out.shift(1)
+    prev.iloc[0] = out.iloc[0]
+    days = pd.Series(calendar, index=calendar).diff().dt.days.fillna(1.0).to_numpy()
+    return pd.DataFrame({"date": calendar, "rf": (prev["pct"] / 100.0 * days / day_count).to_numpy(),
+                         "rate_pct_pa": prev["pct"].to_numpy(), "series": prev["series"].to_numpy(),
+                         "accrual_days": days.astype("int16")})
+
+
+# ------------------------------------------------------------------ Ken French's Europe factors
+
+
+def read_ff_daily(path: Path) -> pd.DataFrame:
+    """A daily factor file of Ken French's data library (the .zip as downloaded, or its .csv):
+    the dated rows of its table, in decimals (the file is in percent; -99.99 = missing)."""
+    if path.suffix.lower() == ".zip":
+        with zipfile.ZipFile(path) as z:
+            text = z.read(z.namelist()[0]).decode("latin-1")
+    else:
+        text = path.read_text(encoding="latin-1")
+    lines = text.splitlines()
+    head = next(i for i, s in enumerate(lines) if s.replace(" ", "").lower().startswith(",mkt-rf"))
+    cols = [c.strip().lower().replace("-", "") for c in lines[head].split(",")[1:]]     # mktrf, smb, hml, rf
+    rows = []
+    for s in lines[head + 1:]:
+        parts = [p.strip() for p in s.split(",")]
+        if len(parts[0]) == 8 and parts[0].isdigit():
+            rows.append(parts)
+        elif rows and s.strip():
+            break                                                                         # the next table
+    df = pd.DataFrame(rows, columns=["date"] + cols)
+    df["date"] = pd.to_datetime(df["date"], format="%Y%m%d")
+    return df.set_index("date").astype("float64").replace(-99.99, np.nan) / 100.0
+
+
+def ff_europe(path: Path, fxtab: pd.DataFrame, calendar: pd.DatetimeIndex,
+              tbill_monthly: Path | None = None) -> pd.DataFrame:
+    """Ken French's Europe three factors (value-weighted, all sizes, 16 countries: europe17's
+    less Luxembourg; every column of the file is in USD) as daily numeraire returns on the
+    calendar, NaN outside the file: `mkt` (total return), `smb`, `hml`.
+
+    mkt: USD return = Mkt-RF + RF, RF being FF's monthly 1-month T-bill spread over the
+    month's days of the file when `tbill_monthly` is given (FF's daily RF is built that way,
+    and the daily file rounds it to 0.01%: up to 1 pp a year off), else the file's RF; the
+    USD index times the numeraire per USD (`fxtab`, europe_fx.conversion_table) is read on
+    the calendar. smb, hml: long-short spreads of USD returns; both legs convert with the same
+    factor g = x_t / x_t-1 (numeraire per USD), so the numeraire spread is the USD one times g.
+    A file day off the calendar compounds into the next calendar day (spreads as 1 + s)."""
+    ff = read_ff_daily(path)
+    rf = ff["rf"]
+    if tbill_monthly is not None:
+        m = pd.read_parquet(tbill_monthly, columns=["date", "rf"])
+        rfm = pd.Series(m["rf"].to_numpy(dtype="float64"), index=pd.to_datetime(m["date"]).dt.to_period("M"))
+        month = ff.index.to_period("M")
+        n = pd.Series(1.0, index=ff.index).groupby(month).transform("size").to_numpy()
+        rf = pd.Series((1.0 + month.map(rfm).to_numpy(dtype="float64")) ** (1.0 / n) - 1.0,
+                       index=ff.index).fillna(ff["rf"])
+    idx = (1.0 + pd.DataFrame({"mkt": ff["mktrf"] + rf, "smb": ff["smb"], "hml": ff["hml"]})).cumprod()
+    before = calendar[calendar < ff.index.min()]
+    if len(before):
+        idx = pd.concat([pd.DataFrame(1.0, index=before[-1:], columns=idx.columns), idx])   # base: the day before
+    usd = fxtab[fxtab["currency"] == "USD"].set_index("date")["eur_per_unit"].astype("float64").sort_index()
+    days = idx.index.union(calendar)
+    x = usd.reindex(usd.index.union(days)).ffill().reindex(days).reindex(calendar)
+    on_cal = idx.reindex(days).ffill().reindex(calendar)
+    g = x / x.shift(1)
+    out = pd.DataFrame({"mkt": (1.0 + on_cal["mkt"].pct_change()) * g - 1.0,
+                        "smb": on_cal["smb"].pct_change() * g, "hml": on_cal["hml"].pct_change() * g})
+    out.loc[(calendar <= idx.index.min()) | (calendar > ff.index.max())] = np.nan
+    return out
 
 
 # ------------------------------------------------------------------ spread
