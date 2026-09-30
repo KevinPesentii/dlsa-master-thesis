@@ -36,7 +36,10 @@ Conventions common to all tables:
 | currency    | string  | EU only  | native currency before conversion            |
 
 Returns are in EUR for the European leg, USD for the US leg. A USD European panel is
-built as a robustness check and lives at `data/eu_usd/`.
+built as a robustness check and lives at `data/eu_usd/`. The European builds that start
+before 1999 (`europe17`, `europe12`, 1990-) use one numeraire, the ECU to 1998-12-31 and
+the euro from 1999-01-01 at one to one (`src/afe/data/europe_fx.py`); every amount in
+their tables (returns, `mktcap_lag`, the characteristics' levels) is in it.
 
 ## universe.parquet
 
@@ -44,9 +47,10 @@ built as a robustness check and lives at `data/eu_usd/`.
 |----------|--------|----------|------------------------------------------------|
 | month    | date32 | yes      | first trading day of the month membership applies to |
 | sec_id   | string | yes      |                                                |
-| cap_rank | int16  | yes      | 1 to 500, by prior-month market cap            |
+| cap_rank | int16  | yes      | 1 to N, by prior-month market cap              |
 
-Exactly 500 rows per month. Membership for month m uses only information available at
+Exactly N rows per month: 500 for the US and euro-11 builds, 200 for `europe17` and
+`europe12` (config `universe.size`). Membership for month m uses only information available at
 the end of month m-1. This table is the single source of truth for who is in; no other
 module re-derives it.
 
