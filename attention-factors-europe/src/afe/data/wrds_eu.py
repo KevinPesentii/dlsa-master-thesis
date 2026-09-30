@@ -60,6 +60,9 @@ G_FUNDA_ITEMS = [
     # cash flow / payout / shares
     "capx", "oancf", "fincf", "ivncf", "aqc", "sstk", "prstkc", "dltis", "dltr", "dlcch",
     "chech", "dvc", "dvt", "dv", "cshoi", "cshpria", "ajexi",
+    # substitutes the European builds use where the item above is empty: total noncontrolling
+    # interest (mib is empty in Global from ~2015), cash and short-term investments separately
+    "mibt", "mibn", "ch", "ivst",
 ]
 G_FUNDA_FILTER = "indfmt in ('INDL', 'FS') and datafmt = 'HIST_STD' and popsrc = 'I' and consol = 'C'"
 
