@@ -1,0 +1,25 @@
+# Step 1 of the European builds (configs/europe17_data.yaml, europe12_data.yaml): ONE WRDS
+# pull of Compustat Global month-end rows, the two header tables and the FX quotes, for
+# the exchange countries of the larger version. Both versions cut their cap table from it.
+#   python scripts/fetch_europe_extract.py [--config configs/europe_extract.yaml]
+# The per-version cap tables and the universe come from scripts/build_europe_universe.py.
+
+source: comp.g_secd (monthend = 1)
+
+# exchange countries (g_security.excntry): London, Deutsche Boerse, Paris, SIX, Amsterdam,
+# Milan, Madrid, Stockholm, Brussels, Copenhagen, Helsinki, Oslo, Dublin, Lisbon, Vienna,
+# Luxembourg, Athens
+countries: [GBR, DEU, FRA, CHE, NLD, ITA, ESP, SWE, BEL, DNK, FIN, NOR, IRL, PRT, AUT, LUX, GRC]
+
+start_year: 1985            # Compustat Global's month-end rows begin 1985-12 (Greece 1988, Portugal 1986-88)
+end_year: 2025
+issue_types: ["0", "1"]     # common and preferred pulled; the cap counts common only (filters.issue_types)
+
+fx:
+  start_year: 1982          # quotes for every basket currency exist from 1982-02-01
+  # always pulled besides the quotation currencies of the extract: the ECU basket
+  # currencies (src/afe/data/europe_fx.py), Compustat's own ECU quote (XEU, a check), EUR, USD
+  extra: [EUR, USD, GBP, XEU, DEM, FRF, ITL, NLG, BEF, LUF, DKK, IEP, GRD, ESP, PTE]
+
+output:
+  dir: data/europe/private  # secd_monthend/<year>.parquet, security_header, company_header, fx_daily

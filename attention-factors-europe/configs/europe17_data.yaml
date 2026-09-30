@@ -1,0 +1,103 @@
+# European build "europe17": the 200 largest companies pooled across ALL 17 exchange
+# countries of configs/europe_extract.yaml (London .. Athens), universe months 1990-01 to
+# 2025-12, every value in one numeraire: the ECU to 1998-12-31, the euro from 1999-01-01
+# (src/afe/data/europe_fx.py). Same eligibility rules as the euro-11 step 1
+# (docs/eu_mktcap_compustat_global.md): header link + turnover screen, common shares,
+# cross-listings collapsed, one line per company.
+#   python scripts/fetch_europe_extract.py                                       # WRDS, once, shared
+#   python scripts/build_europe_universe.py --config configs/europe17_data.yaml  # cap table, ranking, lines
+#   python scripts/fetch_europe_raw.py --configs configs/europe17_data.yaml configs/europe12_data.yaml
+#   python scripts/build_europe_dataset.py --config configs/europe17_data.yaml   # returns, universe, features
+# The sibling configs/europe12_data.yaml differs only in `countries`, `market` and `output`.
+
+market: europe17
+
+countries: [GBR, DEU, FRA, CHE, NLD, ITA, ESP, SWE, BEL, DNK, FIN, NOR, IRL, PRT, AUT, LUX, GRC]
+
+extract:
+  dir: data/europe/private           # step-1 pull, shared by both versions
+
+filters:                             # as configs/universe_eu_compustat.yaml
+  issue_types: ["0"]
+  min_turnover: 3.0e-5
+  turnover_window: 6
+  fx_max_stale_days: 7
+
+currency:
+  numeraire: XEU                     # ECU to 1998-12-31, EUR from 1999-01-01, 1:1 at the switch
+  # official daily ECU rates (Eurostat ert_bil_eur_d, GBP and USD per ECU, 1984-1998): a CHECK of
+  # the basket in the reports, not a source (curl the dissemination API; docs/europe_build.md)
+  official_ecu_check: data/europe/private/raw/external/eurostat_ert_bil_eur_d_gbp_usd_1984_1998.csv
+
+universe:
+  size: 200
+  start: 1990-01                     # first universe month, ranked on the cap at the end of 1989-12
+  end: 2025-12
+  ranking_start: 1985-12             # first as-of ranking: the market of the pre-sample years
+
+raw:
+  dir: data/europe/private/raw       # union of both versions' lines (fetch_europe_raw.py)
+  daily_start_year: 1984             # Compustat Global daily rows begin 1984-01
+  daily_end_year: 2025
+  funda_start_year: 1984
+  jkp_start_year: 1985
+  fx_start_year: 1982
+
+returns:
+  delisting_return: null             # Compustat Global has none; open decision (docs/eu_raw_data.md)
+  calendar_min_lines: 100            # pooled trading day: >= this many traded closes in the pool
+
+risk_free:
+  # 1-month interbank rates from the Bundesbank, daily, act/360: Frankfurt banks' 1-month
+  # funds to 1990-06, FIBOR to 1998-12, EURIBOR from 1999. A Mark rate before 1999, not an
+  # ECU rate: no daily ECU money-market series is on WRDS or the Bundesbank API (open item).
+  external_dir: data/eu/private/raw/external
+  day_count: 360
+
+pool: universe                       # characteristics for every company ever in the as-of top-N
+
+fundamentals:                        # as configs/us_data.yaml
+  availability: june
+  lag_months: 6
+  max_age_months: 30
+  fill_zero: [txditc, txdb, pstk, mib, ivao, xrd, xad, txp, dlc]
+
+windows:                             # as configs/us_data.yaml
+  momentum_min_obs: {r12_2: 8, r12_7: 4, r36_13: 16}
+  variance_months: 2
+  variance_min_obs: 20
+  spread_min_obs: 10
+  suv_estimation_months: 6
+  suv_min_obs: 60
+  beta_vol_days: 252
+  beta_vol_min_obs: 120
+  beta_corr_days: 1260
+  beta_corr_min_obs: 750
+  rel2high_days: 252
+  rel2high_min_obs: 120
+  weekly_days: 5
+
+factors:
+  # Resid_Var's three factors, built from the data like the market: the value-weighted
+  # numeraire return of the month's top-N minus rf, and SMB / HML from a 2x3 sort of the
+  # same companies on cap (median) and BEME (30/70), value-weighted, formed at the end of
+  # M-1 with the BEME usable then. min_per_portfolio below: that month's SMB/HML are NaN.
+  min_per_portfolio: 5
+
+normalisation:                       # as configs/us_data.yaml
+  method: rank_quantile
+  missing: last_observed
+  carry_max: {daily: 5, monthly: 12}
+  median_over: universe
+
+characteristics:                     # the 39 of the US build; Spread is the Corwin-Schultz
+  past_returns: [r2_1, r12_2, r12_7, r36_13, ST_Rev, Ret_D1, Ret_W1, STD_W1]   # high-low estimator here
+  value: [A2ME, BEME, C, CF, CF2P, Q, Lev, E2P]
+  investment: [Investment, NOA, DPI2A]
+  trading_frictions: [AT, LME, LTurnover, Rel2High, Resid_Var, Spread, SUV, Variance, Vol, Beta]
+  profitability: [PROF, CTO, FC2Y, OP, PM, RNA, D2A]
+  intangibles: [OA, OL, PCM]
+
+output:
+  dir: data/europe17/shared          # returns / universe / features / market / rf / fx: downstream
+  inspect_dir: data/europe17/private # cap table, ranking, lines, JKP table, characteristics, reports
