@@ -8,6 +8,7 @@ import sys
 from pathlib import Path
 
 import numpy as np
+import pandas as pd
 import pytest
 import torch
 import yaml
@@ -79,3 +80,17 @@ def test_overrides_reject_unknown_keys():
     assert cfg["objective"]["lambda_var"] == 100
     with pytest.raises(KeyError):
         sv.with_overrides(cfg, {"objective.lambda_vra": 1.0})
+
+
+def test_training_windows_start_no_earlier_than_data_start():
+    """Europe's 1993 data_start shortens the first windows: 1998 trains on 1993-1997, the
+    full 8 years come back with 2001. Without data_start the window is 8 years, as before."""
+    cfg = {"training": {"window_years": 8}, "sample": {}}
+    assert sv.base.window_start(cfg, 1998) == pd.Timestamp("1990-01-01")
+    cfg["sample"]["data_start"] = "1993-01-01"
+    assert sv.base.window_start(cfg, 1998) == pd.Timestamp("1993-01-01")
+    assert sv.base.window_start(cfg, 2001) == pd.Timestamp("1993-01-01")
+    assert sv.base.window_start(cfg, 2002) == pd.Timestamp("1994-01-01")
+    eu = yaml.safe_load((ROOT / "configs" / "europe_search.yaml").read_text())
+    base_cfg = yaml.safe_load((ROOT / eu["base_config"]).read_text())
+    assert sv.base.window_start(base_cfg, eu["first_oos_year"]) == pd.Timestamp("1993-01-01")

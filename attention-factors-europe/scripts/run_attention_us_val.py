@@ -94,13 +94,13 @@ def select_lambda(K: int, cfg: dict, seed: int, p: slots.SlotPanel, year: int,
     comparison is about the pair and not about the draw. Returns the winning pair and
     every score. The test year is never touched.
     """
-    W = cfg["training"]["window_years"]
     dates = p.dates
-    t_tr0 = dates.searchsorted(pd.Timestamp(year - W, 1, 1))
+    w0 = base.window_start(cfg, year)
+    t_tr0 = dates.searchsorted(w0)
     t_va0 = dates.searchsorted(pd.Timestamp(year - val_years, 1, 1))
     t_te0 = dates.searchsorted(pd.Timestamp(year, 1, 1))
-    if dates[t_tr0].year > year - W:
-        raise SystemExit(f"{year}: the panel starts {dates[0]:%Y-%m-%d}, too late for a {W}-year window")
+    if dates[t_tr0].year > w0.year:
+        raise SystemExit(f"{year}: the panel starts {dates[0]:%Y-%m-%d}, too late for a window from {w0:%Y-%m-%d}")
     init_seed = seed * 10007 + year
     taus = tau_grid if tau_grid else [None]
     scores = {}
@@ -140,7 +140,7 @@ def run_K_val(K: int, cfg: dict, seed: int, p: slots.SlotPanel, years: list[int]
         once_star, once_scores = select_lambda(K, cfg, seed, p, sy, grid, val_years, tau_grid)
         val_scores["selection"] = {"window_ends": sy, "validation_years": val_years,
                                    **{f"lambda={k[0]:g},tau={k[1]}": v for k, v in once_scores.items()}}
-        log(f"  selection once, window ending {sy - 1}: train {sy - W}..{sy - val_years - 1}, "
+        log(f"  selection once, window ending {sy - 1}: train {base.window_start(cfg, sy).year}..{sy - val_years - 1}, "
             f"validate {sy - val_years}..{sy - 1}  net SR  "
             + "  ".join(f"[lam {k[0]:g}" + (f", tau {k[1]:g}" if k[1] is not None else "")
                         + f"] {v:+.2f}" for k, v in once_scores.items())
@@ -149,11 +149,12 @@ def run_K_val(K: int, cfg: dict, seed: int, p: slots.SlotPanel, years: list[int]
             + f" for every year  [{time.time() - t_s:.0f}s]")
 
     for year in years:
-        t_tr0 = dates.searchsorted(pd.Timestamp(year - W, 1, 1))
+        w0 = base.window_start(cfg, year)
+        t_tr0 = dates.searchsorted(w0)
         t_te0 = dates.searchsorted(pd.Timestamp(year, 1, 1))
         t_te1 = dates.searchsorted(pd.Timestamp(year + 1, 1, 1))
-        if dates[t_tr0].year > year - W:
-            raise SystemExit(f"{year}: the panel starts {dates[0]:%Y-%m-%d}, too late for a {W}-year window")
+        if dates[t_tr0].year > w0.year:
+            raise SystemExit(f"{year}: the panel starts {dates[0]:%Y-%m-%d}, too late for a window from {w0:%Y-%m-%d}")
         init_seed = seed * 10007 + year
         t0 = time.time()
 
@@ -242,7 +243,7 @@ def main():
     data_dir = data_dir if data_dir.is_absolute() else ROOT / data_dir
     t0 = time.time()
     first = min(years + ([select_year] if select_year else []))
-    p = slots.load_slots(data_dir, f"{first - cfg['training']['window_years']}-01-01", f"{max(years)}-12-31")
+    p = slots.load_slots(data_dir, f"{base.window_start(cfg, first):%Y-%m-%d}", f"{max(years)}-12-31")
     log(f"panel {tuple(p.X.shape)} from {data_dir} in {time.time() - t0:.0f}s, "
         f"{p.dates[0]:%Y-%m-%d}..{p.dates[-1]:%Y-%m-%d}, torch threads {torch.get_num_threads()}, "
         f"lambda grid {args.grid}, tau grid {args.tau_grid}, select {args.select}, "

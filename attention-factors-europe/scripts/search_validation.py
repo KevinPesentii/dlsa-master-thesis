@@ -98,11 +98,13 @@ def candidate(name: str, overrides: dict) -> dict:
 def init_worker(cfg: dict, data_dir: str, first_oos: int, val_years: int, K: int,
                 eval_epochs: list[int], threads: int) -> None:
     torch.set_num_threads(threads)
-    W = cfg["training"]["window_years"]
-    p = slots.load_slots(Path(data_dir), f"{first_oos - W}-01-01", f"{first_oos - 1}-12-31")
-    t = [p.dates.searchsorted(pd.Timestamp(y, 1, 1)) for y in (first_oos - W, first_oos - val_years)]
-    if p.dates[0].year > first_oos - W:
-        raise SystemExit(f"the panel starts {p.dates[0]:%Y-%m-%d}, too late for a {W}-year window")
+    w0 = base.window_start(cfg, first_oos)
+    if first_oos - val_years <= w0.year:
+        raise SystemExit(f"a window from {w0:%Y-%m-%d} leaves no training years before {val_years} validation years")
+    p = slots.load_slots(Path(data_dir), f"{w0:%Y-%m-%d}", f"{first_oos - 1}-12-31")
+    t = [p.dates.searchsorted(d) for d in (w0, pd.Timestamp(first_oos - val_years, 1, 1))]
+    if p.dates[0].year > w0.year:
+        raise SystemExit(f"the panel starts {p.dates[0]:%Y-%m-%d}, too late for a window from {w0:%Y-%m-%d}")
     WORKER.update(p=p, cfg=cfg, K=K, first_oos=first_oos, eval_epochs=eval_epochs,
                   split=(t[0], t[1], len(p.dates)))
 
@@ -209,9 +211,8 @@ def main():
         for line in path.read_text().splitlines():
             r = json.loads(line)
             trials[(r["cid"], r["seed"])] = r
-    W = cfg["training"]["window_years"]
     log(f"search run dir {run_dir}")
-    log(f"fit {first_oos - W}-{first_oos - S['validation_years'] - 1}, validate "
+    log(f"fit {base.window_start(cfg, first_oos).year}-{first_oos - S['validation_years'] - 1}, validate "
         f"{first_oos - S['validation_years']}-{first_oos - 1}, K={K}, {args.jobs} jobs x {args.threads} threads")
     for k in ("OMP_NUM_THREADS", "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS"):
         os.environ[k] = str(args.threads)

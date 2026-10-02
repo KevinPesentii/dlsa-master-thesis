@@ -36,6 +36,15 @@ from afe.evaluation import metrics  # noqa: E402
 from afe.model.attention_pipeline import AttentionArb, objective, slot_batch, to_pool  # noqa: E402
 
 
+def window_start(cfg: dict, year: int) -> pd.Timestamp:
+    """First day of the training window of out-of-sample year `year`: `window_years` back,
+    but never before sample.data_start if the config sets one (Europe: the panel is too thin
+    before 1993 to train on, so the first windows are shorter until they reach full length)."""
+    start = pd.Timestamp(year - cfg["training"]["window_years"], 1, 1)
+    data_start = cfg["sample"].get("data_start")
+    return max(start, pd.Timestamp(data_start)) if data_start else start
+
+
 def span(model, p: slots.SlotPanel, t0: int, t1: int, cfg: dict, w_prev=None):
     """Trade dates t0..t1-1; the span carries `lookback` extra dates in front, which feed
     the residual windows and are not traded. Returns the loss, its parts and the weights."""
@@ -102,16 +111,17 @@ def run_K(K: int, cfg: dict, seed: int, p: slots.SlotPanel, years: list[int], lo
     log(f"K={K}: run dir {run_dir}")
     torch.manual_seed(seed)
     rng = np.random.default_rng(seed)
-    L, W = pc["residual_lookback"], cfg["training"]["window_years"]
+    L = pc["residual_lookback"]
     dates = p.dates
     w_slot_all, w_pool_all, t_all = [], [], []
     for year in years:
-        t_tr0 = dates.searchsorted(pd.Timestamp(year - W, 1, 1))
+        w0 = window_start(cfg, year)
+        t_tr0 = dates.searchsorted(w0)
         t_te0 = dates.searchsorted(pd.Timestamp(year, 1, 1))
         t_te1 = dates.searchsorted(pd.Timestamp(year + 1, 1, 1))
-        if dates[t_tr0].year > year - W:
+        if dates[t_tr0].year > w0.year:
             raise SystemExit(f"{year}: the panel starts {dates[0]:%Y-%m-%d}, too late for a "
-                             f"{W}-year training window")
+                             f"training window from {w0:%Y-%m-%d}")
         t0 = time.time()
         log(f"  {year}: train {dates[t_tr0]:%Y-%m-%d}..{dates[t_te0 - 1]:%Y-%m-%d} "
             f"({t_te0 - t_tr0} days), test {t_te1 - t_te0} days")
@@ -178,7 +188,7 @@ def main():
     data_dir = Path(cfg["data"]["dir"])
     data_dir = data_dir if data_dir.is_absolute() else ROOT / data_dir
     t0 = time.time()
-    p = slots.load_slots(data_dir, f"{min(years) - cfg['training']['window_years']}-01-01", f"{max(years)}-12-31")
+    p = slots.load_slots(data_dir, f"{window_start(cfg, min(years)):%Y-%m-%d}", f"{max(years)}-12-31")
     log(f"panel {tuple(p.X.shape)} from {data_dir} in {time.time() - t0:.0f}s, "
         f"{p.dates[0]:%Y-%m-%d}..{p.dates[-1]:%Y-%m-%d}, torch threads {torch.get_num_threads()}")
     log("      K    SR     mu   sigma   SRnet  munet signet   beta")
