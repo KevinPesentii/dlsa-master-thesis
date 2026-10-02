@@ -25,7 +25,8 @@ top-level clone only, so pass `WRDS_USERNAME` in the environment from a worktree
 
 Data: `data/europe/private/` = the shared WRDS store (month-end extract, headers, FX,
 `raw/` = daily, g_funda, JKP for the union of both versions' lines, `raw/external/` =
-Eurostat's ECU check file); `data/europe17|12/{shared,private}` = each version's tables.
+Eurostat's ECU check file and Ken French's `Europe_3_Factors_Daily_CSV.zip` as downloaded);
+`data/europe17|12/{shared,private}` = each version's tables.
 
 ## Decisions
 
@@ -51,8 +52,13 @@ Eurostat's ECU check file); `data/europe17|12/{shared,private}` = each version's
    priced its cap at the end of M-1. Substitutes for what Global lacks, documented in
    `europe_panel.py` and `europe_accounts.py` (fundamentals, JKP): Spread = Corwin-Schultz
    high-low (local prices, overnight adjustment,
-   >= 10 days); market = value-weighted numeraire return of the month's top 200; SMB/HML =
-   2x3 sort of the same 200 (cap median, BEME 30/70), Resid_Var only where both months of
+   >= 10 days); market, SMB and HML = Ken French's Europe three factors (value-weighted,
+   all sizes; 16 countries = europe17's less Luxembourg), every column of which is in USD:
+   the market's USD total return (Mkt-RF + RF) converted to the numeraire, SMB and HML
+   (dollar long-short spreads) times the day's change of the numeraire per dollar, the
+   same on both legs. From 1990-07-02, FF's first day; before it the top 200's own, which
+   Beta's five-year window needs: its value-weighted market and a 2x3 sort (cap median,
+   BEME 30/70; config `factors`). Resid_Var only where both months of
    its window have all three factors; ni = nicon else ib + xido; mib else mibt;
    sale = revt for FS (banks, insurers); pstkrv/pstkl absent; xad zero. Fundamentals in
    the numeraire at the fiscal year end, usable from June of the next year (US rule).
@@ -64,6 +70,10 @@ Eurostat's ECU check file); `data/europe17|12/{shared,private}` = each version's
    return-based characteristics stay as JKP computed them, from USD returns.
 5. **Risk-free**: Bundesbank 1-month rates, Frankfurt banks' funds before 1990-07,
    FIBOR to 1998, EURIBOR from 1999: a Mark rate, not an ECU rate, before 1999 (open).
+   Trading day t earns the previous trading day's quote over the calendar days since
+   (act/360). The first build gave each trading day one day's interest, so a year added
+   up to only ~72% of the quoted rate (fixed 2026-09-30). FF's RF, the US 1-month T-bill,
+   is a dollar rate and is used only to rebuild FF's dollar market from its Mkt-RF.
 
 ## Checks (2026-09-30 build)
 
@@ -72,11 +82,23 @@ Eurostat's ECU check file); `data/europe17|12/{shared,private}` = each version's
   5.34M daily rows 1984-2025, 19,100 g_funda records, 224k JKP rows. Stage 2 ~3 min each.
 - Prefix invariance: `--cutoff 1996-09-15` rebuild of europe17 reproduces the universe
   (16,200 rows), features (344,400 rows, all 79 columns, max difference 0) and returns
-  (750,879 rows) of the full build exactly.
+  (750,879 rows) of the full build exactly; re-run after the FF factors and rf change, with
+  factors, rf and market identical too.
+- Factors (rebuild of 2026-09-30): FF Europe in the numeraire against the top 200's own,
+  1990-07 .. 2025: market daily correlation 0.93, monthly 0.98, monthly tracking error
+  2.7% a year, the top 200 returning 1.1 points a year more (9.7% against 8.6% a year in
+  1991-2025, 3.7 points a year in 1991-97); SMB daily correlation 0.43 (a size split
+  inside the 200 largest is not a size factor), HML 0.83. On the days both calendars
+  share, the factors equal FF's USD file converted as in Decisions 3 to 1e-16. Only Beta,
+  Resid_Var (ranks correlating 0.996 and 0.973 with the first build's) and the rf column
+  moved in features; JKP `ret_exc` fell 0.07 pp a month (0.15 in 1990-98) with the rf
+  accrual.
 - Numeraire: see Decisions 2. `tests/test_europe_fx.py`: basket by date, ECU -> EUR
   switch. `tests/test_europe_panel.py`: Corwin-Schultz on a pure bid-ask bounce (recovers
   (H-L)/mid exactly) and the overnight gap, the line carrying a company, the 2x3 sort.
-  70 tests pass with the suite.
+  `tests/test_europe_panel.py` also: the rf accrual (Friday to Monday = three days) and
+  the FF factors in the numeraire (the market's FX move, SMB times the dollar's change, a
+  file day off the calendar, the T-bill spread). 72 tests pass with the suite.
 
 Code map: `europe_fx.py` (numeraire) -> `fetch_europe_extract.py`, `build_europe_universe.py`,
 `fetch_europe_raw.py` (stage 1) -> `europe_panel.py` (company series, spread, market and

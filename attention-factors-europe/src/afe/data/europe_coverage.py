@@ -135,8 +135,26 @@ def build_report(cfg, uni, detail, ret, calendar, mkt, ff, rf, coverage, cmm, fx
     fs = pd.DataFrame({"mkt_mean_ann": y["mktrf"].mean() * 252, "mkt_vol_ann": y["mktrf"].std() * np.sqrt(252),
                        "smb_mean_ann": y["smb"].mean() * 252, "hml_mean_ann": y["hml"].mean() * 252,
                        "days_no_smb_hml": y["hml"].apply(lambda s: int(s.isna().sum())),
-                       "rf_ann": y["rf"].mean() * 360, "members_min": mkt["n"].groupby(mkt.index.year).min()})
-    L += ["Market excess return, SMB, HML (numeraire, own construction) and rf by year:", fs.round(3).to_string(), ""]
+                       "rf_year": y["rf"].apply(lambda s: (1.0 + s).prod() - 1.0),
+                       "members_min": mkt["n"].groupby(mkt.index.year).min()})
+    src = cfg["factors"].get("source", "top_n")
+    L += [f"Factors (factors.source {src}; the top {n}'s own = its value-weighted market and 2x3 sort): market "
+          "excess return, SMB, HML and rf by year, numeraire (rf_year = the year's daily rf compounded):",
+          fs.round(3).to_string(), ""]
+    if "mkt_ff" in mkt:
+        both = mkt[["mkt_vw", "mkt_ff"]].dropna()
+        mo = (1.0 + both).groupby(both.index.to_period("M")).prod() - 1.0
+        yr = (1.0 + both).groupby(both.index.year).prod() - 1.0
+        L += [f"FF Europe from {both.index.min().date()}, the top {n}'s own before. FF's market against the top {n}'s: "
+              f"daily corr {both.corr().iloc[0, 1]:.3f}, monthly corr {mo.corr().iloc[0, 1]:.3f}, monthly tracking "
+              f"error {(mo['mkt_vw'] - mo['mkt_ff']).std() * np.sqrt(12):.2%} a year; calendar-year returns:",
+              (yr * 100).round(1).T.to_string(), ""]
+        if "smb_top_n" in ff:
+            s = ff.loc[ff.index >= both.index.min(), ["smb", "smb_top_n", "hml", "hml_top_n"]].dropna()
+            L += [f"SMB / HML, FF against the top {n}'s sort: daily corr {s['smb'].corr(s['smb_top_n']):.3f} / "
+                  f"{s['hml'].corr(s['hml_top_n']):.3f}; mean a year FF {s['smb'].mean() * 252:.2%} / "
+                  f"{s['hml'].mean() * 252:.2%}, top {n} {s['smb_top_n'].mean() * 252:.2%} / "
+                  f"{s['hml_top_n'].mean() * 252:.2%}", ""]
     spans = rf.dropna(subset=["series"]).groupby("series")["date"].agg(["min", "max", "size"])
     L += ["rf splice (Bundesbank 1-month series on the calendar):", spans.to_string(), ""]
 

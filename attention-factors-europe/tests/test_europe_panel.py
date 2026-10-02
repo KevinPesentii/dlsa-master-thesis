@@ -1,5 +1,8 @@
-"""European builds: the Corwin-Schultz spread, the line that carries a company's series, and
-the 2x3 factor sort (europe_panel). Numbers built by hand."""
+"""European builds: the Corwin-Schultz spread, the line that carries a company's series, the
+2x3 factor sort, the risk-free accrual and the FF Europe factors in the numeraire
+(europe_panel). Numbers built by hand."""
+
+import zipfile
 
 import numpy as np
 import pandas as pd
@@ -67,3 +70,47 @@ def test_smb_hml_from_a_two_by_three_sort():
     # a (0.2) and d (0.3) low; b (0.5) and e (0.6) middle; c (2.0) and f (3.0) high
     assert out["smb"] == pytest.approx((0.01 + 0.02 + 0.03) / 3 - (0.04 + 0.05 + 0.06) / 3)
     assert out["hml"] == pytest.approx((0.03 + 0.06) / 2 - (0.01 + 0.04) / 2)
+
+
+def _bbk(path, rows):
+    path.write_text("header\n" + "".join(f"{d},{v}\n" for d, v in rows))
+
+
+def test_risk_free_earns_the_previous_quote_over_calendar_days(tmp_path):
+    # FIBOR 8% on Thursday 1990-07-05, 9% on Friday: Friday's return is Thursday's 8% for one
+    # day, Monday's is Friday's 9% for the three days since Friday (act/360)
+    _bbk(tmp_path / "bbk_ST0104_frankfurt_1m_daily.csv", [("1990-07-02", 7.0)])
+    _bbk(tmp_path / "bbk_ST0262_fibor_1m_daily.csv", [("1990-07-05", 8.0), ("1990-07-06", 9.0)])
+    _bbk(tmp_path / "bbk_ST0310_euribor_1m_daily.csv", [("1999-01-04", 3.0)])
+    cal = pd.DatetimeIndex(["1990-07-05", "1990-07-06", "1990-07-09"])
+    rf = xp.risk_free(tmp_path, cal).set_index("date")["rf"]
+    assert rf.loc["1990-07-06"] == pytest.approx(0.08 / 360)
+    assert rf.loc["1990-07-09"] == pytest.approx(0.09 * 3 / 360)
+
+
+def test_ff_europe_factors_in_the_numeraire(tmp_path):
+    # all in USD: market +1% Mon, 0% Tue, +2% Wed (not a calendar day), 0% Thu; SMB +1% Tue;
+    # HML +0.5% Wed. The dollar gains 10% against the numeraire on Tuesday. Numeraire market:
+    # Mon 1%, Tue 10%, Thu Wednesday's 2%. SMB Tue: both legs gain the 10%, 1% x 1.1 = 1.1%.
+    # HML Thu: Wednesday's 0.5%, the dollar flat since Tuesday
+    csv = ("This file was created using the 202608 Bloomberg database.\n\n,Mkt-RF,SMB,HML,RF\n"
+           "19900702    ,1.00    ,0.00   ,0.00    ,0.00\n19900703    ,0.00    ,1.00   ,0.00    ,0.00\n"
+           "19900704    ,2.00    ,0.00   ,0.50    ,0.00\n19900705    ,0.00    ,0.00   ,0.00    ,0.00\n\n"
+           "Copyright 2026 Eugene F. Fama and Kenneth R. French\n")
+    path = tmp_path / "Europe_3_Factors_Daily_CSV.zip"
+    with zipfile.ZipFile(path, "w") as z:
+        z.writestr("Europe_3_Factors_Daily.csv", csv)
+    fx = pd.DataFrame({"date": pd.to_datetime(["1990-06-29", "1990-07-02", "1990-07-03"]), "currency": "USD",
+                       "eur_per_unit": [0.80, 0.80, 0.88], "numeraire": "XEU"})
+    cal = pd.DatetimeIndex(["1990-06-29", "1990-07-02", "1990-07-03", "1990-07-05"])
+    f = xp.ff_europe(path, fx, cal)
+    assert f.loc["1990-06-29"].isna().all()
+    assert f.loc["1990-07-02", "mkt"] == pytest.approx(0.01)
+    assert f.loc["1990-07-03", "mkt"] == pytest.approx(0.10)
+    assert f.loc["1990-07-05", "mkt"] == pytest.approx(0.02)
+    assert f.loc["1990-07-03", "smb"] == pytest.approx(0.011)
+    assert f.loc["1990-07-05", "smb"] == pytest.approx(0.0)
+    assert f.loc["1990-07-05", "hml"] == pytest.approx(0.005)
+    # with the monthly T-bill, RF = the July rate spread over the month's 4 file days: 0.1% a day
+    pd.DataFrame({"date": pd.to_datetime(["1990-07-01"]), "rf": [1.001 ** 4 - 1]}).to_parquet(tmp_path / "m.parquet")
+    assert xp.ff_europe(path, fx, cal, tmp_path / "m.parquet").loc["1990-07-02", "mkt"] == pytest.approx(0.011)
