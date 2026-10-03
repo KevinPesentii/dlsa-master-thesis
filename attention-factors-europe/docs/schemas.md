@@ -34,6 +34,7 @@ Conventions common to all tables:
 | mktcap_lag  | float32 | yes      | market cap as of the prior month end, the one that sets membership (US: the line's, a depositary receipt at company level) |
 | country     | string  | EU only  | ISO-2                                        |
 | currency    | string  | EU only  | native currency before conversion            |
+| traded      | bool    | no       | False: the name's market did not trade at this close (its exchange's holiday, a carried price), so no order can fill there; the loader treats a missing column as all True |
 
 Returns are in EUR for the European leg, USD for the US leg. A USD European panel is
 built as a robustness check and lives at `data/eu_usd/`. The European builds that start

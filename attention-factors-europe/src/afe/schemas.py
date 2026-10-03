@@ -32,7 +32,7 @@ RETURNS = TableSpec(
     name="returns",
     key=("date", "sec_id"),
     required={"date": DATE_DTYPE, "sec_id": ID_DTYPE, "ret": F32, "mktcap_lag": F32},
-    optional={"country": ID_DTYPE, "currency": ID_DTYPE},
+    optional={"country": ID_DTYPE, "currency": ID_DTYPE, "traded": "bool"},
 )
 
 UNIVERSE = TableSpec(
