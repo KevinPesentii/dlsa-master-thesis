@@ -38,7 +38,12 @@ Eurostat's ECU check file and Ken French's `Europe_3_Factors_Daily_CSV.zip` as d
    listing's exchange country. Summing classes across countries was tried and rejected:
    foreign cross-listings often carry their own ISIN or a stale share count, so it double
    counts (Total, Sanofi, ING); the price is that Unilever NV/PLC and Shell A/B count only
-   their home-country class.
+   their home-country class. The line that carries a company (returns, characteristics)
+   is its most active class, unless that class holds under 5% of the cap
+   (`filters.min_class_share`), then its largest class; lines that are not shares
+   (`compustat_global.non_equity`: VVPR strips, subscription / bonus / offer rights,
+   stock-dividend rights, nil-paid) are dropped before anything else (2026-10-03, see
+   Checks).
 2. **Numeraire.** ECU to 1998-12-31 = the official basket (three compositions, 1979, 1984,
    1989) valued at Compustat's GBP cross rates; EUR from 1999-01-01 = Compustat's quote;
    one to one at the switch (Reg. 1103/97). Pseudo currency `XEU` in the FX table, so the
@@ -77,13 +82,30 @@ Eurostat's ECU check file and Ken French's `Europe_3_Factors_Daily_CSV.zip` as d
 
 ## Checks (2026-09-30 build)
 
-- Size: europe17 824 ever-ranked companies (1,131 lines), 757 universe members, returns
-  4.29M rows; europe12 793 (1,079 lines). Union raw pull: 1,145 lines, 833 companies,
-  5.34M daily rows 1984-2025, 19,100 g_funda records, 224k JKP rows. Stage 2 ~3 min each.
+- Size: europe17 824 ever-ranked companies (1,068 lines since 2026-10-03, 1,131 before),
+  757 universe members, returns 4.29M rows; europe12 793 (1,017 lines; 1,079). Union raw
+  pull: 1,147 lines, 833 companies, 5.34M daily rows 1984-2025, 19,100 g_funda records,
+  224k JKP rows. Stage 2 ~3 min each.
+- Line selection (rebuild of 2026-10-03; previous outputs in
+  `data/europe1{7,2}/private/prev_20261003_line_selection`): the cap table had let the most
+  active line price a company even when it was not a share or a sliver of the cap.
+  Electrabel 2006-02 .. 2007-08 was carried by its VVPR strip (EUR 0.01, daily returns of
+  +100% / -50%; in the K=30 attention run December 2006 alone was 56% of the squared
+  returns), Petrofina 1999-2001 by its strips, KBC, AXA, Repsol, Ferrovial briefly by
+  strips or rights, Land Securities 2002-03 by the B shares of its return of capital, and
+  SEB, Handelsbanken, GUS, Soc. Gen. de Belgique, Munich Re, Sanofi, Vinci (new-share
+  lines) by classes under 5% of the cap. Now 383 europe17 member-months (33 companies) take
+  another line; with the strip gone Electrabel 2006-05 .. 2007-07 and Petrofina 2000-05 ..
+  08 fail the turnover screen like Elf (13 member-months, 13 others enter). Two lines not
+  pulled before (Sandvik 01W, Sydkraft 05W, restricted A shares 1984-92) were added with
+  `fetch_europe_raw.py --add-lines`. Member-days with |return| > 40%: 119 -> 24 in europe17
+  (117 -> 22 in europe12); what is left are events (VW 2008, Steinhoff, Bankia, Atos).
+  Features: 9% of cells moved, 1.2% by more than one rank step, 0.09% of the other
+  companies' cells by more than 0.05.
 - Prefix invariance: `--cutoff 1996-09-15` rebuild of europe17 reproduces the universe
   (16,200 rows), features (344,400 rows, all 79 columns, max difference 0) and returns
-  (750,879 rows) of the full build exactly; re-run after the FF factors and rf change, with
-  factors, rf and market identical too.
+  (751,826 rows) of the full build exactly, with factors, rf and market identical too;
+  re-run after the FF factors and rf change and after the line selection change.
 - Factors (rebuild of 2026-09-30): FF Europe in the numeraire against the top 200's own,
   1990-07 .. 2025: market daily correlation 0.93, monthly 0.98, monthly tracking error
   2.7% a year, the top 200 returning 1.1 points a year more (9.7% against 8.6% a year in
@@ -98,7 +120,9 @@ Eurostat's ECU check file and Ken French's `Europe_3_Factors_Daily_CSV.zip` as d
   (H-L)/mid exactly) and the overnight gap, the line carrying a company, the 2x3 sort.
   `tests/test_europe_panel.py` also: the rf accrual (Friday to Monday = three days) and
   the FF factors in the numeraire (the market's FX move, SMB times the dollar's change, a
-  file day off the calendar, the T-bill spread). 72 tests pass with the suite.
+  file day off the calendar, the T-bill spread). `tests/test_compustat_global.py`: strips
+  and rights neither price nor count, a class under 5% of the cap does not price. 88 tests
+  pass with the suite.
 
 Code map: `europe_fx.py` (numeraire) -> `fetch_europe_extract.py`, `build_europe_universe.py`,
 `fetch_europe_raw.py` (stage 1) -> `europe_panel.py` (company series, spread, market and

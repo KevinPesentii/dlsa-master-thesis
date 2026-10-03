@@ -1,12 +1,15 @@
 """Step 1c of the European builds: the raw WRDS tables for the union of the versions' lines.
 
     python scripts/fetch_europe_raw.py --configs configs/europe17_data.yaml configs/europe12_data.yaml
-                                       [--tables daily funda fx jkp]
+                                       [--tables daily funda fx jkp] [--add-lines]
 
 Every config's output.inspect_dir must hold listings.csv (build_europe_universe.py). The
 union of those lines and companies is pulled once into raw.dir of the first config
 (the configs share it). Resumable: a year on disk is skipped. `--tables` restricts the run
 so the daily file and JKP can be pulled by two processes at once (JKP scans are slow).
+`--add-lines` (daily only): when a rebuilt universe prices a company by a line the pull
+does not hold yet, fetch those lines for every year and append them to the year files;
+listings.csv then lists everything pulled (old union plus the new lines).
   secd_daily/<year>.parquet   comp.g_secd, all fields of wrds_eu.SECD_DAILY_*, per listing-day
   g_funda.parquet             comp.g_funda INDL + FS, HIST_STD / I / C, wrds_eu.G_FUNDA_ITEMS
   jkp/<year>.parquet          contrib.global_factor, all 444 columns, every line of the companies
@@ -47,6 +50,8 @@ def main():
     ap.add_argument("--configs", nargs="+", required=True)
     ap.add_argument("--tables", nargs="+", default=["funda", "daily", "jkp", "fx"],
                     choices=["funda", "daily", "jkp", "fx"])
+    ap.add_argument("--add-lines", action="store_true",
+                    help="daily only: append the union's lines that raw/listings.csv does not hold yet")
     args = ap.parse_args()
     cfgs = [yaml.safe_load(Path(p).read_text()) for p in args.configs]
     r = cfgs[0]["raw"]
@@ -56,6 +61,14 @@ def main():
     for sub in ("secd_daily", "jkp"):
         (raw / sub).mkdir(parents=True, exist_ok=True)
     lines, gvkeys, countries = union(cfgs)
+    if args.add_lines:
+        if args.tables != ["daily"]:
+            raise SystemExit("--add-lines appends daily rows only: pass --tables daily")
+        held = pd.read_csv(raw / "listings.csv", dtype=str)
+        new = lines.merge(held, how="left", indicator=True).query("_merge == 'left_only'").drop(columns="_merge")
+        add_lines(raw, [tuple(p) for p in new.itertuples(index=False)], int(r["daily_start_year"]), int(r["daily_end_year"]))
+        pd.concat([held, new]).sort_values(["gvkey", "iid"]).to_csv(raw / "listings.csv", index=False)
+        return
     lines.to_csv(raw / "listings.csv", index=False)
     pd.Series(gvkeys, name="gvkey").to_csv(raw / "members.csv", index=False)
     pairs = list(lines.itertuples(index=False, name=None))
@@ -118,6 +131,26 @@ def main():
         db.close()
         manifest_path.write_text(json.dumps(manifest, indent=2))
     print({k: v["rows"] for k, v in manifest["tables"].items()})
+
+
+def add_lines(raw: Path, pairs: list[tuple[str, str]], y0: int, y1: int) -> None:
+    """Append every year of comp.g_secd for `pairs` to raw/secd_daily/<year>.parquet."""
+    print(f"adding {len(pairs)} lines to the daily pull: {pairs}", flush=True)
+    if not pairs:
+        return
+    db = cu.connect(ROOT)
+    try:
+        for y in range(y0, y1 + 1):
+            path = raw / "secd_daily" / f"{y}.parquet"
+            add = wrds_eu.fetch_secd_daily_year(db, y, pairs)
+            df = add
+            if path.exists():
+                df = pd.concat([pd.read_parquet(path), add], ignore_index=True).drop_duplicates(
+                    ["gvkey", "iid", "datadate"], keep="first")
+            df.to_parquet(path, index=False)
+            print(f"  secd_daily {y}: {len(add):,} rows fetched, {len(df):,} in the file", flush=True)
+    finally:
+        db.close()
 
 
 def pq_rows(path: Path) -> int:

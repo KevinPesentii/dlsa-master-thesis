@@ -46,7 +46,10 @@ m+1 is row m. The lag lives downstream, as in the US build.
    Summing over `iid` as `compustat_us` does would multiply caps by the number of
    listings. Listings are collapsed to classes inside the home country: rows of one
    company-month with the same ISIN, or an identical `cshoc`, are one class, priced by
-   the most active listing. Distinct classes still add up.
+   the most active listing. Distinct classes still add up. Since 2026-10-03
+   `company_month_mktcap` also drops non-share lines (VVPR strips, rights) and lets a
+   class under 5% of the cap never set the company's line (docs/europe_build.md); the
+   euro-11 tables on disk were built before that and have not been rebuilt.
 
 3. **Header primary-issue tags cannot identify the home market.** Frankfurt alone lists
    ~11,000 gvkeys, mostly dormant secondary lines of foreign companies. The first build

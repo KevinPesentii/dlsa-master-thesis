@@ -12,7 +12,15 @@ Three things differ from the North American build in `compustat_us`:
    count, so listings are collapsed to share classes: rows of one company-month that
    share an ISIN, or that share an identical `cshoc`, are one class and the best-traded
    listing in the home country prices it. Distinct classes (Shell A + B in Amsterdam)
-   still add up, as in the US permco definition.
+   still add up, as in the US permco definition. The most active class prices the
+   COMPANY (`iid`: the line whose returns and characteristics stage 2 follows) unless it
+   carries less than `min_class_share` of the company's cap; then the largest class does.
+   Turnover is volume over shares, so a small class scores high on modest volume (SEB C,
+   Land Securities' 2002 B shares, short-lived new-share lines such as Sanofi's "RFD").
+   Lines that are not shares although g_secd files them as common (`non_equity`: Belgian
+   VVPR strips, subscription / bonus / offer rights, stock-dividend rights, nil-paid
+   lines) are dropped first: they neither price nor add to a cap. Before this rule
+   Electrabel 2006-07 was priced by its EUR 0.01 strip (+100% / -50% days).
 
 2. Country and eligibility. `g_security.excntry` is the country of the exchange a
    listing trades on. Frankfurt alone carries lines for ~11,000 gvkeys, most of them
@@ -41,8 +49,17 @@ by where it is today; the build report lists the largest fic/home mismatches.
 
 from __future__ import annotations
 
+import re
+
 import numpy as np
 import pandas as pd
+
+# g_security.dsci of lines that are not shares (tpci is still '0'): "ORD NPV VVPR STRIP",
+# "ORD EUR2.29 (SUB RIGHT)", "EUR0.2 BN RTS 17/11/21", "ORD EUR1(STOCK DIV 5/7/2012)",
+# "ORD NPV (NIL PAID 05/08/10)". Shares trading ex or cum rights, and lines without a
+# dividend right, are shares.
+NON_EQUITY = re.compile(r"STRIP|STOCK DIV|NIL PAID|RIGHT|\bRTS\b", re.I)
+SHARE_DESPITE_RIGHTS = re.compile(r"EX[- ]R(?:IGH)?TS|CUM RTS|DIVIDEND RIGHT", re.I)
 
 SECD_COLS = [
     "gvkey", "iid", "datadate", "prccd", "cshoc", "ajexdi", "curcdd", "prcstd", "qunit",
@@ -125,6 +142,12 @@ def fetch_fx(db, currencies: list[str], start_year: int, end_year: int) -> pd.Da
 # ------------------------------------------------------------------- pure transforms
 
 
+def non_equity(dsci: pd.Series) -> pd.Series:
+    """True where a g_security description names a line that is not a share (NON_EQUITY)."""
+    d = dsci.fillna("").astype(str)
+    return d.str.contains(NON_EQUITY) & ~d.str.contains(SHARE_DESPITE_RIGHTS)
+
+
 def convert_to_currency(rows: pd.DataFrame, fx: pd.DataFrame, target: str,
                         max_stale_days: int = 7, date_col: str = "datadate") -> pd.Series:
     """Factor that turns `curcdd` amounts into `target`, per row, at the row's `date_col`.
@@ -154,16 +177,22 @@ def convert_to_currency(rows: pd.DataFrame, fx: pd.DataFrame, target: str,
 def company_month_mktcap(secd: pd.DataFrame, company: pd.DataFrame, security: pd.DataFrame,
                          fx: pd.DataFrame, countries: list[str], target_ccy: str = "EUR",
                          issue_types: tuple[str, ...] = ("0",), min_turnover: float = 3e-5,
-                         turnover_window: int = 6) -> pd.DataFrame:
+                         turnover_window: int = 6, min_class_share: float = 0.05) -> pd.DataFrame:
     """One row per (gvkey, datadate) with market cap in `target_ccy` millions.
 
-    Steps: keep priced issues of the requested classes with a share count; convert the
-    price; score every listing by trailing turnover; the best-traded listing sets the
-    home country; collapse the home country's listings to share classes; sum the classes.
-    `eligible` = header link to the country set AND an active home listing (see module
-    docstring). Nothing is dropped: the caller filters on `eligible`.
+    Steps: keep priced issues of the requested classes with a share count, less the
+    non-equity lines of `security.dsci`; convert the price; score every listing by trailing
+    turnover; the best-traded listing sets the home country; collapse the home country's
+    listings to share classes; sum the classes; the most active class prices the company
+    unless it is below `min_class_share` of the cap (then the largest). `eligible` = header
+    link to the country set AND an active home listing (see module docstring). Nothing
+    else is dropped: the caller filters on `eligible`.
     """
     df = secd[secd["tpci"].isin(issue_types)].copy()
+    if "dsci" in security:
+        bad = security.loc[non_equity(security["dsci"]), ["gvkey", "iid"]].drop_duplicates()
+        df = df.merge(bad.assign(_bad=True), on=["gvkey", "iid"], how="left")
+        df = df[df["_bad"].isna()].drop(columns="_bad")
     if df.duplicated(["gvkey", "iid", "datadate"]).any():
         raise ValueError("g_secd extract has duplicate (gvkey, iid, datadate) rows")
     # monthend = 1 marks each listing's own last row of the month (its exchange's last
@@ -224,6 +253,12 @@ def company_month_mktcap(secd: pd.DataFrame, company: pd.DataFrame, security: pd
     home = home.sort_values(order, ascending=[True, True, False, False, False], na_position="last")
     home["class_id"] = home["isin"].fillna("iid:" + home["iid"])
     home = home.drop_duplicates(key + ["class_id"]).drop_duplicates(key + ["cshoc"])
+    # The first class per company-month prices it: the most active, unless that one holds
+    # less than min_class_share of the cap, in which case the largest class goes first.
+    small = (home.groupby(key)["cap_listing"].transform("first")
+             < min_class_share * home.groupby(key)["cap_listing"].transform("sum"))
+    home["_pos"] = np.where(small, -home["cap_listing"], np.arange(len(home)))
+    home = home.sort_values(key + ["_pos"], kind="mergesort").drop(columns="_pos")
 
     agg = home.groupby(key, sort=False).agg(
         mktcap=("cap_listing", "sum"), mktcap_main_class=("cap_listing", "first"),

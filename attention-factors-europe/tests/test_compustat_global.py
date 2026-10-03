@@ -130,3 +130,62 @@ def test_turnover_is_a_trailing_median_that_skips_missing_volume(fixture):
     assert not last.loc["8", "active"]
     assert last.loc["9", "active"] and pd.isna(last.loc["9", "turnover"])
     assert last.loc["10", "header_link"] and not last.loc["10", "active"] and last.loc["10", "turnover"] == 0
+
+
+@pytest.mark.parametrize("dsci, expected", [
+    ("ORD NPV VVPR STRIP", True), ("ORD NPV (VVPR STRIP)", True), ("ORD EUR2.29 (SUB RIGHT)", True),
+    ("EUR0.2 BN RTS 17/11/21", True), ("ORD EUR1(STOCK DIV 5/7/2012)", True), ("ORD NPV (NIL PAID 05/08/10)", True),
+    ("ORD NPV", False), ("CL B ORD GBP1.02", False), ("ORD EUR2 (RFD 1/1/11)", False),
+    ("DFD NPV 09/16/08 (EX-RIGHTS)", False), ("CLS A ORD NPV CUM RTS 1/2 WT", False), ("ABB U NO DIVIDEND RIGHT", False),
+])
+def test_non_equity_descriptions(dsci, expected):
+    assert bool(cg.non_equity(pd.Series([dsci]))[0]) is expected
+
+
+def _one_company(rows, dsci):
+    """Brussels / London company `g` with the given lines; dsci per iid in g_security."""
+    secd = pd.DataFrame(rows)
+    company = pd.DataFrame(dict(gvkey=["g"], conm=["G"], prirow=["01W"], priusa=[None], fic=["BEL"],
+                                loc=["BEL"], sic=["1"]))
+    security = pd.DataFrame([dict(gvkey="g", iid=r["iid"], excntry=r["excntry"], dsci=dsci[r["iid"]]) for r in rows])
+    fx = pd.DataFrame([dict(datadate=D, tocurd="EUR", exratd=1.0), dict(datadate=D, tocurd="GBP", exratd=1.0)])
+    return cg.company_month_mktcap(secd, company, security, fx, ["BEL", "GBR"], "EUR").set_index("gvkey").loc["g"]
+
+
+def test_vvpr_strip_neither_prices_nor_counts():
+    """Electrabel, 2006: the ordinary line (EUR 390, Suez held ~98%) trades less, per share,
+    than its VVPR strip (EUR 0.01). The strip must not price the company or add to its cap."""
+    rows = [_row("g", "04W", 390.0, 54.9e6, "BEL", 132, 1.1e3, "BE04"),
+            _row("g", "11W", 0.01, 10.2e6, "BEL", 132, 5e4, "BE11")]
+    out = _one_company(rows, {"04W": "ORD NPV", "11W": "ORD NPV VVPR STRIP"})
+    assert out["iid"] == "04W" and out["n_classes"] == 1
+    assert out["mktcap"] == pytest.approx(390.0 * 54.9e6 / 1e6)
+    assert out["turnover"] == pytest.approx(1.1e3 / 54.9e6)     # the share's own, below 3e-5
+    assert not out["active"]
+
+
+def test_subscription_right_neither_prices_nor_counts():
+    """AXA, June 2006: the rights line out-trades the share for the month."""
+    rows = [_row("g", "01W", 20.0, 2e9, "BEL", 132, 1e7, "FR01"),
+            _row("g", "03W", 0.66, 2e9, "BEL", 132, 5e7, "FR03")]
+    out = _one_company(rows, {"01W": "ORD EUR2.29", "03W": "ORD EUR2.29 (SUB RIGHT)"})
+    assert out["iid"] == "01W" and out["mktcap"] == pytest.approx(20.0 * 2e9 / 1e6)
+
+
+def test_class_below_min_share_does_not_price_the_company():
+    """Land Securities, 2002-03: the B shares of a return of capital (GBP 1.01, under 1% of
+    the cap) turn over ten times the ordinary line per share. They still count in the cap
+    (a class), but the ordinary class prices the company."""
+    rows = [_row("g", "01W", 7.85, 465e6, "GBR", 194, 2e6, "GB01", curcdd="GBP"),
+            _row("g", "02W", 1.01, 29.7e6, "GBR", 194, 1.4e6, "GB02", curcdd="GBP")]
+    out = _one_company(rows, {"01W": "ORD GBP0.10", "02W": "CL B ORD GBP1.02"})
+    assert out["iid"] == "01W" and out["n_classes"] == 2
+    assert out["mktcap"] == pytest.approx((7.85 * 465e6 + 1.01 * 29.7e6) / 1e6)
+
+
+def test_material_second_class_that_trades_more_still_prices():
+    """A Swedish A/B pair: the B class holds 30% of the cap and out-trades A; B prices."""
+    rows = [_row("g", "01W", 100.0, 7e6, "BEL", 132, 1e3, "SE01"),
+            _row("g", "02W", 100.0, 3e6, "BEL", 132, 3e4, "SE02")]
+    out = _one_company(rows, {"01W": "CL A ORD", "02W": "CL B ORD"})
+    assert out["iid"] == "02W" and out["mktcap"] == pytest.approx(1000.0)

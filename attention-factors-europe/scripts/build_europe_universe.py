@@ -166,7 +166,8 @@ def main():
           f"exchange countries", flush=True)
     mcap_all = cg.company_month_mktcap(secd, company, security, fxn, countries, efx.NUMERAIRE,
                                        tuple(f["issue_types"]), min_turnover=float(f["min_turnover"]),
-                                       turnover_window=int(f["turnover_window"]))
+                                       turnover_window=int(f["turnover_window"]),
+                                       min_class_share=float(f["min_class_share"]))
     mcap_all.to_parquet(out / "company_month_mktcap.parquet", index=False)
     print(f"cap table: {len(mcap_all):,} company-months, {int(mcap_all['eligible'].sum()):,} eligible", flush=True)
 

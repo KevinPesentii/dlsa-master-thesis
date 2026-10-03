@@ -22,6 +22,7 @@ filters:                             # as configs/universe_eu_compustat.yaml
   issue_types: ["0"]
   min_turnover: 3.0e-5
   turnover_window: 6
+  min_class_share: 0.05              # a share class below 5% of the cap never prices the company (compustat_global)
   fx_max_stale_days: 7
 
 currency:
