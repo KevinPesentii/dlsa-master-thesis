@@ -63,6 +63,37 @@ def net_returns(w: torch.Tensor, b: SlotBatch, tc: float, sc: float,
     return gross, cost, gross - cost, turnover, short, wp
 
 
+def execute(target: torch.Tensor, closed: torch.Tensor | None, lag: int) -> torch.Tensor:
+    """Pool-space positions actually held, from the target weights.
+
+    target[k] (T, P) is the weight for day t0+k, decided at the close of t0+k-1 from what
+    was known then. It is traded in the closing auction `lag` closes later; a name whose
+    market did not trade at a close (closed[j], j indexing the closes t0-1 .. t0+T-2: an
+    exchange holiday, a carried price) cannot be traded there and keeps its position until
+    its next open close. The position over day t0+k is the target traded at the name's
+    last open close up to t0+k-1, i.e. target[c - lag] for that close c; zero where that
+    target falls before the span. lag 0 and no closed market return `target` unchanged.
+    """
+    T, P = target.shape
+    j = torch.arange(T, device=target.device)[:, None].expand(T, P)
+    if closed is not None:
+        last_open = torch.where(~closed, j, torch.full_like(j, -1)).cummax(dim=0).values
+    else:
+        last_open = j
+    src = last_open - lag
+    held = torch.gather(target, 0, src.clamp(min=0))
+    return torch.where(src >= 0, held, torch.zeros_like(held))
+
+
+def pool_net_returns(held: torch.Tensor, R_pool: torch.Tensor, tc: float, sc: float):
+    """net_returns for positions already in pool space (after execute): (T, P) each."""
+    gross = (held * R_pool).sum(dim=1)
+    turnover = (held - torch.cat([torch.zeros_like(held[:1]), held[:-1]])).abs().sum(dim=1)
+    short = torch.clamp(-held, min=0).sum(dim=1)
+    cost = tc * turnover + sc * short
+    return gross, cost, gross - cost, turnover, short, held
+
+
 def sharpe_loss(net: torch.Tensor, rf: torch.Tensor, valid: torch.Tensor, subtract_rf: bool) -> torch.Tensor:
     """-(mean(net - rf) / sd(net)) over valid dates: the paper's objective without the
     explained-variance term, which is constant once the factors are fixed."""

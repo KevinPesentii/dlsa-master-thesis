@@ -56,6 +56,13 @@ objective:
   short_cost: 0.0001             # ||max(-w_t, 0)||_1
   subtract_rf: true              # paper: (Rbar_net - R_f) / sd in the objective
 
+execution:
+  lag: 0                         # closes between the close whose information sets the weights and the
+                                 # close they are traded at. 0 = the paper's timing: decided and traded
+                                 # at the close of t-1, earning day t. 1 = traded at the close of t
+  stale_when_closed: true        # a name whose market did not trade at a close (returns.traded False:
+                                 # its exchange's holiday, a carried price) keeps its position there
+
 training:
   window_years: 8
   refit: annual                  # NOT the 125/1000-day schedule of GPZ

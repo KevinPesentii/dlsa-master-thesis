@@ -26,7 +26,8 @@ member without a return row (delisted mid-month, halted) keeps its slot and its 
 the pool column stays stable, but is masked: R is 0 there, and the factor model, the
 residual windows and the policy all ignore it.
 
-`rf` is the rate of the traded day t itself, unshifted, for the objective.
+`rf` is the rate of the traded day t itself, unshifted, for the objective. `closed`
+(optional returns.traded) marks closes at which a name could not be traded.
 """
 
 from __future__ import annotations
@@ -54,6 +55,8 @@ class SlotPanel:
     rf: torch.Tensor               # (T,) float32, rate of day t
     R_pool: np.ndarray             # (T, n_pool) float32, 0 where no return; for evaluation
     mkt_ew: np.ndarray             # (T,) equal-weighted return of the members with a return
+    closed: np.ndarray | None = None  # (T, n_pool) bool, the name's market did not trade at the
+                                      # close of t (returns.traded False); None = all traded
 
     @property
     def n_pool(self) -> int:
@@ -75,7 +78,8 @@ def load_slots(data_dir: Path, start: str, end: str) -> SlotPanel:
     n_pool = len(sec_ids)
     col = pd.Series(np.arange(n_pool), index=sec_ids)          # sec_id -> pool column
 
-    ret = pq.read_table(data_dir / "returns.parquet", columns=["date", "sec_id", "ret"],
+    has_traded = "traded" in pq.read_schema(data_dir / "returns.parquet").names
+    ret = pq.read_table(data_dir / "returns.parquet", columns=["date", "sec_id", "ret"] + (["traded"] if has_traded else []),
                         filters=[("date", ">=", t_start.to_pydatetime()), ("date", "<=", hi)]).to_pandas()
     ret["date"] = pd.to_datetime(ret["date"]).astype("datetime64[ns]")
     ret = ret[ret["sec_id"].isin(col.index)]
@@ -98,6 +102,12 @@ def load_slots(data_dir: Path, start: str, end: str) -> SlotPanel:
     in_universe = ~np.isnan(R_slot)
     R_slot = np.nan_to_num(R_slot)
     R_pool = np.nan_to_num(R_pool[:, :n_pool])
+    closed = None
+    if has_traded:
+        closed = np.zeros((T, n_pool + 1), dtype=bool)
+        nt = ~ret["traded"].to_numpy(dtype=bool)
+        closed[dates.get_indexer(ret["date"][nt]), col[ret["sec_id"].to_numpy()[nt]].to_numpy()] = True
+        closed = closed[:, :n_pool]
     n_mem = in_universe.sum(axis=1)
     mkt_ew = np.where(n_mem > 0, (R_slot * in_universe).sum(axis=1) / np.maximum(n_mem, 1), 0.0)
 
@@ -140,4 +150,4 @@ def load_slots(data_dir: Path, start: str, end: str) -> SlotPanel:
 
     return SlotPanel(dates, sec_ids, feats, torch.from_numpy(X), torch.from_numpy(R_slot),
                      torch.from_numpy(in_universe), torch.from_numpy(idx), torch.from_numpy(rf),
-                     R_pool, mkt_ew)
+                     R_pool, mkt_ew, closed)

@@ -175,11 +175,16 @@ def explained_variance_pooled(eps: torch.Tensor, R: torch.Tensor, mask: torch.Te
 
 
 def objective(out: dict, batch: trading.SlotBatch, tc: float, sc: float, lambda_var: float,
-              subtract_rf: bool = False, w_prev_pool=None):
+              subtract_rf: bool = False, w_prev_pool=None, held=None, R_pool=None):
     """Loss and its parts. The Sharpe half reuses trading.net_returns, so turnover and
-    short costs are measured in asset space exactly as in the two-step path."""
-    gross, cost, net, turnover, short, wp = trading.net_returns(out["w"], batch, tc, sc,
-                                                                w_prev_pool)
+    short costs are measured in asset space exactly as in the two-step path. With `held`
+    (pool-space positions from trading.execute) and the pool returns of the same days,
+    the returns and costs are those of the executed book instead."""
+    if held is None:
+        gross, cost, net, turnover, short, wp = trading.net_returns(out["w"], batch, tc, sc,
+                                                                    w_prev_pool)
+    else:
+        gross, cost, net, turnover, short, wp = trading.pool_net_returns(held, R_pool, tc, sc)
     valid = out["tradable"].any(dim=1)
     sharpe = trading.sharpe_loss(net, batch.rf, valid, subtract_rf)
     ev = explained_variance(out["eps"], out["R"], out["in_universe"], out["idx"], out["n_pool"])

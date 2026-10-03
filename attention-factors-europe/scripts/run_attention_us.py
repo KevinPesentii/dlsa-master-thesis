@@ -34,6 +34,7 @@ from afe import runs  # noqa: E402
 from afe.data import slots  # noqa: E402
 from afe.evaluation import metrics  # noqa: E402
 from afe.model.attention_pipeline import AttentionArb, objective, slot_batch, to_pool  # noqa: E402
+from afe.policy import trading  # noqa: E402
 
 
 def window_start(cfg: dict, year: int) -> pd.Timestamp:
@@ -45,18 +46,59 @@ def window_start(cfg: dict, year: int) -> pd.Timestamp:
     return max(start, pd.Timestamp(data_start)) if data_start else start
 
 
+def execution(cfg: dict) -> tuple[int, bool]:
+    """(lag, stale_when_closed) of the config's `execution` block; (0, True) without one.
+    lag = closes between the close whose information sets the weights and the close they
+    are traded at: 0 is the paper's timing (decided and traded at the close of t-1, earning
+    day t), 1 trades them at the close of t (earning day t+1). stale_when_closed: a name
+    whose market did not trade at a close (returns.traded False) keeps its position."""
+    e = cfg.get("execution") or {}
+    return int(e.get("lag", 0)), bool(e.get("stale_when_closed", True))
+
+
+def closed_mask(p: slots.SlotPanel, cfg: dict, c0: int, c1: int):
+    """p.closed for the closes c0..c1-1 as a tensor, or None (all traded / not respected)."""
+    if p.closed is None or not execution(cfg)[1]:
+        return None
+    return torch.from_numpy(p.closed[c0:c1])
+
+
 def span(model, p: slots.SlotPanel, t0: int, t1: int, cfg: dict, w_prev=None):
     """Trade dates t0..t1-1; the span carries `lookback` extra dates in front, which feed
-    the residual windows and are not traded. Returns the loss, its parts and the weights."""
+    the residual windows and are not traded. Returns the loss, its parts and the weights.
+    With an execution lag or closed markets the parts are those of the executed book
+    (trading.execute), from the returns of t0..t1-1 only: the last `lag` targets of the
+    span are not traded inside it, so no return after the span is ever used."""
     L, pc, ob = model.lookback, cfg["policy"], cfg["objective"]
     s = t0 - L
     out = model.forward_span(p.X[s:t1], p.R[s:t1], p.in_universe[s:t1], p.idx[s:t1], p.n_pool,
                              cumulative=pc["input"] == "cumulative", scale=pc["input_scale"],
                              normalise=pc.get("input_normalise", "none"))
     b = slot_batch(p.R[t0:t1], p.idx[t0:t1], p.rf[t0:t1], out["tradable"], p.n_pool)
+    lag, closed = execution(cfg)[0], closed_mask(p, cfg, t0 - 1, t1 - 1)
+    held = R_pool = None
+    if lag or closed is not None:
+        held = trading.execute(to_pool(out["w"], p.idx[t0:t1], p.n_pool), closed, lag)
+        R_pool = torch.from_numpy(p.R_pool[t0:t1])
     loss, parts = objective(out, b, ob["turnover_cost"], ob["short_cost"], ob["lambda_var"],
-                            ob["subtract_rf"], w_prev)
+                            ob["subtract_rf"], w_prev, held, R_pool)
     return loss, parts, out
+
+
+def daily_book(p: slots.SlotPanel, wp: np.ndarray, t_idx: np.ndarray, cfg: dict) -> pd.DataFrame:
+    """Out-of-sample daily series from the target pool weights `wp` of the consecutive days
+    t_idx (all test years together, so a lagged or stale position crosses the year end)."""
+    if not (np.diff(t_idx) == 1).all():
+        raise ValueError("out-of-sample days must be consecutive")
+    lag, closed = execution(cfg)[0], closed_mask(p, cfg, int(t_idx[0]) - 1, int(t_idx[-1]))
+    if lag or closed is not None:
+        wp = trading.execute(torch.from_numpy(wp), closed, lag).numpy()
+    gross = (wp * p.R_pool[t_idx]).sum(axis=1)
+    turnover = np.abs(np.diff(wp, axis=0, prepend=np.zeros((1, wp.shape[1]), dtype=wp.dtype))).sum(axis=1)
+    short = np.clip(-wp, 0, None).sum(axis=1)
+    return pd.DataFrame({"date": p.dates[t_idx], "gross": gross, "turnover": turnover, "short": short,
+                         "n_traded": (wp != 0).sum(axis=1), "mkt_ew": p.mkt_ew[t_idx],
+                         "rf": p.rf.numpy()[t_idx]})
 
 
 def train_window(model, p: slots.SlotPanel, t_tr0: int, t_te0: int, cfg: dict,
@@ -141,15 +183,10 @@ def run_K(K: int, cfg: dict, seed: int, p: slots.SlotPanel, years: list[int], lo
             f"{time.time() - t0:.0f}s")
 
     t_idx = np.concatenate(t_all)
-    wp = np.concatenate(w_pool_all)
-    gross = (wp * p.R_pool[t_idx]).sum(axis=1)
-    turnover = np.abs(np.diff(wp, axis=0, prepend=np.zeros((1, wp.shape[1]), dtype=wp.dtype))).sum(axis=1)
-    short = np.clip(-wp, 0, None).sum(axis=1)
-    daily = pd.DataFrame({"date": dates[t_idx], "gross": gross, "turnover": turnover, "short": short,
-                          "n_traded": (wp != 0).sum(axis=1), "mkt_ew": p.mkt_ew[t_idx],
-                          "rf": p.rf.numpy()[t_idx]})
+    daily = daily_book(p, np.concatenate(w_pool_all), t_idx, cfg)
     m = metrics.performance(daily, ob["turnover_cost"], ob["short_cost"], ev["cost_grid_bps"])
-    m.update({"K": K, "seed": seed, "factor_model": "attention", "policy_input": pc["input"]})
+    m.update({"K": K, "seed": seed, "factor_model": "attention", "policy_input": pc["input"],
+              "execution_lag": execution(cfg)[0], "stale_when_closed": closed_mask(p, cfg, 0, 1) is not None})
     runs.write_metrics(run_dir, m)
     daily.to_csv(run_dir / "oos_daily.csv", index=False)
     if ev.get("save_weights"):
@@ -171,8 +208,11 @@ def main():
     ap.add_argument("--epochs", type=int)
     ap.add_argument("--threads", type=int)
     ap.add_argument("--data-dir", help="directory with the three schema tables (default: config data.dir)")
+    ap.add_argument("--execution-lag", type=int, help="overrides execution.lag of the config")
     args = ap.parse_args()
     cfg = yaml.safe_load(Path(args.config).read_text())
+    if args.execution_lag is not None:
+        cfg.setdefault("execution", {})["lag"] = args.execution_lag
     if args.epochs:
         cfg["training"]["epochs"] = args.epochs
     if args.data_dir:

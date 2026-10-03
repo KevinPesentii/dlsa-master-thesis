@@ -183,13 +183,7 @@ def run_K_val(K: int, cfg: dict, seed: int, p: slots.SlotPanel, years: list[int]
             f"{metrics.annualised(parts['net'].numpy())['SR']:+.2f}  [{time.time() - t0:.0f}s]")
 
     t_idx = np.concatenate(t_all)
-    wp = np.concatenate(w_pool_all)
-    gross = (wp * p.R_pool[t_idx]).sum(axis=1)
-    turnover = np.abs(np.diff(wp, axis=0, prepend=np.zeros((1, wp.shape[1]), dtype=wp.dtype))).sum(axis=1)
-    short = np.clip(-wp, 0, None).sum(axis=1)
-    daily = pd.DataFrame({"date": dates[t_idx], "gross": gross, "turnover": turnover, "short": short,
-                          "n_traded": (wp != 0).sum(axis=1), "mkt_ew": p.mkt_ew[t_idx],
-                          "rf": p.rf.numpy()[t_idx]})
+    daily = base.daily_book(p, np.concatenate(w_pool_all), t_idx, cfg)
     m = metrics.performance(daily, ob["turnover_cost"], ob["short_cost"], ev["cost_grid_bps"])
     m.update({"K": K, "seed": seed, "factor_model": "attention", "policy_input": pc["input"],
               "lambda_selection": select, "lambda_grid": grid, "validation_years": val_years,
