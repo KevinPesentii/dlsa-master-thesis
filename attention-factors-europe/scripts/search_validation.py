@@ -119,7 +119,8 @@ def score(model, c: dict) -> dict:
     net, to, sh = (parts[k].numpy().astype(float) for k in ("net", "turnover", "short"))
     g = metrics.annualised(net + ob["turnover_cost"] * to + ob["short_cost"] * sh)
     return {"net_SR": float(metrics.annualised(net)["SR"]), "gross_SR": float(g["SR"]),
-            "sigma_pct": float(g["sigma_pct"]), "turnover": float(to.mean()), "ev": float(parts["ev"])}
+            "sigma_pct": float(g["sigma_pct"]), "turnover": float(to.mean()), "ev": float(parts["ev"]),
+            "beta": float(metrics.beta(net, p.mkt_ew[t_va0:t_va1].astype(float)))}
 
 
 def evaluate(job: dict) -> dict:
@@ -195,6 +196,7 @@ def main():
     S = yaml.safe_load(Path(args.config).read_text())
     base_path = Path(S["base_config"])
     cfg = yaml.safe_load((base_path if base_path.is_absolute() else ROOT / base_path).read_text())
+    cfg = with_overrides(cfg, S.get("fixed") or {})   # held fixed for every candidate, part of the base
     if args.data_dir:
         cfg["data"]["dir"] = args.data_dir
     data_dir = Path(cfg["data"]["dir"])
