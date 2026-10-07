@@ -48,7 +48,16 @@ cap, not CRSP's, which counts receipts outstanding only (Mizuho 2020-12: $0.2bn 
 $32bn): underlying shares of its class over the receipt ratio x its close, from
 `comp.secm` (cshom / adrrm) from 1998-04, before that `comp.funda` csho (receipt
 equivalents) of a fiscal year at least six months old, never below CRSP's cap
-(`us_panel.receipt_caps`). Company = permco; company cap = sum of its eligible lines' caps,
+(`us_panel.receipt_caps`). Since 2026-10-07 that number is checked against the issuer's
+home-market cap in Compustat Global the same month (`us_panel.home_caps`, raw
+`global_home/` from `fetch_us_raw.py --global-home`; largest active exchange country,
+preferred shares included): more than 1.5x the whole company (`universe.receipt_home_tol`)
+means a share base in the wrong unit and the home cap replaces it (funda csho in ordinary
+shares: Fiat 1990-2000 ~5x, rank 1; secm receipt ratios: CNOOC 2004, Turkcell 2003; CRSP
+counting underlying shares: TIM Participacoes 2011-20), unless the gap is over 100x
+(`receipt_home_max_ratio`: then Global is the broken side, De Beers 1995-2001). A receipt
+cap below its home company is left alone (one class of several; raising it would import
+Global's errors). Company = permco; company cap = sum of its eligible lines' caps,
 which is `LME` and the December ME of the value ratios. Universe for month M = the 500
 largest lines by cap at the end of M-1; `month` in `universe.parquet` is the first trading
 day of M; `mktcap_lag` in `returns.parquet` is the line's cap.

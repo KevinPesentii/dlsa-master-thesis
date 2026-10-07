@@ -39,6 +39,11 @@ eligibility:
 # input here; the build report shows the overlap between the two by year.
 universe:
   unit: line
+  # a receipt's company cap more than this factor above its issuer's home-market cap
+  # (Compustat Global, same month; raw/global_home) is replaced by the home cap
+  # (us_panel.receipt_caps, rule 3)
+  receipt_home_tol: 1.5
+  receipt_home_max_ratio: 100      # further apart, the home cap is the broken one: kept as is
 
 # Which permnos get characteristics. 'universe' = ever a member in the sample (a few
 # thousand names, minutes to build). 'all' = every eligible stock (needed only if the

@@ -125,3 +125,40 @@ def test_cad_amounts_are_converted_at_the_fiscal_year_end_and_shares_are_not():
     assert out.loc["015633", ["at", "sale"]].tolist() == pytest.approx([800.0, 40.0])    # x 1.36 / 1.70
     assert out.loc["015633", "csho"] == 7.0
     assert out.loc["000002", "at"] == 1000.0 and out.loc["000002", "fx_usd"] == 1.0
+
+
+def _home(gvkey, month, cap_home, n_classes=1):
+    return pd.DataFrame([dict(gvkey=gvkey, month=P(month), cap_home=cap_home, n_classes_home=n_classes)])
+
+
+def test_receipt_cap_above_its_home_company_takes_the_home_cap():
+    """Fiat, 1995-06: funda csho counts ordinary shares, not receipts (a receipt was several
+    of them), so the receipt-based company is ~5x Fiat in Milan the same month."""
+    elig = _elig([dict(permno=60000, permco=7, month=P("1995-06"), prc=17.5, cap=9_000.0, cumfacpr=1.0)])
+    funda = pd.DataFrame([dict(gvkey="004760", datadate=pd.Timestamp("1994-12-31"), csho=2_900.0)])
+    raw = up.receipt_caps(elig, None, _link(60000, "004760", "90"), funda)
+    assert raw["cap_source"].iloc[0] == "funda" and raw["cap"].iloc[0] == pytest.approx(17.5 * 2_900e6 / 1000)
+    out = up.receipt_caps(elig, None, _link(60000, "004760", "90"), funda, home=_home("004760", "1995-06", 10.2e6))
+    assert out["cap_source"].iloc[0] == "home" and out["cap"].iloc[0] == pytest.approx(10.2e6)
+    # within the tolerance the receipt-based cap stands (an ADR premium, a stale fiscal year)
+    near = up.receipt_caps(elig, None, _link(60000, "004760", "90"), funda, home=_home("004760", "1995-06", 40e6))
+    assert near["cap_source"].iloc[0] == "funda"
+
+
+def test_receipt_cap_below_its_home_company_is_left_alone():
+    """A receipt of one class of several, or one resting on receipts outstanding, sits below
+    its company; raising it would import Global's errors (Hong Kong Telecom 1994)."""
+    elig = _elig([dict(permno=61000, permco=8, month=P("2001-03"), prc=40.0, cap=8_000_000.0, cumfacpr=1.0)])
+    out = up.receipt_caps(elig, None, _link(61000, "012345", "90"), NO_FUNDA, home=_home("012345", "2001-03", 60e6))
+    assert out["cap_source"].iloc[0] == "crsp" and out["cap"].iloc[0] == 8_000_000.0
+
+
+def test_receipts_counted_as_underlying_shares_by_crsp_take_the_home_cap():
+    """TIM Participacoes, 2015-06: CRSP's shrout of the receipt is the 2.42bn underlying
+    shares (a receipt is five), so even CRSP's receipts-only cap is 4.5x the company."""
+    elig = _elig([dict(permno=62000, permco=9, month=P("2015-06"), prc=16.36, cap=36_276_000.0, cumfacpr=1.0)])
+    out = up.receipt_caps(elig, None, _link(62000, "222638", "90"), NO_FUNDA, home=_home("222638", "2015-06", 7.98e6))
+    assert out["cap_source"].iloc[0] == "home" and out["cap"].iloc[0] == pytest.approx(7.98e6)
+    # a home cap 3,000x below is the broken one (De Beers' Johannesburg rows): nothing replaced
+    broken = up.receipt_caps(elig, None, _link(62000, "222638", "90"), NO_FUNDA, home=_home("222638", "2015-06", 1.1e4))
+    assert broken["cap_source"].iloc[0] == "crsp"

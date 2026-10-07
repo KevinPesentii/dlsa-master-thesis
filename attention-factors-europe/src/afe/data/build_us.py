@@ -172,7 +172,13 @@ def build(cfg: dict, raw: up.RawUS, out_dir: Path, cutoff: pd.Timestamp | None =
 
     log("eligibility and companies")
     elig = up.eligible_monthly(raw.monthly, cfg)
-    elig = up.receipt_caps(elig, raw.secm, raw.ccm, raw.funda)
+    home = up.home_caps(raw.global_home)
+    elig = up.receipt_caps(elig, raw.secm, raw.ccm, raw.funda, home=home,
+                           home_tol=float(cfg.get("universe", {}).get("receipt_home_tol", 1.5)),
+                           home_max_ratio=float(cfg.get("universe", {}).get("receipt_home_max_ratio", 100.0)))
+    if home is not None:
+        log(f"  receipts sized by their home market: {int((elig['cap_source'] == 'home').sum()):,} of "
+            f"{int((elig['sharetype'] == 'AD').sum()):,} receipt-months")
     co = up.company_month(elig)
     lines = up.line_month(elig, co) if cfg.get("universe", {}).get("unit", "company") == "line" else None
     calendar = raw.ff_daily.index

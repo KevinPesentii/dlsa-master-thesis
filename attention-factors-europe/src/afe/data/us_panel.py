@@ -7,6 +7,8 @@ formulas live in characteristics.py. Reading order:
                       types of wrds_us.pull_extra; Compustat amounts converted to USD
   eligible_monthly    CIZ flags -> the pool a stock can be ranked in (config: eligibility)
   receipt_caps        depositary receipts sized at company level, not receipts outstanding
+  home_caps           the receipt issuers' caps in their home market (Compustat Global), the
+                      check receipt_caps holds its share counts against
   company_month       permco-level market cap (sum of classes) and the primary permno
   line_month          the same per line, for a universe that ranks every line (config: universe)
   build_universe      top-N by cap at the end of month M-1, applied to month M
@@ -49,6 +51,7 @@ class RawUS:
     delisting: pd.DataFrame = None   # crsp_delisting.parquet; empty frame if not pulled
     daily_extra_dir: Path | None = None   # crsp_daily_extra/: receipts, units, trusts
     secm: pd.DataFrame | None = None      # comp_secm_receipts.parquet: receipts' share base
+    global_home: dict | None = None       # global_home/: issuers' home-market month-end rows
 
     def truncate(self, cutoff: pd.Timestamp) -> "RawUS":
         """Everything dated after `cutoff` removed: the input of a prefix-invariance test.
@@ -64,6 +67,8 @@ class RawUS:
             delisting=self.delisting[self.delisting["date"] <= c],
             daily_extra_dir=self.daily_extra_dir,
             secm=None if self.secm is None else self.secm[self.secm["datadate"] <= c],
+            global_home=None if self.global_home is None else
+            {**self.global_home, "secd": self.global_home["secd"][self.global_home["secd"]["datadate"] <= c]},
         )
 
 
@@ -82,6 +87,12 @@ def load_raw(raw_dir: Path) -> RawUS:
               rd("ff_daily"), rd("ff_monthly"), raw_dir / "crsp_daily")
     if has("crsp_daily_extra"):
         r.daily_extra_dir = raw_dir / "crsp_daily_extra"
+    if has("global_home/secd_monthend.parquet"):
+        gh = {k: pd.read_parquet(raw_dir / "global_home" / f"{f}.parquet")
+              for k, f in [("secd", "secd_monthend"), ("security", "security"), ("company", "company"), ("fx", "fx_daily")]}
+        for k in ("secd", "fx"):
+            gh[k]["datadate"] = pd.to_datetime(gh[k]["datadate"]).astype("datetime64[ns]")
+        r.global_home = gh
     if has("comp_secm_receipts.parquet"):
         r.secm = rd("comp_secm_receipts")
         r.secm["datadate"] = pd.to_datetime(r.secm["datadate"]).astype("datetime64[ns]")
@@ -160,9 +171,32 @@ def line_month(elig: pd.DataFrame, co: pd.DataFrame) -> pd.DataFrame:
     return ln.merge(co[["permco", "month", "n_classes"]], on=["permco", "month"], how="left")
 
 
+def home_caps(gh: dict | None) -> pd.DataFrame | None:
+    """Per (gvkey, month): the receipt issuer's cap in its home market from Compustat Global,
+    in USD thousands like CRSP's cap. Each exchange country is sized on its own
+    (compustat_global.company_month_mktcap: listings collapsed to classes, classes added up,
+    preferred shares included, the country left out when its most active listing is dormant)
+    and the largest country is the home: one gvkey can hold both halves of a dual listing
+    (Rio Tinto plc + Ltd, BHP Ltd + plc), whose more active half need not be the receipt's.
+    `n_classes_home` counts that country's classes."""
+    if gh is None:
+        return None
+    parts = []
+    for country, rows in gh["secd"].groupby("excntry"):
+        cap = compustat_global.company_month_mktcap(rows, gh["company"], gh["security"], gh["fx"], [country], "USD",
+                                                    issue_types=("0", "1", "8"), genussschein_countries=("CHE",))
+        parts.append(cap.loc[cap["active"], ["gvkey", "datadate", "mktcap", "n_classes"]])
+    caps = pd.concat(parts, ignore_index=True)
+    caps["mktcap"] = caps["mktcap"].astype("float64") * 1000.0
+    top = caps.sort_values(["gvkey", "datadate", "mktcap"], ascending=[True, True, False]).drop_duplicates(["gvkey", "datadate"])
+    return pd.DataFrame({"gvkey": top["gvkey"].astype(str), "month": top["datadate"].dt.to_period("M"),
+                         "cap_home": top["mktcap"], "n_classes_home": top["n_classes"].astype("int64")})
+
+
 def receipt_caps(elig: pd.DataFrame, secm: pd.DataFrame | None, ccm: pd.DataFrame, funda: pd.DataFrame,
                  lag_months: int = 6, max_age_months: int = 30,
-                 max_fallback_ratio: float = 20_000.0) -> pd.DataFrame:
+                 max_fallback_ratio: float = 20_000.0, home: pd.DataFrame | None = None,
+                 home_tol: float = 1.5, home_max_ratio: float = 100.0) -> pd.DataFrame:
     """`elig` with the cap of each depositary receipt (sharetype AD) at company level:
     shares in receipt equivalents x the receipt's close, in CRSP units (USD thousands).
     CRSP's own cap counts only receipts outstanding (Mizuho 2020-12: $0.2bn, company $32bn).
@@ -178,8 +212,21 @@ def receipt_caps(elig: pd.DataFrame, secm: pd.DataFrame | None, ccm: pd.DataFram
     time may judge it, so a fallback above `max_fallback_ratio` x CRSP's cap is dropped
     (those two: 111,000x and 34,000x; secm caps reach 24,000x legitimately, Sanofi 2002,
     so the rule is for the fallback only; smaller errors, Fiat's ~4x, stay).
-    Never below CRSP's cap (a class-A-only cshom understates, e.g. Baidu). CRSP's cap is
-    kept as cap_crsp; cap_source says which of secm / funda / crsp was used."""
+    Never below CRSP's cap (a class-A-only cshom understates, e.g. Baidu), unless rule 3 says so.
+      3. Where the issuer's home-market cap is known (`home`, from home_caps: same month,
+         Compustat Global) it checks the result: a receipt cap above `home_tol` x the whole
+         company counts its shares in the wrong unit and takes the home cap, whatever its
+         source (funda csho in ordinary shares: Fiat 1990-2000 ~5x, Amersham 1999-2003 ~5x;
+         a stale secm receipt ratio: CNOOC 2004 20 for 100, Turkcell 2003 250 for 2,500;
+         CRSP counting underlying shares as receipts: TIM Participacoes 2011-20 ~5x).
+         Same-month market data: point in time. Beyond `home_max_ratio` it is the home cap
+         that is broken (De Beers 1995-2001, 3,000x below its receipt cap) and nothing is
+         replaced; unit errors are 2-25x. A receipt cap BELOW its home company is left
+         alone: a receipt of one class of several is rightly below, and a raise would import
+         Global's own errors (Hong Kong Telecom 1994 to rank 1) or another entity's history
+         behind a re-used gvkey (MUFG 1990-96); an understated receipt is also what the
+         paper's CRSP caps are.
+    CRSP's cap is kept as cap_crsp; cap_source says which of secm / funda / crsp / home was used."""
     out = elig.copy()
     out["cap_crsp"], out["cap_source"] = out["cap"], "crsp"
     ad = out.loc[out["sharetype"] == "AD", ["permno", "permco", "month", "prc", "cap", "cumfacpr"]]
@@ -235,6 +282,14 @@ def receipt_caps(elig: pd.DataFrame, secm: pd.DataFrame | None, ccm: pd.DataFram
     better = cap.notna() & (cap > ad["cap"])
     out.loc[ad.loc[better, "_i"], "cap"] = cap[better].to_numpy()
     out.loc[ad.loc[better, "_i"], "cap_source"] = ad.loc[better, "src"].to_numpy()
+
+    if home is not None and len(home):                                  # 3. the home market
+        h = ad.loc[ad["gvkey"].notna(), ["_i", "gvkey", "month"]].merge(home, on=["gvkey", "month"])
+        cur = out.loc[h["_i"], "cap"].to_numpy(dtype=float)
+        hc = h["cap_home"].to_numpy()
+        use = (cur > home_tol * hc) & (cur <= home_max_ratio * hc)
+        out.loc[h.loc[use, "_i"], "cap"] = hc[use]
+        out.loc[h.loc[use, "_i"], "cap_source"] = "home"
     return out
 
 

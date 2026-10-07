@@ -41,6 +41,14 @@ the CRSP_EXTRA filter, into crsp_monthly_extra.parquet and crsp_daily_extra/<yea
                            receipt issuers in USD), native currency and receipt ratio for
                            every row of comp_funda.parquet, same key.
   comp.g_exrt_dly          daily GBP-based cross rates for the currencies above.
+
+Home markets of the receipt issuers (`pull_global_home`, added 2026-10-07), into
+global_home/: comp.g_secd month-end rows (common, preferred, participation certificates,
+Genussscheine) of every listing of every company with a receipt in the extra pull, with
+g_security, g_company and g_exrt_dly for those rows. Stage 2 sizes each issuer in its home
+market (compustat_global.company_month_mktcap) and checks the receipt caps against it:
+some funda share counts are ordinary shares, not receipt equivalents (Fiat 1990-2000 ~5x,
+Telecom Italia 2003 ~8x).
 """
 
 from __future__ import annotations
@@ -281,4 +289,46 @@ def pull_extra(db, raw_dir: Path, start_year: int, end_year: int, log=print) -> 
     currencies = {"USD", "CAD"} | set(ccy["curcd"].dropna()) | set(secm["curcdm"].dropna())
     save("fx_daily", lambda: compustat_global.fetch_fx(db, sorted(currencies), start_year - 2, end_year))
     manifest_path.write_text(json.dumps(manifest, indent=2))
+    return manifest
+
+
+def pull_global_home(db, raw_dir: Path, start_year: int, end_year: int, log=print) -> dict:
+    """Compustat Global month-end rows of the receipt issuers' listings, into global_home/
+    (module docstring). Needs crsp_monthly_extra.parquet and ccm_link.parquet."""
+    from afe.data import compustat_global as cg
+
+    out = raw_dir / "global_home"
+    out.mkdir(parents=True, exist_ok=True)
+    monthly = pd.read_parquet(raw_dir / "crsp_monthly_extra.parquet", columns=["permno", "sharetype"])
+    link = pd.read_parquet(raw_dir / "ccm_link.parquet")
+    receipts = monthly.loc[monthly["sharetype"] == "AD", "permno"].astype("int64").unique()
+    gvkeys = sorted(link.loc[link["permno"].astype("int64").isin(receipts), "gvkey"].dropna().unique())
+    keys = "(" + ", ".join(f"'{g}'" for g in gvkeys) + ")"
+    log(f"  receipt issuers: {len(gvkeys):,} gvkeys", flush=True)
+    security = db.raw_sql("select gvkey, iid, excntry, exchg, isin, tpci, secstat, dsci, dldtei "
+                          f"from comp.g_security where gvkey in {keys}", date_cols=["dldtei"])
+    security["exchg"] = pd.to_numeric(security["exchg"], errors="coerce")
+    company = db.raw_sql("select gvkey, conm, prirow, priusa, prican, fic, loc, sic "
+                         f"from comp.g_company where gvkey in {keys}")
+    parts = []
+    for year in range(start_year, end_year + 1):
+        part = db.raw_sql(f"""
+            select {", ".join("s." + c for c in cg.SECD_COLS)}, h.excntry
+            from comp.g_secd s
+            join comp.g_security h on s.gvkey = h.gvkey and s.iid = h.iid
+            where s.monthend = 1 and s.prccd is not null and s.tpci in ('0', '1', '8', 'Q')
+              and s.gvkey in {keys} and s.datadate between '{year}-01-01' and '{year}-12-31'
+        """, date_cols=["datadate"])
+        for c in cg.NUMERIC:
+            part[c] = pd.to_numeric(part[c], errors="coerce")
+        log(f"  g_secd {year}: {len(part):,} month-end rows", flush=True)
+        parts.append(part)
+    secd = pd.concat(parts, ignore_index=True)
+    currencies = sorted({"USD", "EUR", "GBP"} | set(secd["curcdd"].dropna()))
+    fx = cg.fetch_fx(db, currencies, start_year - 1, end_year)
+    manifest = {"pulled_at": dt.datetime.now().isoformat(timespec="seconds"), "gvkeys": len(gvkeys), "tables": {}}
+    for name, df in [("secd_monthend", secd), ("security", security), ("company", company), ("fx_daily", fx)]:
+        df.to_parquet(out / f"{name}.parquet", index=False)
+        manifest["tables"][name] = {"rows": int(len(df))}
+    (out / "manifest.json").write_text(json.dumps(manifest, indent=2))
     return manifest
