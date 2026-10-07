@@ -10,7 +10,9 @@ Writes to output.dir (gitignored, licensed):
   fx_daily.parquet               comp.g_exrt_dly, units per GBP, the extract's quotation
                                  currencies plus fx.extra (ECU basket, XEU, EUR, USD)
 The version cap tables (europe17, europe12) are cut from these by build_europe_universe.py.
---headers / --fx refetch only those tables.
+--headers / --fx refetch only those tables. --add-issue-types 8 Q appends the month-end rows
+of every line whose g_security.tpci is one of those types to the year files on disk (the
+extract of 2026-09 held '0' and '1' only), so a widened `issue_types` needs no full re-pull.
 """
 
 from __future__ import annotations
@@ -39,6 +41,8 @@ def main():
                     help="month-end years to pull (default: the config's); with --reverse from the last one "
                          "down, so a second process can meet a first one in the middle. No headers, no FX.")
     ap.add_argument("--reverse", action="store_true")
+    ap.add_argument("--add-issue-types", nargs="+", default=None,
+                    help="append the month-end rows of the lines of these tpci to the year files on disk")
     args = ap.parse_args()
     cfg = yaml.safe_load(Path(args.config).read_text())
     out = ROOT / cfg["output"]["dir"]
@@ -46,6 +50,9 @@ def main():
     countries = list(cfg["countries"])
     y0, y1 = int(cfg["start_year"]), int(cfg["end_year"])
     only = args.headers or args.fx
+    if args.add_issue_types:
+        add_issue_types(out, countries, args.add_issue_types, y0, y1)
+        return
     if args.years:
         years = range(args.years[0], args.years[1] + 1)
         db = cu.connect(ROOT)
@@ -84,6 +91,28 @@ def main():
             print(f"fx: {fx['tocurd'].nunique()} currencies, {fx['datadate'].min().date()} .. {fx['datadate'].max().date()}")
     finally:
         db.close()
+
+
+def add_issue_types(out: Path, countries: list[str], types: list[str], y0: int, y1: int) -> None:
+    """Month-end rows of the header's lines of tpci `types` on the extract's exchanges, merged
+    into secd_monthend/<year>.parquet (existing rows win on a duplicate key)."""
+    sec = pd.read_parquet(out / "security_header.parquet")
+    lines = sec[sec["tpci"].isin(types) & sec["excntry"].isin(countries)][["gvkey", "iid"]].drop_duplicates()
+    pairs = list(lines.itertuples(index=False, name=None))
+    print(f"tpci {types}: {len(pairs)} lines on {len(countries)} exchange countries", flush=True)
+    db = cu.connect(ROOT)
+    try:
+        add = cg.fetch_secd_monthend_lines(db, pairs, y0, y1)
+    finally:
+        db.close()
+    add["datadate"] = pd.to_datetime(add["datadate"])
+    for y, part in add.groupby(add["datadate"].dt.year):
+        path = out / "secd_monthend" / f"{y}.parquet"
+        old = pd.read_parquet(path)
+        part = part.astype({c: old[c].dtype for c in part.columns if c in old.columns and c != "datadate"}, errors="ignore")
+        new = pd.concat([old, part[old.columns]], ignore_index=True).drop_duplicates(["gvkey", "iid", "datadate"], keep="first")
+        new.to_parquet(path, index=False)
+        print(f"  g_secd {y}: {len(new) - len(old):,} rows added", flush=True)
 
 
 if __name__ == "__main__":

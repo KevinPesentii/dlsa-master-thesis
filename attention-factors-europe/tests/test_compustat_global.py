@@ -189,3 +189,118 @@ def test_material_second_class_that_trades_more_still_prices():
             _row("g", "02W", 100.0, 3e6, "BEL", 132, 3e4, "SE02")]
     out = _one_company(rows, {"01W": "CL A ORD", "02W": "CL B ORD"})
     assert out["iid"] == "02W" and out["mktcap"] == pytest.approx(1000.0)
+
+
+@pytest.mark.parametrize("dsci, expected", [
+    ("ORD CHF1(REGD)(2ND BUY BACK)", True), ("CHF0.1 (SEPARATE 2 TRADING L", True), ("ORD EUR2 (SEC LINE)", True),
+    ("ORD NPV (ASD 06/07/18 EON CS", True), ("ORD NPV (TENDERED SHARES)", True), ("ORD CHF.1 2ND LINE", True),
+    ("ORD CHF.10 (REGD) (2ND BUY B", True), ("ORD NPV(REDEMPTION SHARES)", True), ("ORD SER'A' NPV (RED SHS11/06", True), ("EUR0.75 (STK DIV 25/01/22)", True),
+    ("PTG CERTS CHF.1 (POST SUBD)", False), ("ORD GBP0.005", False), ("CL C ORD NPV (POST 2ND CON)", False),
+    ("PFD GBP1 RED(N) 3.15%", False), ("SER B ORD NPV", False),
+])
+def test_second_lines_of_a_class_are_not_equity(dsci, expected):
+    assert bool(cg.non_equity(pd.Series([dsci]))[0]) is expected
+
+
+def _cap(rows, dsci, countries=("BEL", "GBR"), fic="BEL", **kw):
+    secd = pd.DataFrame(rows)
+    company = pd.DataFrame(dict(gvkey=["g"], conm=["G"], prirow=["01W"], priusa=[None], fic=[fic],
+                                loc=[fic], sic=["1"]))
+    security = pd.DataFrame([dict(gvkey="g", iid=r["iid"], excntry=r["excntry"], dsci=dsci[r["iid"]]) for r in rows])
+    fx = pd.DataFrame([dict(datadate=D, tocurd=c, exratd=1.0) for c in ("EUR", "GBP", "CHF")])
+    return cg.company_month_mktcap(secd, company, security, fx, list(countries), "EUR", **kw).set_index("gvkey").loc["g"]
+
+
+def test_chix_quote_neither_prices_nor_counts():
+    """Rotork, 2013: the London line (86.8m shares) and its Chi-X quote (exchg 349, no ISIN)
+    carrying 871.6m shares. Summed, the cap was eleven times the company's."""
+    rows = [_row("g", "01W", 26.47, 86.8e6, "GBR", 194, 1.4e5, "GB01", curcdd="GBP"),
+            _row("g", "03W", 26.47, 871.6e6, "GBR", 349, 2.9e4, None, curcdd="GBP")]
+    out = _cap(rows, {"01W": "ORD GBP.005", "03W": "ORD GBP0.005 (CHI-X)"}, fic="GBR")
+    assert out["iid"] == "01W" and out["n_classes"] == 1 and out["n_listings"] == 1
+    assert out["mktcap"] == pytest.approx(26.47 * 86.8e6 / 1e6)
+
+
+def test_buyback_line_is_not_a_class():
+    """Adecco, 2016: the registered share and a second buyback line with a stale price on
+    750m 'shares'."""
+    rows = [_row("g", "04W", 62.5, 174.5e6, "BEL", 132, 1.3e6, "CH04", curcdd="CHF"),
+            _row("g", "06W", 59.07, 750.1e6, "BEL", 132, None, "CH06", curcdd="CHF")]
+    out = _cap(rows, {"04W": "ORD CHF.1 (REGD)", "06W": "ORD CHF1(REGD)(2ND BUY BACK)"})
+    assert out["n_classes"] == 1 and out["mktcap"] == pytest.approx(62.5 * 174.5e6 / 1e6)
+
+
+def test_near_identical_classes_are_one_class():
+    """RELX, 2015-03: two London lines without a common ISIN whose share counts differ by
+    86k on 1.13bn. Same class: counted once. A real second class (other count) still adds."""
+    rows = [_row("g", "01W", 11.59, 1126693676.0, "GBR", 194, 5.1e6, "GB01", curcdd="GBP"),
+            _row("g", "07W", 11.61, 1126779387.0, "GBR", 194, 9.3e5, None, curcdd="GBP"),
+            _row("g", "02W", 11.60, 300e6, "GBR", 194, 1e5, "GB02", curcdd="GBP")]
+    out = _cap(rows, {"01W": "ORD", "07W": "ORD", "02W": "CL B ORD"}, fic="GBR")
+    assert out["n_classes"] == 2
+    assert out["mktcap"] == pytest.approx((11.59 * 1126693676.0 + 11.60 * 300e6) / 1e6)
+
+
+def test_swiss_genussschein_counts_and_prices_german_one_does_not():
+    """Roche, 2020-01: 160m bearer shares and 702.6m Genussscheine (tpci Q) on SIX; the
+    Genussschein trades far more and prices the company. A German Genussschein (debt) of the
+    same company on Xetra never counts."""
+    rows = [_row("g", "04W", 330.0, 160e6, "CHE", 151, 2.0e4, "CH04", curcdd="CHF"),
+            _row("g", "03W", 324.3, 702.5627e6, "CHE", 151, 2.0e6, "CH03", curcdd="CHF", tpci="Q"),
+            _row("g", "09W", 100.0, 5e6, "DEU", 154, 1e6, "DE09", tpci="Q")]
+    dsci = {"04W": "ORD CHF1 (BRR)", "03W": "CHF0.001", "09W": "GENUSSCHEINE DEM100 7%"}
+    with_gs = _cap(rows, dsci, ("CHE", "DEU"), fic="CHE", genussschein_countries=("CHE",))
+    assert with_gs["iid"] == "03W" and with_gs["country"] == "CHE" and with_gs["n_classes"] == 2
+    assert with_gs["mktcap"] == pytest.approx((330.0 * 160e6 + 324.3 * 702.5627e6) / 1e6)
+    without = _cap(rows, dsci, ("CHE", "DEU"), fic="CHE")
+    assert without["iid"] == "04W" and without["mktcap"] == pytest.approx(330.0 * 160e6 / 1e6)
+
+
+def test_participation_certificate_is_a_class():
+    """Schindler: registered shares and participation certificates (tpci 8) add up."""
+    rows = [_row("g", "01W", 250.0, 47e6, "BEL", 132, 1e4, "CH01", curcdd="CHF"),
+            _row("g", "03W", 255.0, 60e6, "BEL", 132, 1e5, "CH03", curcdd="CHF", tpci="8")]
+    out = _cap(rows, {"01W": "ORD CHF.10 (REGD)", "03W": "PTG CERTS CHF.1 (POST SUBD)"}, issue_types=("0", "8"))
+    assert out["iid"] == "03W" and out["n_classes"] == 2
+    assert out["mktcap"] == pytest.approx((250.0 * 47e6 + 255.0 * 60e6) / 1e6)
+
+
+def test_share_correction_divides_inside_its_dates_only():
+    """Eurocommercial: price per depositary receipt (10 shares), cshoc in shares until the
+    2005-04-27 switch to receipts."""
+    d = pd.DataFrame(dict(gvkey=["208226"] * 3 + ["1"], iid=["01W"] * 4, cshoc=[313.6e6, 34.46e6, 35.2e6, 1e6],
+                          datadate=pd.to_datetime(["2005-04-26", "2005-04-27", "2006-01-02", "2005-01-03"])))
+    fix = [dict(gvkey="208226", iid="01W", start="1984-01-01", end="2005-04-26", divide_by=10)]
+    out = cg.apply_share_corrections(d, fix)
+    assert out["cshoc"].tolist() == pytest.approx([31.36e6, 34.46e6, 35.2e6, 1e6])
+    assert d["cshoc"].iloc[0] == 313.6e6                     # input untouched
+    rows = [dict(_row("208226", "01W", 20.85, 302.3e6, "NLD", 104, 1e5, "NL01"), datadate=pd.Timestamp("2003-12-31"))]
+    secd = pd.DataFrame(rows)
+    company = pd.DataFrame(dict(gvkey=["208226"], conm=["E"], prirow=["01W"], priusa=[None], fic=["NLD"],
+                                loc=["NLD"], sic=["1"]))
+    security = pd.DataFrame(dict(gvkey=["208226"], iid=["01W"], excntry=["NLD"]))
+    fx = pd.DataFrame([dict(datadate=pd.Timestamp("2003-12-31"), tocurd="EUR", exratd=1.0)])
+    cap = cg.company_month_mktcap(secd, company, security, fx, ["NLD"], "EUR", share_corrections=fix)
+    assert cap["mktcap"].iloc[0] == pytest.approx(20.85 * 30.23e6 / 1e6)
+
+
+def test_dual_listed_halves_add_up_and_excluded_line_does_not_count():
+    """Unilever, 1998-07: NV's CVA (Amsterdam, traded) and its ordinary line (stale price,
+    the same shares) and PLC in London, all under one gvkey. NV + PLC count once each."""
+    d = pd.Timestamp("1998-07-31")
+    rows = [dict(_row("u", "02W", 143.5, 640.164e6, "NLD", 104, 4.0e6, "NL02"), datadate=d),
+            dict(_row("u", "01W", 147.3, 640.165e6 * 1.05, "NLD", 104, 7.9e3, "NL01"), datadate=d),
+            dict(_row("u", "16W", 6.02, 3261e6, "GBR", 194, 1.1e7, "GB16", curcdd="GBP"), datadate=d)]
+    secd = pd.DataFrame(rows)
+    company = pd.DataFrame(dict(gvkey=["u"], conm=["U"], prirow=["16W"], priusa=[None], fic=["GBR"], loc=["GBR"], sic=["1"]))
+    security = pd.DataFrame(dict(gvkey=["u"] * 3, iid=["02W", "01W", "16W"], excntry=["NLD", "NLD", "GBR"]))
+    fx = pd.DataFrame([dict(datadate=d, tocurd=c, exratd=r) for c, r in (("GBP", 1.0), ("EUR", 1.5))])
+    excl = [dict(gvkey="u", iid="01W", start="1984-01-01", end="2019-06-30")]
+    dual = [dict(gvkey="u", countries=["NLD", "GBR"], start="1984-01-01", end="2020-10-31")]
+    out = cg.company_month_mktcap(secd, company, security, fx, ["NLD", "GBR"], "EUR",
+                                  exclude_lines=excl, dual_listed=dual).set_index("gvkey").loc["u"]
+    nv, plc = 143.5 * 640.164e6, 6.02 * 3261e6 * 1.5                  # NV quoted in EUR here
+    assert out["n_classes"] == 2 and out["mktcap"] == pytest.approx((nv + plc) / 1e6)
+    one_country = cg.company_month_mktcap(secd, company, security, fx, ["NLD", "GBR"], "EUR",
+                                          exclude_lines=excl).set_index("gvkey").loc["u"]
+    assert one_country["n_classes"] == 1

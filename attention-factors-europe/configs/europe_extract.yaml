@@ -13,7 +13,10 @@ countries: [GBR, DEU, FRA, CHE, NLD, ITA, ESP, SWE, BEL, DNK, FIN, NOR, IRL, PRT
 
 start_year: 1985            # Compustat Global's month-end rows begin 1985-12 (Greece 1988, Portugal 1986-88)
 end_year: 2025
-issue_types: ["0", "1"]     # common and preferred pulled; the cap counts common only (filters.issue_types)
+# common, preferred, participation certificates ('8') and Genussscheine ('Q') pulled; the cap
+# counts what filters.issue_types / genussschein_countries name. '8' and 'Q' were added
+# 2026-10-07 with --add-issue-types 8 Q.
+issue_types: ["0", "1", "8", "Q"]
 
 fx:
   start_year: 1982          # quotes for every basket currency exist from 1982-02-01

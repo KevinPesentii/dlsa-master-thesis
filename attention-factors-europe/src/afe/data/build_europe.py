@@ -28,6 +28,7 @@ import pyarrow.parquet as pq
 
 from afe.data import build_us as bu
 from afe.data import characteristics as ch
+from afe.data import compustat_global as cg
 from afe.data import eu_panel as ep
 from afe.data import europe_accounts as xa
 from afe.data import europe_coverage as xc
@@ -55,6 +56,7 @@ def build(cfg: dict, root: Path, out_dir: Path, inspect_dir: Path, cutoff: pd.Ti
     fxtab.to_parquet(out_dir / "fx_to_numeraire_daily.parquet", index=False)
     years = range(int(cfg["raw"]["daily_start_year"]), end.year + 1)
     daily = ep.load_daily(raw.daily_dir, raw.lines, years, cutoff)
+    daily = cg.apply_share_corrections(daily, cfg.get("corrections", {}).get("share_count"))
     calendar = ep.trading_calendar(daily, int(cfg["returns"]["calendar_min_lines"]))
     dret = ep.daily_returns(daily, fxtab)
     del daily

@@ -21,6 +21,19 @@ Three things differ from the North American build in `compustat_us`:
    VVPR strips, subscription / bonus / offer rights, stock-dividend rights, nil-paid
    lines) are dropped first: they neither price nor add to a cap. Before this rule
    Electrabel 2006-07 was priced by its EUR 0.01 strip (+100% / -50% days).
+   Lines of a class that are not a class of their own are dropped too, because their share
+   count is not the class's: Chi-X / Cboe Europe quotes (`MTF_EXCHANGES`, from 2012-05,
+   no ISIN; RELX's differed from the London line by a few thousand shares in half the
+   months and doubled its cap, Rotork's carried ten times the shares) and Swiss buyback,
+   second-trading and tendered ("ASD") lines (`non_equity`; Adecco's buyback line, a
+   stale price on 750m shares, made its cap five times too large). A class whose share
+   count AND price are within `dup_tol` of a class already counted is the same class
+   under another ISIN and is not added again.
+   Participation certificates count as classes (`issue_types`, tpci '8': Swiss
+   Partizipationsscheine, French certificats d'investissement; non-voting equity), and
+   so do Genussscheine on the exchanges of `genussschein_countries` (tpci 'Q': Roche's,
+   about 80% of its equity; German Genussscheine are profit-participation debt and stay
+   out).
 
 2. Country and eligibility. `g_security.excntry` is the country of the exchange a
    listing trades on. Frankfurt alone carries lines for ~11,000 gvkeys, most of them
@@ -56,10 +69,20 @@ import pandas as pd
 
 # g_security.dsci of lines that are not shares (tpci is still '0'): "ORD NPV VVPR STRIP",
 # "ORD EUR2.29 (SUB RIGHT)", "EUR0.2 BN RTS 17/11/21", "ORD EUR1(STOCK DIV 5/7/2012)",
-# "ORD NPV (NIL PAID 05/08/10)". Shares trading ex or cum rights, and lines without a
-# dividend right, are shares.
-NON_EQUITY = re.compile(r"STRIP|STOCK DIV|NIL PAID|RIGHT|\bRTS\b", re.I)
+# "ORD NPV (NIL PAID 05/08/10)"; and second lines of a class: "ORD CHF1(REGD)(2ND BUY BACK)",
+# "ORD CHF.10 (REGD) (2ND BUY B" (descriptions are cut at 28 characters),
+# "CHF0.1 (SEPARATE 2 TRADING L", "ORD EUR2 (SEC LINE)", "ORD NPV (ASD 06/07/18 EON CS",
+# "ORD NPV (TENDERED SHARES)"; Swedish redemption shares, issued one per share and so
+# carrying the class's own share count: "ORD NPV(REDEMPTION SHARES)", "ORD SER'A' NPV (RED
+# SHS11/06", and "EUR0.75 (STK DIV 25/01/22)". Shares trading ex or cum rights, and lines
+# without a dividend right, are shares.
+NON_EQUITY = re.compile(r"STRIP|STO?C?K DIV|NIL PAID|RIGHT|\bRTS\b|REDEMPTION|\bRED SH"
+                        r"|BUY[- ]?B|\bLINE\b|TRADING L|TENDERED|ASSENTED|\bASD\b", re.I)
 SHARE_DESPITE_RIGHTS = re.compile(r"EX[- ]R(?:IGH)?TS|CUM RTS|DIVIDEND RIGHT", re.I)
+
+# g_security.exchg of multilateral trading facilities: a quote of a share listed elsewhere,
+# never a listing (349: Chi-X / Cboe Europe, London, "ORD GBP0.005 (CHI-X)").
+MTF_EXCHANGES = (349,)
 
 SECD_COLS = [
     "gvkey", "iid", "datadate", "prccd", "cshoc", "ajexdi", "curcdd", "prcstd", "qunit",
@@ -126,6 +149,23 @@ def fetch_secd_monthend(db, start_year: int, end_year: int, countries: list[str]
     return pd.concat(parts, ignore_index=True)
 
 
+def fetch_secd_monthend_lines(db, pairs: list[tuple[str, str]], start_year: int, end_year: int) -> pd.DataFrame:
+    """Month-end rows of comp.g_secd for the listed (gvkey, iid) lines, every year at once,
+    with the same columns as fetch_secd_monthend: adds issue types to an existing extract."""
+    sql = f"""
+        select {", ".join("s." + c for c in SECD_COLS)}, h.excntry
+        from comp.g_secd s
+        join comp.g_security h on s.gvkey = h.gvkey and s.iid = h.iid
+        where s.monthend = 1 and s.prccd is not null
+          and (s.gvkey, s.iid) in ({", ".join(f"('{g}', '{i}')" for g, i in pairs)})
+          and s.datadate between '{start_year}-01-01' and '{end_year}-12-31'
+    """
+    out = db.raw_sql(sql, date_cols=["datadate"])
+    for c in NUMERIC:
+        out[c] = pd.to_numeric(out[c], errors="coerce")
+    return out
+
+
 def fetch_fx(db, currencies: list[str], start_year: int, end_year: int) -> pd.DataFrame:
     """Daily GBP-based cross rates (units of `tocurd` per GBP) for the currencies seen."""
     fx = db.raw_sql(
@@ -174,25 +214,79 @@ def convert_to_currency(rows: pd.DataFrame, fx: pd.DataFrame, target: str,
     return out
 
 
+def apply_share_corrections(df: pd.DataFrame, corrections: list[dict] | None,
+                            date_col: str = "datadate") -> pd.DataFrame:
+    """Divide `cshoc` by `divide_by` on the rows of each correction's (gvkey, iid) dated
+    `start`..`end`: share counts g_secd states in another unit than the price (configs,
+    `corrections.share_count`). A copy; rows outside every correction are unchanged."""
+    if not corrections:
+        return df
+    df = df.copy()
+    df["cshoc"] = df["cshoc"].astype("float64")
+    for c in corrections:
+        hit = ((df["gvkey"] == str(c["gvkey"])) & (df["iid"] == str(c["iid"]))
+               & df[date_col].between(pd.Timestamp(c["start"]), pd.Timestamp(c["end"])))
+        df.loc[hit, "cshoc"] = df.loc[hit, "cshoc"] / float(c["divide_by"])
+    return df
+
+
+def _in_spans(df: pd.DataFrame, spans: list[dict] | None, date_col: str, by_iid: bool = True) -> pd.Series:
+    """True on rows of `df` inside any span: same gvkey (and iid if `by_iid`), date in start..end."""
+    hit = pd.Series(False, index=df.index)
+    for c in spans or []:
+        m = (df["gvkey"] == str(c["gvkey"])) & df[date_col].between(pd.Timestamp(c["start"]), pd.Timestamp(c["end"]))
+        if by_iid:
+            m &= df["iid"] == str(c["iid"])
+        hit |= m
+    return hit
+
+
+def _drop_near_duplicate_classes(home: pd.DataFrame, key: list[str], tol: float) -> pd.DataFrame:
+    """Drop a class whose share count and price are both within `tol` (log) of a class
+    earlier in its company-month: the same class under another ISIN or iid."""
+    h = home.reset_index(drop=True)
+    h["_pos"] = h.groupby(key).cumcount()
+    multi = h[h.groupby(key)["_pos"].transform("size") > 1][key + ["_pos", "cshoc", "price"]]
+    if multi.empty:
+        return h.drop(columns="_pos")
+    p = multi.merge(multi, on=key, suffixes=("", "_o"))
+    p = p[(p["_pos_o"] < p["_pos"])
+          & (np.log(p["cshoc"] / p["cshoc_o"]).abs() < tol) & (np.log(p["price"] / p["price_o"]).abs() < tol)]
+    dup = h.merge(p[key + ["_pos"]].drop_duplicates().assign(_dup=True), on=key + ["_pos"], how="left")["_dup"]
+    return h[dup.isna().to_numpy()].drop(columns="_pos")
+
+
 def company_month_mktcap(secd: pd.DataFrame, company: pd.DataFrame, security: pd.DataFrame,
                          fx: pd.DataFrame, countries: list[str], target_ccy: str = "EUR",
                          issue_types: tuple[str, ...] = ("0",), min_turnover: float = 3e-5,
-                         turnover_window: int = 6, min_class_share: float = 0.05) -> pd.DataFrame:
+                         turnover_window: int = 6, min_class_share: float = 0.05,
+                         genussschein_countries: tuple[str, ...] = (), share_corrections: list[dict] | None = None,
+                         dup_tol: float = 0.02, exclude_lines: list[dict] | None = None,
+                         dual_listed: list[dict] | None = None) -> pd.DataFrame:
     """One row per (gvkey, datadate) with market cap in `target_ccy` millions.
 
-    Steps: keep priced issues of the requested classes with a share count, less the
-    non-equity lines of `security.dsci`; convert the price; score every listing by trailing
+    Steps: keep priced issues of the requested classes with a share count (`issue_types`,
+    plus tpci 'Q' on the exchanges of `genussschein_countries`), less the non-equity lines
+    of `security.dsci`, the MTF quotes and the dated `exclude_lines`; correct the share
+    counts of `share_corrections`; convert the price; score every listing by trailing
     turnover; the best-traded listing sets the home country; collapse the home country's
-    listings to share classes; sum the classes; the most active class prices the company
-    unless it is below `min_class_share` of the cap (then the largest). `eligible` = header
-    link to the country set AND an active home listing (see module docstring). Nothing
-    else is dropped: the caller filters on `eligible`.
+    listings to share classes (for a `dual_listed` gvkey, the listings of all its
+    countries: both halves of a dual-listed company filed under one gvkey); sum the
+    classes; the most active class prices the company unless it is below `min_class_share`
+    of the cap (then the largest). `eligible` = header link to the country set AND an
+    active home listing (see module docstring). Nothing else is dropped: the caller
+    filters on `eligible`. The three correction lists are the config's `corrections`.
     """
-    df = secd[secd["tpci"].isin(issue_types)].copy()
+    keep = secd["tpci"].isin(issue_types)
+    if genussschein_countries:
+        keep |= (secd["tpci"] == "Q") & secd["excntry"].isin(genussschein_countries)
+    df = secd[keep & ~secd["exchg"].isin(MTF_EXCHANGES)].copy()
+    df = df[~_in_spans(df, exclude_lines, "datadate")]
     if "dsci" in security:
         bad = security.loc[non_equity(security["dsci"]), ["gvkey", "iid"]].drop_duplicates()
         df = df.merge(bad.assign(_bad=True), on=["gvkey", "iid"], how="left")
         df = df[df["_bad"].isna()].drop(columns="_bad")
+    df = apply_share_corrections(df, share_corrections)
     if df.duplicated(["gvkey", "iid", "datadate"]).any():
         raise ValueError("g_secd extract has duplicate (gvkey, iid, datadate) rows")
     # monthend = 1 marks each listing's own last row of the month (its exchange's last
@@ -247,12 +341,17 @@ def company_month_mktcap(secd: pd.DataFrame, company: pd.DataFrame, security: pd
     best = df.drop_duplicates(key)[key + ["excntry", "turnover", "iid"]].rename(
         columns={"excntry": "country", "turnover": "turnover_home", "iid": "iid_home"})
     df = df.merge(best, on=key, how="left")
-    home = df[df["excntry"] == df["country"]].copy()
+    at_home = df["excntry"] == df["country"]
+    for c in dual_listed or []:
+        span = _in_spans(df, [c], "datadate", by_iid=False)
+        at_home |= span & df["excntry"].isin(c["countries"]) & df["country"].isin(c["countries"])
+    home = df[at_home].copy()
 
     # Collapse listings to share classes: same ISIN, or identical share count, = one class.
     home = home.sort_values(order, ascending=[True, True, False, False, False], na_position="last")
     home["class_id"] = home["isin"].fillna("iid:" + home["iid"])
     home = home.drop_duplicates(key + ["class_id"]).drop_duplicates(key + ["cshoc"])
+    home = _drop_near_duplicate_classes(home, key, dup_tol)
     # The first class per company-month prices it: the most active, unless that one holds
     # less than min_class_share of the cap, in which case the largest class goes first.
     small = (home.groupby(key)["cap_listing"].transform("first")

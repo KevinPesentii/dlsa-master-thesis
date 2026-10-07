@@ -167,7 +167,12 @@ def main():
     mcap_all = cg.company_month_mktcap(secd, company, security, fxn, countries, efx.NUMERAIRE,
                                        tuple(f["issue_types"]), min_turnover=float(f["min_turnover"]),
                                        turnover_window=int(f["turnover_window"]),
-                                       min_class_share=float(f["min_class_share"]))
+                                       min_class_share=float(f["min_class_share"]),
+                                       genussschein_countries=tuple(f.get("genussschein_countries", ())),
+                                       share_corrections=cfg.get("corrections", {}).get("share_count"),
+                                       dup_tol=float(f.get("dup_tol", 0.02)),
+                                       exclude_lines=cfg.get("corrections", {}).get("exclude_lines"),
+                                       dual_listed=cfg.get("corrections", {}).get("dual_listed"))
     mcap_all.to_parquet(out / "company_month_mktcap.parquet", index=False)
     print(f"cap table: {len(mcap_all):,} company-months, {int(mcap_all['eligible'].sum()):,} eligible", flush=True)
 
