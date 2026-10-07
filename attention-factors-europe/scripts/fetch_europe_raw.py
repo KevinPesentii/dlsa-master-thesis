@@ -1,7 +1,7 @@
 """Step 1c of the European builds: the raw WRDS tables for the union of the versions' lines.
 
     python scripts/fetch_europe_raw.py --configs configs/europe17_data.yaml configs/europe12_data.yaml
-                                       [--tables daily funda fx jkp] [--add-lines]
+                                       [--tables daily funda fx jkp] [--add-lines] [--add-companies]
 
 Every config's output.inspect_dir must hold listings.csv (build_europe_universe.py). The
 union of those lines and companies is pulled once into raw.dir of the first config
@@ -9,7 +9,8 @@ union of those lines and companies is pulled once into raw.dir of the first conf
 so the daily file and JKP can be pulled by two processes at once (JKP scans are slow).
 `--add-lines` (daily only): when a rebuilt universe prices a company by a line the pull
 does not hold yet, fetch those lines for every year and append them to the year files;
-listings.csv then lists everything pulled (old union plus the new lines).
+listings.csv then lists everything pulled (old union plus the new lines). `--add-companies`
+(funda, jkp): the same for companies new to the union; members.csv then lists them too.
   secd_daily/<year>.parquet   comp.g_secd, all fields of wrds_eu.SECD_DAILY_*, per listing-day
   g_funda.parquet             comp.g_funda INDL + FS, HIST_STD / I / C, wrds_eu.G_FUNDA_ITEMS
   jkp/<year>.parquet          contrib.global_factor, all 444 columns, every line of the companies
@@ -52,6 +53,8 @@ def main():
                     choices=["funda", "daily", "jkp", "fx"])
     ap.add_argument("--add-lines", action="store_true",
                     help="daily only: append the union's lines that raw/listings.csv does not hold yet")
+    ap.add_argument("--add-companies", action="store_true",
+                    help="funda / jkp: append the union's companies that raw/members.csv does not hold yet")
     args = ap.parse_args()
     cfgs = [yaml.safe_load(Path(p).read_text()) for p in args.configs]
     r = cfgs[0]["raw"]
@@ -68,6 +71,14 @@ def main():
         new = lines.merge(held, how="left", indicator=True).query("_merge == 'left_only'").drop(columns="_merge")
         add_lines(raw, [tuple(p) for p in new.itertuples(index=False)], int(r["daily_start_year"]), int(r["daily_end_year"]))
         pd.concat([held, new]).sort_values(["gvkey", "iid"]).to_csv(raw / "listings.csv", index=False)
+        return
+    if args.add_companies:
+        if not set(args.tables) <= {"funda", "jkp"}:
+            raise SystemExit("--add-companies appends funda and JKP rows only: pass --tables funda jkp")
+        held_g = set(pd.read_csv(raw / "members.csv", dtype=str)["gvkey"])
+        new_g = sorted(set(gvkeys) - held_g)
+        add_companies(raw, new_g, r, countries, args.tables)
+        pd.Series(sorted(held_g | set(new_g)), name="gvkey").to_csv(raw / "members.csv", index=False)
         return
     lines.to_csv(raw / "listings.csv", index=False)
     pd.Series(gvkeys, name="gvkey").to_csv(raw / "members.csv", index=False)
@@ -149,6 +160,38 @@ def add_lines(raw: Path, pairs: list[tuple[str, str]], y0: int, y1: int) -> None
                     ["gvkey", "iid", "datadate"], keep="first")
             df.to_parquet(path, index=False)
             print(f"  secd_daily {y}: {len(add):,} rows fetched, {len(df):,} in the file", flush=True)
+    finally:
+        db.close()
+
+
+def add_companies(raw: Path, gvkeys: list[str], r: dict, countries: list[str], tables: list[str]) -> None:
+    """Append g_funda rows and JKP rows (every year) of `gvkeys` to the files in raw/."""
+    print(f"adding {len(gvkeys)} companies ({tables}): {gvkeys}", flush=True)
+    if not gvkeys:
+        return
+    y1 = int(r["daily_end_year"])
+    db = cu.connect(ROOT)
+    try:
+        if "funda" in tables:
+            add = wrds_eu.fetch_g_funda(db, gvkeys, int(r["funda_start_year"]), y1)
+            old = pd.read_parquet(raw / "g_funda.parquet")
+            pd.concat([old, add[old.columns]], ignore_index=True).to_parquet(raw / "g_funda.parquet", index=False)
+            print(f"  g_funda: {len(add):,} rows added", flush=True)
+        if "jkp" in tables:
+            years = list(range(int(r["jkp_start_year"]), y1 + 1))
+            step = int(r.get("jkp_chunk_years", 7))
+            for i in range(0, len(years), step):
+                chunk = years[i:i + step]
+                add = fetch_jkp_years(db, chunk[0], chunk[-1], gvkeys, countries)
+                for y in chunk:
+                    path = raw / "jkp" / f"{y}.parquet"
+                    part = add[add["eom"].dt.year == y]
+                    if path.exists() and len(part):
+                        old = pd.read_parquet(path)
+                        part = pd.concat([old, part[old.columns]], ignore_index=True)
+                    if len(part):
+                        part.to_parquet(path, index=False)
+                print(f"  jkp {chunk[0]}-{chunk[-1]}: {len(add):,} rows added", flush=True)
     finally:
         db.close()
 

@@ -37,13 +37,37 @@ Eurostat's ECU check file and Ken French's `Europe_3_Factors_Daily_CSV.zip` as d
    cross-listings collapsed to classes WITHIN the home country, home = the most active
    listing's exchange country. Summing classes across countries was tried and rejected:
    foreign cross-listings often carry their own ISIN or a stale share count, so it double
-   counts (Total, Sanofi, ING); the price is that Unilever NV/PLC and Shell A/B count only
-   their home-country class. The line that carries a company (returns, characteristics)
+   counts (Total, Sanofi, ING); the price is that Shell A/B count only their home-country
+   class (Unilever NV/PLC, one gvkey, is summed by an explicit correction, below). The line
+   that carries a company (returns, characteristics)
    is its most active class, unless that class holds under 5% of the cap
    (`filters.min_class_share`), then its largest class; lines that are not shares
    (`compustat_global.non_equity`: VVPR strips, subscription / bonus / offer rights,
    stock-dividend rights, nil-paid) are dropped before anything else (2026-10-03, see
    Checks).
+   **Cap corrections (2026-10-07)**, found by `scripts/check_caps.py` (dividend yield of the
+   price feed vs the accounts; cap change vs price change): (a) Chi-X / Cboe Europe quotes
+   (g_secd exchg 349, London, from 2012-05, no ISIN) are not listings: their share count
+   differed slightly from the London line's in about half the months, so they were summed
+   as a second class and doubled most large UK caps 2012-19 (14-17% of the top 200's total
+   cap at the worst month of each year; Rotork's Chi-X line carried 10x the shares and put
+   a EUR 3bn company in the top 100, 2012-15). (b) Buyback, second-trading, tendered
+   ("ASD") and redemption-share lines are not classes (`non_equity`; Adecco 2015-24 was 5x).
+   (c) A class within 2% of another in share count AND price is the same class
+   (`filters.dup_tol`). (d) Participation certificates count as classes (tpci '8': Swiss PS,
+   French certificats d'investissement), and Genussscheine on SIX (tpci 'Q',
+   `filters.genussschein_countries`: Roche's, ~80% of its equity; Roche was sized on its
+   bearer shares alone, rank 50-100 instead of top 10, 1989-2011); the extract got these
+   rows with `fetch_europe_extract.py --add-issue-types 8 Q`. (e) Dated corrections in the
+   config (`corrections`): Eurocommercial's share count in shares against a price per
+   depositary receipt of ten (to 2005-04-26), Unilever NV + PLC summed as one company to
+   the 2020 unification with NV's duplicate lines excluded, Paribas' frozen FRF100 line,
+   one-month share-count switches (Atos 2024-11, Vetropack 2020-04, Bonheur to 1990-05),
+   and second lines the rules miss (Lindt, Logitech, UBS AG after 2014, MTU young shares).
+   Effect on europe17: 1,578 of 86,400 universe member-months swap (1,122 of them
+   2012-19), the old top 200's total cap was 14-18% too large in 2012-18 and 10% in
+   2023-25; 825 -> 795 companies ever in the as-of ranking. Previous outputs:
+   data/europe1{7,2}/private/prev_20261007_cap_fixes.
 2. **Numeraire.** ECU to 1998-12-31 = the official basket (three compositions, 1979, 1984,
    1989) valued at Compustat's GBP cross rates; EUR from 1999-01-01 = Compustat's quote;
    one to one at the switch (Reg. 1103/97). Pseudo currency `XEU` in the FX table, so the
@@ -138,4 +162,9 @@ factors, characteristic inputs), `europe_accounts.py` (fundamentals, JKP table),
 - An ECU money-market rate before 1999; delisting returns (none in Global); preferred
   shares; the known leaks of US-listed firms (Linde plc 2023-25, CNH 2024-25).
 - 2024-25 month-end volume gaps let a London line win the home-country choice for a few
-  continental companies (Roche, Mercedes-Benz, UMG in some months).
+  continental companies (Mercedes-Benz, UMG in some months; Roche and the Chi-X cases are
+  fixed, 2026-10-07).
+- Left after the 2026-10-07 cap corrections (`check_caps.py` lists them): one-month class
+  gaps where a class has no month-end row (11 member-months, mostly Swedish A/B before
+  1999), pricing-line flips between Swedish restricted / free lines before 1993 (ABB AB
+  1991), Belgian AFV series 1990-94 counted as classes.

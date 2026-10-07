@@ -17,12 +17,56 @@ countries: [GBR, DEU, FRA, CHE, NLD, ITA, ESP, SWE, BEL, DNK, FIN, NOR, IRL, PRT
 extract:
   dir: data/europe/private           # step-1 pull, shared by both versions
 
-filters:                             # as configs/universe_eu_compustat.yaml
-  issue_types: ["0"]
+filters:                             # as configs/universe_eu_compustat.yaml, plus:
+  issue_types: ["0", "8"]            # common shares and participation certificates (Swiss PS, French CI)
+  genussschein_countries: [CHE]      # tpci 'Q' counts on these exchanges only (Roche; German ones are debt)
   min_turnover: 3.0e-5
   turnover_window: 6
   min_class_share: 0.05              # a share class below 5% of the cap never prices the company (compustat_global)
+  dup_tol: 0.02                      # a class within 2% of another in shares AND price is that class again
   fx_max_stale_days: 7
+
+corrections:
+  # g_secd share counts in another unit than the price, found by scripts/check_caps.py
+  # (dividend yield of the price feed vs the accounts). cshoc / divide_by on start..end, in
+  # the cap table AND the daily rows of stage 2 (turnover).
+  share_count:
+    - {gvkey: "208226", iid: "01W", start: 1984-01-01, end: 2005-04-26, divide_by: 10,
+       note: "Eurocommercial Properties: price per depositary receipt (10 shares), cshoc in shares until 2005-04-27"}
+    - {gvkey: "200363", iid: "02W", start: 2024-11-12, end: 2024-12-05, divide_by: 566.9,
+       note: "Atos: the 63.2bn shares of the restructuring counted from 2024-11-12, the old share's price until 2024-12-05 (111.4m before)"}
+    - {gvkey: "102217", iid: "01W", start: 2020-04-30, end: 2020-05-01, divide_by: 50,
+       note: "Vetropack: the 1:50 split's share count two trading days before its price"}
+    - {gvkey: "200795", iid: "01W", start: 1984-01-01, end: 1990-05-08, divide_by: 10,
+       note: "Bonheur: 76.6m shares before 1990-05-09 against 11.5m after a 3:2 split at a flat adjusted price"}
+  # lines that carry another line's shares, on the dates given (the general rules of
+  # compustat_global miss them: different share count or a stale price)
+  exclude_lines:
+    - {gvkey: "010846", iid: "01W", start: 1984-01-01, end: 2019-06-30,
+       note: "Unilever NV ordinary shares: the CVA line 02W certifies the same shares and trades"}
+    - {gvkey: "010846", iid: "02W", start: 2019-07-01, end: 2019-07-31,
+       note: "Unilever NV CVA: last row after the certificates were cancelled; 01W carries NV from July 2019"}
+    - {gvkey: "010846", iid: "01W", start: 2020-11-01, end: 2020-11-30,
+       note: "Unilever NV: last row in the month of the unification, when the PLC's Amsterdam line 23W trades"}
+    - {gvkey: "010846", iid: "11W", start: 1984-01-01, end: 2020-10-31,
+       note: "Unilever NV CVA quoted in London: a cross-listing of 02W whose share count ran ahead of its price (2004-06)"}
+    - {gvkey: "015589", iid: "02W", start: 1984-01-01, end: 1998-04-30,
+       note: "Paribas FRF100 line: 01W's price to the centime, no volume, a frozen share count (131m, then 160m) next to 01W's 65-124m"}
+    - {gvkey: "101895", iid: "14W", start: 1984-01-01, end: 2099-12-31,
+       note: "Lindt participation certificate quoted with the registered shares' count (135,099): collapsed into, or added to, the wrong class"}
+    - {gvkey: "102696", iid: "09W", start: 1984-01-01, end: 2099-12-31,
+       note: "Logitech second SIX line: the registered share at its own (2023) or a different (2025) share count"}
+    - {gvkey: "144496", iid: "01W", start: 2014-12-01, end: 2099-12-31,
+       note: "UBS AG after the exchange into UBS Group AG (09W, 2014-11-28): the same company's shares twice"}
+    - {gvkey: "144496", iid: "20W", start: 1984-01-01, end: 2099-12-31,
+       note: "UBS Group second CHF line of 2025-05 (3.46bn shares, 09W's price)"}
+    - {gvkey: "273099", iid: "10W", start: 1984-01-01, end: 2099-12-31,
+       note: "MTU young shares line of 2023-05 carrying the total share count"}
+  # one gvkey holding both halves of a dual-listed company: the cap sums the home classes of
+  # all the countries (the pricing line is still the most active class)
+  dual_listed:
+    - {gvkey: "010846", countries: [NLD, GBR], start: 1984-01-01, end: 2020-10-31,
+       note: "Unilever NV (Amsterdam) + Unilever PLC (London), one company until the 2020-11-29 unification"}
 
 currency:
   numeraire: XEU                     # ECU to 1998-12-31, EUR from 1999-01-01, 1:1 at the switch
