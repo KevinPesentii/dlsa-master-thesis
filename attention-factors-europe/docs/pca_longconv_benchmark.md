@@ -70,7 +70,7 @@ signal 0.5-0.6.
 
 ## The volatility gap
 
-Table 2's PCA rows have sigma = 5.4-5.9 %; ours are 2.2-2.6 % at K = 30 for the same
+Table 2's PCA rows have sigma = 5.3-5.9 %; ours are 2.2-2.6 % at K = 30 for the same
 `||w||_1 = 1`. The K = 30 book holds ~490 names with an effective number
 `1 / sum(w^2)` of about 290. A 5.4 % annual volatility with ~1.5 % daily residual
 volatility per name needs an effective number near 20, i.e. a far more concentrated
