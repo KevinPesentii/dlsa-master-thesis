@@ -8,6 +8,11 @@ configs/us_search.yaml fixes the space, the budget and the rule; commit it first
 
     python scripts/search_validation.py [--config configs/us_search.yaml] [--jobs 3]
         [--threads 2] [--data-dir ...] [--stage all|select|robustness] [--resume runs/<dir>]
+        [--first-oos-year 2012] [--keep sobol-035]
+
+--first-oos-year moves the window: 2012 fits 2004-2009 and validates 2010-2011. Inside the
+out-of-sample period that is a check of how stable the choice is, not a replacement for it.
+--keep carries named candidates into the finalists (e.g. an earlier window's winner).
 
 1. search: Sobol points over the knobs the paper leaves open, plus the base config, one seed.
 2. finalists: the best `top` points and the base config on more seeds; the winner has the
@@ -191,12 +196,22 @@ def main():
     ap.add_argument("--jobs", type=int, default=3)
     ap.add_argument("--threads", type=int, default=2)
     ap.add_argument("--stage", choices=["all", "select", "robustness"], default="all")
-    ap.add_argument("--resume", help="run directory of an earlier search: its trials are reused")
+    ap.add_argument("--resume", help="run directory of an earlier search: its configuration and trials are reused")
+    ap.add_argument("--first-oos-year", type=int,
+                    help="validate on the last years of the window before this year instead of the config's")
+    ap.add_argument("--keep", nargs="*", default=[], help="candidate names always carried into the finalists")
     args = ap.parse_args()
-    S = yaml.safe_load(Path(args.config).read_text())
-    base_path = Path(S["base_config"])
-    cfg = yaml.safe_load((base_path if base_path.is_absolute() else ROOT / base_path).read_text())
-    cfg = with_overrides(cfg, S.get("fixed") or {})   # held fixed for every candidate, part of the base
+    if args.resume:                                  # a resumed run keeps its own configuration
+        man = json.loads((Path(args.resume) / "manifest.json").read_text())["config"]
+        S, cfg = man["search"], man["base"]          # "base" already holds the fixed block
+    else:
+        S = yaml.safe_load(Path(args.config).read_text())
+        base_path = Path(S["base_config"])
+        cfg = yaml.safe_load((base_path if base_path.is_absolute() else ROOT / base_path).read_text())
+        cfg = with_overrides(cfg, S.get("fixed") or {})   # held fixed for every candidate, part of the base
+        if args.first_oos_year:
+            S["first_oos_year"] = args.first_oos_year
+        S["finalists"]["keep"] = args.keep
     if args.data_dir:
         cfg["data"]["dir"] = args.data_dir
     data_dir = Path(cfg["data"]["dir"])
@@ -206,8 +221,9 @@ def main():
         with_overrides(cfg, {key: None})
 
     log = lambda s: print(s, flush=True)  # noqa: E731
+    V = S["validation_years"]
     run_dir = Path(args.resume) if args.resume else runs.create_run(
-        f"search_K{K}", {"search": S, "base": cfg}, sr["seed"], root=ROOT / "runs")
+        f"search_K{K}_val{first_oos - V}-{first_oos - 1}", {"search": S, "base": cfg}, sr["seed"], root=ROOT / "runs")
     path, trials = run_dir / "trials.jsonl", {}
     if path.exists():
         for line in path.read_text().splitlines():
@@ -229,7 +245,10 @@ def main():
                    for i, o in enumerate(sobol_points(sr["space"], sr["n_points"], sr["sobol_seed"]))]
             res = run([{**c, "seed": sr["seed"]} for c in [base_c, *pts]], "search")
             best = {r["cid"] for r in sorted(res, key=lambda r: -finite(r["net_SR"]))[:fin["top"]]}
-            finalists = [c for c in [base_c, *pts] if c["cid"] in best or c is base_c]
+            keep = set(fin.get("keep", []))
+            if keep - {c["name"] for c in pts}:
+                raise SystemExit(f"--keep: no candidates named {sorted(keep - {c['name'] for c in pts})}")
+            finalists = [c for c in [base_c, *pts] if c["cid"] in best or c is base_c or c["name"] in keep]
             rows = table(finalists, run([{**c, "seed": s} for c in finalists for s in fin["seeds"]],
                                         "finalists"), base_c["cid"])
             log(f"finalists, mean over seeds {fin['seeds']} of the validation net Sharpe:")
