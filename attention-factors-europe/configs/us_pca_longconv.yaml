@@ -35,6 +35,7 @@ policy:
   dropout: 0.1
   lambda_squash: 0.001
   input: cumulative              # 'cumulative' residual path as in GPZ's preprocess_cumsum; 'returns' = daily residuals
+  input_normalise: none          # none | window_vol (as the attention policy); searched in configs/us_search_pca.yaml
   input_scale: 100.0             # residuals in percent: reproduces docs/pca_longconv_benchmark.md. NOT
                                  # scale-free (encoder bias, GELU, GLU gate); the attention config uses 1.0,
                                  # so rerun this row at 1.0 before the two are compared in Table 2
@@ -43,6 +44,10 @@ objective:
   turnover_cost: 0.0005          # ||w_t - w_{t-1}||_1
   short_cost: 0.0001             # ||max(-w_t, 0)||_1
   subtract_rf: true              # paper: (Rbar_net - R_f) / sd in the objective
+
+execution:
+  lag: 0                         # the paper's timing; scripts/run_pca_longconv.execute (evaluation only)
+  stale_when_closed: true        # no effect on the US (no returns.traded)
 
 training:
   window_years: 8

@@ -1,0 +1,27 @@
+# configs/us_search_pca.yaml with the book traded one close later (execution.lag 1 in the
+# validation scoring; the policy trains on its targets): values for the PCA lag-1 rows.
+#   python scripts/search_validation.py --config configs/us_search_pca_lag1.yaml --stage select
+
+runner: pca
+base_config: configs/us_pca_longconv.yaml   # everything not listed below comes from here
+K: 30
+first_oos_year: 1998          # fit 1990-1995 on the PCA residuals, score the net Sharpe on 1996-1997
+validation_years: 2
+
+# The LongConv knobs of configs/us_search.yaml's space (the attention-only ones dropped):
+search:
+  n_points: 64
+  sobol_seed: 0
+  seed: 0
+  space:
+    policy.input_scale: {log: [0.3, 300]}
+    training.batch_days: {choice: [63, 125, 250]}
+    policy.input: {choice: [cumulative, raw]}
+    policy.input_normalise: {choice: [none, window_vol]}
+
+fixed:
+  execution.lag: 1
+
+finalists:
+  top: 5
+  seeds: [0, 1, 2]

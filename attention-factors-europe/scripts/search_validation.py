@@ -23,6 +23,16 @@ out-of-sample period that is a check of how stable the choice is, not a replacem
 3. robustness: the winner with one Table 4 value moved at a time, on the same seeds.
    Written to robustness.csv, never adopted.
 
+`runner: pca` in the search config searches the two-step benchmarks instead
+(run_pca_longconv.py configs): the LongConv policy on fixed PCA residuals, or the OU
+threshold rule (nothing trained). The residuals come from the stage one, built to the
+sample end; each one uses only the returns before its date (pca_factors), and the search
+reads dates before the first out-of-sample year only. `search.grid` ({key: [values]})
+evaluates the full grid instead of Sobol points (the OU thresholds). `fixed` holds keys
+constant for every candidate (e.g. execution.lag 1 or policy.input raw).
+--run-dir writes to that directory instead of a timestamped one (scripts/run_matrix.py).
+--smoke: two points, one finalist, one seed, one epoch, to check that a config runs.
+
 A trial with seed s starts from the draw (s, first out-of-sample year), as in
 run_attention_us_val.py, so candidates are compared on common random numbers. The scores
 along the learning curve come from the same training run (train_window's on_epoch hook).
@@ -34,6 +44,7 @@ from __future__ import annotations
 import argparse
 import copy
 import hashlib
+import itertools
 import json
 import math
 import multiprocessing as mp
@@ -54,9 +65,12 @@ sys.path.insert(0, str(ROOT / "scripts"))
 
 import run_attention_us as base  # noqa: E402  (span, train_window)
 import run_attention_us_val as val  # noqa: E402  (fresh_model)
+import run_pca_longconv as rp  # noqa: E402  (Stage1, train_one_window, execute)
 from afe import runs  # noqa: E402
 from afe.data import slots  # noqa: E402
 from afe.evaluation import metrics  # noqa: E402
+from afe.policy import ou_threshold, trading  # noqa: E402
+from afe.policy.longconv import LongConvPolicy  # noqa: E402
 
 WORKER: dict = {}  # per process: the panel, the base config and the split
 
@@ -95,14 +109,25 @@ def sobol_points(space: dict, n: int, seed: int) -> list[dict]:
     return [{k: draw(spec, float(x)) for x, (k, spec) in zip(row, space.items())} for row in u]
 
 
+def grid_points(grid: dict) -> list[dict]:
+    return [dict(zip(grid, vals)) for vals in itertools.product(*grid.values())]
+
+
 def candidate(name: str, overrides: dict) -> dict:
     cid = hashlib.sha1(json.dumps(overrides, sort_keys=True).encode()).hexdigest()[:10]
     return {"name": name, "cid": cid, "overrides": overrides}
 
 
 def init_worker(cfg: dict, data_dir: str, first_oos: int, val_years: int, K: int,
-                eval_epochs: list[int], threads: int) -> None:
+                eval_epochs: list[int], threads: int, runner: str = "attention") -> None:
     torch.set_num_threads(threads)
+    if runner == "pca":
+        panel = rp.load_panel(cfg, str(cfg["sample"]["end"]))
+        s1 = rp.Stage1(ROOT / cfg["factors"]["out_dir"], K, panel)
+        t_tr0 = s1.dates.searchsorted(rp.window_start(cfg, first_oos)) if "training" in cfg else 0
+        t = [s1.dates.searchsorted(pd.Timestamp(y, 1, 1)) for y in (first_oos - val_years, first_oos)]
+        WORKER.update(runner="pca", panel=panel, s1=s1, cfg=cfg, K=K, first_oos=first_oos, split=(t_tr0, *t))
+        return
     w0 = base.window_start(cfg, first_oos)
     if first_oos - val_years <= w0.year:
         raise SystemExit(f"a window from {w0:%Y-%m-%d} leaves no training years before {val_years} validation years")
@@ -128,7 +153,43 @@ def score(model, c: dict) -> dict:
             "beta": float(metrics.beta(net, p.mkt_ew[t_va0:t_va1].astype(float)))}
 
 
+def evaluate_pca(job: dict) -> dict:
+    """One candidate of a two-step benchmark: train on the fit years (LongConv) or apply the
+    rule (OU), then score the executed book on the validation years."""
+    c = with_overrides(WORKER["cfg"], job["overrides"])
+    s1, panel, (t_tr0, t_va0, t_va1) = WORKER["s1"], WORKER["panel"], WORKER["split"]
+    pc, ob = c["policy"], c["objective"]
+    L, scale, cum = pc["residual_lookback"], pc["input_scale"], pc["input"] == "cumulative"
+    norm = pc.get("input_normalise", "none")
+    t0 = time.time()
+    val_b = s1.batch(t_va0, t_va1, L, scale, cum, norm)
+    if pc["kind"] == "longconv":
+        init_seed = job["seed"] * 10007 + WORKER["first_oos"]
+        torch.manual_seed(init_seed)
+        model = LongConvPolicy(pc["hidden"], L, pc["dropout"], pc["lambda_squash"], pc["layers"])
+        rp.train_one_window(model, s1.batch(t_tr0, t_va0, L, scale, cum, norm), c,
+                            np.random.default_rng(init_seed), lambda s: None)
+        w = rp.evaluate_window(model, val_b)
+    else:
+        w_port = ou_threshold.threshold_weights(val_b.windows.numpy(), val_b.tradable.numpy(),
+                                                pc["c_thresh"], pc["c_crit"])
+        w = trading.compose(torch.from_numpy(w_port), val_b)
+    t_idx = np.arange(t_va0, t_va1)
+    wp = rp.execute(trading.to_pool(w, val_b).numpy(), panel, t_idx, c).astype(float)
+    gross = (wp * s1.R_pool[t_idx]).sum(axis=1)
+    to = np.abs(np.diff(wp, axis=0, prepend=np.zeros((1, wp.shape[1])))).sum(axis=1)
+    sh = np.clip(-wp, 0, None).sum(axis=1)
+    net = gross - ob["turnover_cost"] * to - ob["short_cost"] * sh
+    g = metrics.annualised(gross)
+    r = {"net_SR": float(metrics.annualised(net)["SR"]), "gross_SR": float(g["SR"]),
+         "sigma_pct": float(g["sigma_pct"]), "turnover": float(to.mean()), "ev": float("nan"),
+         "beta": float(metrics.beta(net, s1.mkt_ew[t_idx].astype(float)))}
+    return {**job, **r, "curve": {}, "seconds": round(time.time() - t0)}
+
+
 def evaluate(job: dict) -> dict:
+    if WORKER.get("runner") == "pca":
+        return evaluate_pca(job)
     c = with_overrides(WORKER["cfg"], job["overrides"])
     t_tr0, t_va0, _ = WORKER["split"]
     init_seed = job["seed"] * 10007 + WORKER["first_oos"]
@@ -200,6 +261,8 @@ def main():
     ap.add_argument("--first-oos-year", type=int,
                     help="validate on the last years of the window before this year instead of the config's")
     ap.add_argument("--keep", nargs="*", default=[], help="candidate names always carried into the finalists")
+    ap.add_argument("--run-dir", type=Path, help="write to this directory (must not exist) instead of runs/<stamp>_...")
+    ap.add_argument("--smoke", action="store_true", help="2 points, 1 finalist, 1 seed, 1 epoch: does the config run")
     args = ap.parse_args()
     if args.resume:                                  # a resumed run keeps its own configuration
         man = json.loads((Path(args.resume) / "manifest.json").read_text())["config"]
@@ -212,37 +275,49 @@ def main():
         if args.first_oos_year:
             S["first_oos_year"] = args.first_oos_year
         S["finalists"]["keep"] = args.keep
+        if args.smoke:
+            S["search"]["n_points"] = 2
+            S["finalists"].update(top=1, seeds=S["finalists"]["seeds"][:1])
+            S["robustness"] = {"seeds": [], "knobs": {}}
+            if "training" in cfg:
+                cfg["training"]["epochs"] = 1
     if args.data_dir:
         cfg["data"]["dir"] = args.data_dir
     data_dir = Path(cfg["data"]["dir"])
     data_dir = data_dir if data_dir.is_absolute() else ROOT / data_dir
-    K, first_oos, sr, fin, rob = S["K"], S["first_oos_year"], S["search"], S["finalists"], S["robustness"]
-    for key in [*sr["space"], *rob["knobs"]]:
+    K, first_oos, sr, fin = S["K"], S["first_oos_year"], S["search"], S["finalists"]
+    rob, runner = S.get("robustness") or {"seeds": [], "knobs": {}}, S.get("runner", "attention")
+    for key in [*sr.get("space", {}), *sr.get("grid", {}), *rob["knobs"]]:
         with_overrides(cfg, {key: None})
 
     log = lambda s: print(s, flush=True)  # noqa: E731
     V = S["validation_years"]
     run_dir = Path(args.resume) if args.resume else runs.create_run(
-        f"search_K{K}_val{first_oos - V}-{first_oos - 1}", {"search": S, "base": cfg}, sr["seed"], root=ROOT / "runs")
+        f"search_K{K}_val{first_oos - V}-{first_oos - 1}", {"search": S, "base": cfg}, sr["seed"], root=ROOT / "runs",
+        run_dir=args.run_dir)
     path, trials = run_dir / "trials.jsonl", {}
     if path.exists():
         for line in path.read_text().splitlines():
             r = json.loads(line)
             trials[(r["cid"], r["seed"])] = r
     log(f"search run dir {run_dir}")
-    log(f"fit {base.window_start(cfg, first_oos).year}-{first_oos - S['validation_years'] - 1}, validate "
-        f"{first_oos - S['validation_years']}-{first_oos - 1}, K={K}, {args.jobs} jobs x {args.threads} threads")
+    fit = f"fit {base.window_start(cfg, first_oos).year}-{first_oos - V - 1}, " if "training" in cfg else ""
+    log(f"{runner}: {fit}validate {first_oos - V}-{first_oos - 1}, K={K}, {args.jobs} jobs x {args.threads} threads")
     for k in ("OMP_NUM_THREADS", "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS"):
         os.environ[k] = str(args.threads)
     summary_path = run_dir / "metrics.json"
     summary = json.loads(summary_path.read_text()) if summary_path.exists() else {}
     with mp.get_context("spawn").Pool(args.jobs, initializer=init_worker, initargs=(
-            cfg, str(data_dir), first_oos, S["validation_years"], K, S["eval_epochs"], args.threads)) as pool:
+            cfg, str(data_dir), first_oos, V, K, S.get("eval_epochs", []), args.threads, runner)) as pool:
         run = lambda jobs, label: run_jobs(pool, jobs, trials, path, log, label)  # noqa: E731
         if args.stage in ("all", "select"):
             base_c = candidate("base", {})
-            pts = [candidate(f"sobol-{i:03d}", o)
-                   for i, o in enumerate(sobol_points(sr["space"], sr["n_points"], sr["sobol_seed"]))]
+            if "grid" in sr:
+                pts = [candidate(f"grid-{i:03d}", o) for i, o in enumerate(grid_points(sr["grid"]))]
+                pts = pts[:2] if args.smoke else pts
+            else:
+                pts = [candidate(f"sobol-{i:03d}", o)
+                       for i, o in enumerate(sobol_points(sr["space"], sr["n_points"], sr["sobol_seed"]))]
             res = run([{**c, "seed": sr["seed"]} for c in [base_c, *pts]], "search")
             best = {r["cid"] for r in sorted(res, key=lambda r: -finite(r["net_SR"]))[:fin["top"]]}
             keep = set(fin.get("keep", []))
@@ -263,7 +338,7 @@ def main():
                 + yaml.safe_dump(selected, sort_keys=False))
             summary.update(winner=win, finalists=rows, n_search_points=len(pts))
             log(f"winner {win['name']} {json.dumps(win['overrides'])} -> {run_dir / 'selected.yaml'}")
-        if args.stage in ("all", "robustness"):
+        if args.stage in ("all", "robustness") and rob["knobs"]:
             win = candidate("winner", summary["winner"]["overrides"])
             alts = [candidate(f"{k}={v}", {**win["overrides"], k: v})
                     for k, vals in rob["knobs"].items() for v in vals]

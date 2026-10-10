@@ -1,0 +1,20 @@
+# Threshold selection for PCA + OU on 1996-1997 (the last two years of the first window):
+# the grid Guijarro-Ordonez, Pelger & Zanotti validate over (c_thresh x c_crit), at K=30,
+# used for every K and in Europe. Deterministic: one seed.
+#   python scripts/search_validation.py --config configs/us_search_ou.yaml --stage select
+
+runner: pca
+base_config: configs/us_pca_ou.yaml
+K: 30
+first_oos_year: 1998
+validation_years: 2
+
+search:
+  seed: 0
+  grid:
+    policy.c_thresh: [1.0, 1.25, 1.5]
+    policy.c_crit: [0.25, 0.5, 0.75]
+
+finalists:
+  top: 3
+  seeds: [0]

@@ -51,18 +51,22 @@ def package_versions() -> dict[str, str]:
     return out
 
 
-def create_run(name: str, config: dict[str, Any], seed: int, root: Path = RUNS_ROOT) -> Path:
-    """Make runs/<timestamp>_<name>/ and write the manifest. Returns the directory.
+def create_run(name: str, config: dict[str, Any], seed: int, root: Path = RUNS_ROOT,
+               run_dir: Path | None = None) -> Path:
+    """Make runs/<timestamp>_<name>/ (or exactly `run_dir`, which must not exist yet) and
+    write the manifest. Returns the directory.
 
     Parallel processes (scripts/run_years_parallel.sh) can reach this in the same second
     with the same name; mkdir is atomic, so the loser waits for the next second's stamp.
     """
-    while True:
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    if run_dir is not None:
+        run_dir.mkdir(parents=True, exist_ok=False)
+    while run_dir is None:
         stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-        run_dir = root / f"{stamp}_{name}"
         try:
-            run_dir.mkdir(parents=True, exist_ok=False)
-            break
+            (root / f"{stamp}_{name}").mkdir(parents=True, exist_ok=False)
+            run_dir = root / f"{stamp}_{name}"
         except FileExistsError:
             time.sleep(0.25)
     manifest = {

@@ -1,0 +1,26 @@
+# Hyperparameter search for the two-step benchmark (PCA + LongConv) on the first training
+# window, the protocol of configs/us_search.yaml, so the PCA rows of the thesis also trade
+# with validated values. Selected at K=30, used for every K and in Europe.
+# Needs the stage one (scripts/build_pca_residuals.py --config configs/us_pca_longconv.yaml).
+#   python scripts/search_validation.py --config configs/us_search_pca.yaml --stage select
+
+runner: pca
+base_config: configs/us_pca_longconv.yaml   # everything not listed below comes from here
+K: 30
+first_oos_year: 1998          # fit 1990-1995 on the PCA residuals, score the net Sharpe on 1996-1997
+validation_years: 2
+
+# The LongConv knobs of configs/us_search.yaml's space (the attention-only ones dropped):
+search:
+  n_points: 64
+  sobol_seed: 0
+  seed: 0
+  space:
+    policy.input_scale: {log: [0.3, 300]}
+    training.batch_days: {choice: [63, 125, 250]}
+    policy.input: {choice: [cumulative, raw]}
+    policy.input_normalise: {choice: [none, window_vol]}
+
+finalists:
+  top: 5
+  seeds: [0, 1, 2]

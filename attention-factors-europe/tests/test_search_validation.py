@@ -94,3 +94,19 @@ def test_training_windows_start_no_earlier_than_data_start():
     eu = yaml.safe_load((ROOT / "configs" / "europe_search.yaml").read_text())
     base_cfg = yaml.safe_load((ROOT / eu["base_config"]).read_text())
     assert sv.base.window_start(base_cfg, eu["first_oos_year"]) == pd.Timestamp("1993-01-01")
+
+
+def test_grid_is_the_full_product_in_order():
+    pts = sv.grid_points({"policy.c_thresh": [1.0, 1.25], "policy.c_crit": [0.25, 0.5]})
+    assert pts == [{"policy.c_thresh": 1.0, "policy.c_crit": 0.25}, {"policy.c_thresh": 1.0, "policy.c_crit": 0.5},
+                   {"policy.c_thresh": 1.25, "policy.c_crit": 0.25}, {"policy.c_thresh": 1.25, "policy.c_crit": 0.5}]
+
+
+@pytest.mark.parametrize("name", ["us_search", "us_search_raw", "us_search_lag1", "us_search_pca",
+                                  "us_search_pca_lag1", "us_search_ou"])
+def test_thesis_searches_name_only_keys_of_their_base_config(name):
+    S = yaml.safe_load((ROOT / "configs" / f"{name}.yaml").read_text())
+    cfg = sv.with_overrides(yaml.safe_load((ROOT / S["base_config"]).read_text()), S.get("fixed") or {})
+    for key in [*S["search"].get("space", {}), *S["search"].get("grid", {})]:
+        sv.with_overrides(cfg, {key: None})
+    assert not set(S.get("fixed") or {}) & set(S["search"].get("space", {})), "a fixed key is also searched"
