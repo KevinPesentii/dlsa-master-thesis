@@ -172,6 +172,8 @@ about 5.5 GB per US attention job, 3 GB per Europe job (estimates with margin; t
 validation runner peaked at 4.4 GB). Machine: **m7i.24xlarge** (96 vCPU, 384 GiB) runs 46
 jobs x 2 threads without hitting the memory budget, so expect roughly 3-5 hours. A
 c7i.24xlarge (192 GiB) also works; the budget then keeps about 28 US jobs in flight.
+Storage: **60 GiB** gp3, encrypted (the two PCA stage ones are about 12 GB, the 239 run
+directories about 3 GB, the environment about 3 GB).
 Because a reclaimed spot machine loses everything, prefer **on-demand** for this run, or
 copy `runs/` home every hour or two (the ledger lets a new machine skip what came back).
 
