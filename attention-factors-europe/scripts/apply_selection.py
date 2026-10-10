@@ -59,7 +59,7 @@ def main():
     args = ap.parse_args()
     S = json.loads((args.search_dir / "manifest.json").read_text())["config"]["search"]
     w, values = selected_values(args.search_dir)
-    tag = (f"# SELECTED: {args.search_dir.name} ({S.get('base_config', '?')} search), candidate {w['name']}, "
+    tag = (f"# SELECTED: {args.search_dir.name} (a search on {S.get('base_config', '?')}), candidate {w['name']}, "
            f"validation net SR {w['val_net_SR']:.2f} over seeds {w.get('n_seeds', '?')}\n")
     for path in args.configs:
         text = path.read_text(encoding="utf-8")

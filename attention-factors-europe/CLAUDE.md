@@ -62,10 +62,15 @@ weaken a test to make code pass.
 ## Headline specification (decided 2026-10-10)
 
 - Configs: `configs/us_headline.yaml`, `configs/europe_headline.yaml`. One set of
-  hyperparameters for both markets: Kevin's sobol-009 of the 8-knob space of
-  `configs/europe_search.yaml` (lambda_var 4.8, input_scale 0.313, lambda_ridge 8.19e-4,
-  cumulative input / window_vol, no score temperature, level_hidden 0, batch 63; the
-  rest is Table 4).
+  hyperparameters for both markets, selected by the pre-registered US search
+  (`configs/us_search.yaml`, fit 1990-1995, net Sharpe on 1996-1997; run
+  20261010T110947Z_search_K30_val1996-1997): sobol-036 = lambda_var 17.6, input_scale
+  87.9, score temperature 0.342, lambda_ridge 2.63e-5, batch 125, cumulative input /
+  window_vol, level_hidden 0; the rest is Table 4. Kevin's sobol-009 placed 4th.
+- Every reported return uses validated values (2026-10-10): the PCA benchmarks and the
+  rows that change how the model trades (raw input, lag 1) get their own searches on the
+  same window (`searches:` in `configs/thesis_matrix.yaml`); rows that change only the
+  data keep the headline values.
 - Europe: europe17 (all 17 exchange countries), top 200 by prior-month cap, ECU to 1998 /
   EUR after, training from 1993. europe12 is a robustness row.
 - Europe holidays: gaps of <= 3 pooled days filled with a zero local return (stage 2b,

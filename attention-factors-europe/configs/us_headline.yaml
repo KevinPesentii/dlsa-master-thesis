@@ -1,8 +1,11 @@
-# HEADLINE US run (decided 2026-10-10): the paper-style top-500 universe and Kevin's
-# selected values = sobol-009 of the 8-knob space of configs/europe_search.yaml (sobol_seed 0):
-# lambda_var 4.8, input_scale 0.313, lambda_ridge 8.19e-4, cumulative input divided by its
-# window volatility, no score temperature, level_hidden 0, batch 63; the rest is Table 4.
-# The same values run Europe (configs/europe_headline.yaml).
+# SELECTED: 20261010T110947Z_search_K30_val1996-1997 (configs/us_search.yaml), candidate sobol-036, validation net SR 7.46 over seeds 3
+# HEADLINE US run (decided 2026-10-10): the paper-style top-500 universe and the values the
+# pre-registered US validation search selected (configs/us_search.yaml as committed
+# 2026-09-27: 8 knobs, 128 Sobol points, fit 1990-1995, net Sharpe on 1996-1997, winner =
+# best mean over seeds 0-2 among the top 5 and the base config): sobol-036 = lambda_var
+# 17.6, input_scale 87.9, score temperature 0.342, lambda_ridge 2.63e-5, batch 125,
+# cumulative input divided by its window volatility, level_hidden 0; the rest is Table 4.
+# Kevin's sobol-009 placed 4th of the finalists (7.20, se 0.31). Europe runs the same values.
 #   python scripts/run_attention_us.py --config configs/us_headline.yaml
 
 market: us
@@ -29,9 +32,9 @@ model:
   level_hidden: 0                # >0 conditions the queries on the date's characteristic levels
                                  # (medians + rf), which the row-wise softmax otherwise drops.
                                  # NOT in the paper: 0 reproduces Equation (1)
-  score_std_target: null          # initial cross-sectional spread of the attention scores;
+  score_std_target: 0.342          # initial cross-sectional spread of the attention scores;
                                  # a scalar temperature, equivalent to rescaling Q (not in the paper)
-  lambda_ridge: 0.000819           # ridge in the loading solve, Section 3.2
+  lambda_ridge: 2.63e-05           # ridge in the loading solve, Section 3.2
 
 policy:
   kind: longconv
@@ -43,12 +46,12 @@ policy:
   input: cumulative              # cumulative residual path, as in the two-step benchmark
   input_normalise: window_vol          # none | window_vol: divide each window by its own residual
                                  # volatility. NOT in the paper; makes the input scale-free
-  input_scale: 0.313               # residuals as decimal returns, LongConv(eps) as written in the paper.
+  input_scale: 87.9               # residuals as decimal returns, LongConv(eps) as written in the paper.
                                  # NOT a harmless unit: the encoder bias, GELU and the GLU gate make the
                                  # policy depend on it; x100 traded 47% more (1998-2021, see the commit)
 
 objective:
-  lambda_var: 4.8
+  lambda_var: 17.6
   turnover_cost: 0.0005          # ||w_t - w_{t-1}||_1
   short_cost: 0.0001             # ||max(-w_t, 0)||_1
   subtract_rf: true              # paper: (Rbar_net - R_f) / sd in the objective
@@ -66,7 +69,7 @@ training:
   epochs: 30
   lr: 0.003
   weight_decay: 0.05
-  batch_days: 63                # contiguous blocks, each with residual_lookback extra dates in front
+  batch_days: 125                # contiguous blocks, each with residual_lookback extra dates in front
   grad_clip: 1.0
 
 evaluation:
