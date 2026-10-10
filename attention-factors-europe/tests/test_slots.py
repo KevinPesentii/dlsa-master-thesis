@@ -115,3 +115,24 @@ def test_synthetic_fixture_round_trips_by_company(tmp_path, returns, universe, f
                 checked += 1
     assert checked > 100
     assert p.in_universe.sum(dim=1).max() == universe.groupby("month").size().max()
+
+
+def test_max_rank_keeps_the_largest_members(tmp_path):
+    write_panel(tmp_path)
+    p = slots.load_slots(tmp_path, "2000-01-01", "2000-02-28", max_rank=1)
+    assert p.idx.shape[1] == 1                                    # one slot: rank 1 of each month
+    assert [p.sec_ids[j] for j in p.idx[:, 0].tolist()] == ["A"] * 3 + ["B"] * 2
+
+
+def test_drop_groups_removes_a_themes_chars_and_medians(panel):
+    from dataclasses import replace
+    names = ["char_Ret_D1", "med_Ret_D1", "char_BEME", "med_BEME", "rf"]   # Past Returns, Value
+    T, S = panel.X.shape[:2]
+    X = torch.arange(5, dtype=torch.float32).expand(T, S, 5).clone()
+    q = slots.drop_groups(replace(panel, X=X, features=names), ["Past Returns"])
+    assert q.features == ["char_BEME", "med_BEME", "rf"]
+    assert q.X[0, 0].tolist() == [2.0, 3.0, 4.0]
+    assert slots.drop_groups(replace(panel, X=X, features=names), ["value"]).features == \
+        ["char_Ret_D1", "med_Ret_D1", "rf"]
+    with pytest.raises(ValueError):
+        slots.drop_groups(replace(panel, X=X, features=names), ["momentum"])

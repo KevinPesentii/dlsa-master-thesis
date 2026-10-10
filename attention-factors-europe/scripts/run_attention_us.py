@@ -172,6 +172,9 @@ def run_K(K: int, cfg: dict, seed: int, p: slots.SlotPanel, years: list[int], lo
                              dropout=pc["dropout"], lambda_squash=pc["lambda_squash"])
         train_window(model, p, t_tr0, t_te0, cfg, rng, log)
         model.eval()
+        if ev.get("save_models"):       # for the factor figures: betas and weights on any date
+            (run_dir / "models").mkdir(exist_ok=True)
+            torch.save(model.state_dict(), run_dir / "models" / f"{year}.pt")
         with torch.no_grad():
             _, parts, out = span(model, p, t_te0, t_te1, cfg)
         w = out["w"]
@@ -186,6 +189,7 @@ def run_K(K: int, cfg: dict, seed: int, p: slots.SlotPanel, years: list[int], lo
     daily = daily_book(p, np.concatenate(w_pool_all), t_idx, cfg)
     m = metrics.performance(daily, ob["turnover_cost"], ob["short_cost"], ev["cost_grid_bps"])
     m.update({"K": K, "seed": seed, "factor_model": "attention", "policy_input": pc["input"],
+              "n_features": len(p.features), "drop_groups": cfg["features"].get("drop_groups") or [],
               "execution_lag": execution(cfg)[0], "stale_when_closed": closed_mask(p, cfg, 0, 1) is not None})
     runs.write_metrics(run_dir, m)
     daily.to_csv(run_dir / "oos_daily.csv", index=False)
@@ -228,7 +232,11 @@ def main():
     data_dir = Path(cfg["data"]["dir"])
     data_dir = data_dir if data_dir.is_absolute() else ROOT / data_dir
     t0 = time.time()
-    p = slots.load_slots(data_dir, f"{window_start(cfg, min(years)):%Y-%m-%d}", f"{max(years)}-12-31")
+    p = slots.load_slots(data_dir, f"{window_start(cfg, min(years)):%Y-%m-%d}", f"{max(years)}-12-31",
+                         max_rank=cfg["sample"].get("universe_size"))
+    if cfg["features"].get("drop_groups"):
+        p = slots.drop_groups(p, cfg["features"]["drop_groups"])
+        log(f"dropped groups {cfg['features']['drop_groups']}: {len(p.features)} features left")
     log(f"panel {tuple(p.X.shape)} from {data_dir} in {time.time() - t0:.0f}s, "
         f"{p.dates[0]:%Y-%m-%d}..{p.dates[-1]:%Y-%m-%d}, torch threads {torch.get_num_threads()}")
     log("      K    SR     mu   sigma   SRnet  munet signet   beta")

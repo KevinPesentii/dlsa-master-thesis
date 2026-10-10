@@ -28,11 +28,15 @@ residual windows and the policy all ignore it.
 
 `rf` is the rate of the traded day t itself, unshifted, for the objective. `closed`
 (optional returns.traded) marks closes at which a name could not be traded.
+
+Two options for robustness runs: `max_rank` keeps the members up to that cap_rank (a
+top-200 US run; the features stay ranked over the full universe of the build), and
+`drop_groups` removes a characteristic theme's char_* and med_* columns (Table 3).
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 import numpy as np
@@ -41,6 +45,7 @@ import pyarrow.parquet as pq
 import torch
 
 from afe import schemas
+from afe.data.characteristics import REGISTRY
 
 
 @dataclass
@@ -63,9 +68,10 @@ class SlotPanel:
         return len(self.sec_ids)
 
 
-def load_slots(data_dir: Path, start: str, end: str) -> SlotPanel:
+def load_slots(data_dir: Path, start: str, end: str, max_rank: int | None = None) -> SlotPanel:
     """Slot arrays for the trading days in [start, end]. Features of the trading day
-    before `start` are read too, so that the first row is lagged like every other."""
+    before `start` are read too, so that the first row is lagged like every other.
+    `max_rank`: only members with cap_rank <= max_rank."""
     data_dir = Path(data_dir)
     t_start, t_end = pd.Timestamp(start), pd.Timestamp(end)
     lo, hi = (t_start - pd.DateOffset(days=10)).to_pydatetime(), t_end.to_pydatetime()
@@ -73,6 +79,8 @@ def load_slots(data_dir: Path, start: str, end: str) -> SlotPanel:
     uni = pd.read_parquet(data_dir / "universe.parquet")
     uni["ym"] = uni["month"].dt.to_period("M")
     uni = uni[(uni["ym"] >= t_start.to_period("M")) & (uni["ym"] <= t_end.to_period("M"))]
+    if max_rank is not None:
+        uni = uni[uni["cap_rank"] <= max_rank]
     uni = uni.sort_values(["ym", "cap_rank"], ignore_index=True)
     sec_ids = np.sort(uni["sec_id"].unique())
     n_pool = len(sec_ids)
@@ -151,3 +159,16 @@ def load_slots(data_dir: Path, start: str, end: str) -> SlotPanel:
     return SlotPanel(dates, sec_ids, feats, torch.from_numpy(X), torch.from_numpy(R_slot),
                      torch.from_numpy(in_universe), torch.from_numpy(idx), torch.from_numpy(rf),
                      R_pool, mkt_ew, closed)
+
+
+def drop_groups(p: SlotPanel, groups: list[str]) -> SlotPanel:
+    """The panel without the char_* and med_* columns of the characteristics whose theme
+    (characteristics.REGISTRY, e.g. "Past Returns" or past_returns) is in `groups`."""
+    key = lambda s: s.lower().replace(" ", "_")  # noqa: E731
+    want = {key(g) for g in groups}
+    themes = {key(c.theme) for c in REGISTRY.values()}
+    if want - themes:
+        raise ValueError(f"unknown characteristic groups {sorted(want - themes)}; themes are {sorted(themes)}")
+    names = {n for n, c in REGISTRY.items() if key(c.theme) in want}
+    keep = [i for i, f in enumerate(p.features) if f.split("_", 1)[-1] not in names or f == "rf"]
+    return replace(p, X=p.X[:, :, keep].contiguous(), features=[p.features[i] for i in keep])
