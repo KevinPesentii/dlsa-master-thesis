@@ -17,6 +17,7 @@ python scripts/build_europe_universe.py --config configs/europe17_data.yaml   # 
 python scripts/fetch_europe_raw.py --configs configs/europe17_data.yaml configs/europe12_data.yaml --tables funda daily fx
 python scripts/fetch_europe_raw.py --configs configs/europe17_data.yaml configs/europe12_data.yaml --tables jkp   # in parallel
 python scripts/build_europe_dataset.py --config configs/europe17_data.yaml    # stage 2 (and europe12)
+python scripts/fill_europe_holidays.py --config configs/europe17_data.yaml    # stage 2b: holfill/ (and europe12)
 python scripts/report_europe_availability.py --configs configs/europe17_data.yaml configs/europe12_data.yaml
 ```
 WRDS scripts run in the `py3.12-4338` env through `conda run` (its python.exe alone exits
@@ -27,6 +28,17 @@ Data: `data/europe/private/` = the shared WRDS store (month-end extract, headers
 `raw/` = daily, g_funda, JKP for the union of both versions' lines, `raw/external/` =
 Eurostat's ECU check file and Ken French's `Europe_3_Factors_Daily_CSV.zip` as downloaded);
 `data/europe17|12/{shared,private}` = each version's tables.
+
+Stage 2b (`src/afe/data/europe_holidays.py`, the headline convention since 2026-10-10):
+before ~2010 Global has no row on a line's own exchange holiday, so the 30-day slot
+lookback drops the whole country for 30 days after each one (members tradable 41-80% of
+days 1993-2009 against 96% after). `data/<version>/holfill/` holds the shared tables with
+gaps of <= 3 pooled days filled by a zero local return (the day's currency move, the
+next day's return divided by it, so the gap compounds unchanged) and `returns.traded`
+False there and on Global's carried closes; runs hold positions on those days
+(`execution.stale_when_closed`). europe17: 25,185 filled member-days, 94% of them
+before 2010. Identical to the 2026-10-07 experiment copy
+`private/exp_holfill_traded`.
 
 ## Decisions
 

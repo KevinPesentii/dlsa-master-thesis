@@ -91,6 +91,8 @@ raw:
 returns:
   delisting_return: null             # Compustat Global has none; open decision (docs/eu_raw_data.md)
   calendar_min_lines: 100            # pooled trading day: >= this many traded closes in the pool
+  holiday_fill_max_gap: 3            # stage 2b (scripts/fill_europe_holidays.py): a member's gap of <= 3 pooled
+                                     # days with returns on both sides gets a zero local return, traded False
 
 risk_free:
   # 1-month interbank rates from the Bundesbank, daily, act/360: Frankfurt banks' 1-month
@@ -156,3 +158,4 @@ characteristics:                     # the 39 of the US build; Spread is the Cor
 output:
   dir: data/europe17/shared          # returns / universe / features / market / rf / fx: downstream
   inspect_dir: data/europe17/private # cap table, ranking, lines, JKP table, characteristics, reports
+  holfill_dir: data/europe17/holfill   # stage 2b: the schema tables with holidays filled (headline runs)
