@@ -15,7 +15,8 @@ produces it, survive in European equities?
 Two legs:
 1. US replication, Jan 1998 - Dec 2021, to validate the pipeline against the paper's
    net Sharpe of 2.28.
-2. Europe, SAME window 1998-2021, Potentially SAME hyperparameters. Reestimation of CNN.
+2. Europe, SAME window 1998-2021, SAME hyperparameters as the US headline. Weights
+   re-estimated on European data.
 
 ## Hard invariants
 
@@ -58,6 +59,21 @@ weaken a test to make code pass.
   PCA + LongConv, K = 1-100: gross SR 2.3-2.8 (sigma 5.3-5.9%) falls to 1.2-1.6 net.
   PCA + OU goes negative net for every K.
 
+## Headline specification (decided 2026-10-10)
+
+- Configs: `configs/us_headline.yaml`, `configs/europe_headline.yaml`. One set of
+  hyperparameters for both markets: Kevin's sobol-009 of the 8-knob space of
+  `configs/europe_search.yaml` (lambda_var 4.8, input_scale 0.313, lambda_ridge 8.19e-4,
+  cumulative input / window_vol, no score temperature, level_hidden 0, batch 63; the
+  rest is Table 4).
+- Europe: europe17 (all 17 exchange countries), top 200 by prior-month cap, ECU to 1998 /
+  EUR after, training from 1993. europe12 is a robustness row.
+- Europe holidays: gaps of <= 3 pooled days filled with a zero local return (stage 2b,
+  `scripts/fill_europe_holidays.py` -> `data/<market>/holfill/`) and positions held on
+  every non-traded close (`execution.stale_when_closed`). `data/<market>/shared/` stays
+  the unfilled build, for the robustness row.
+- Execution lag 0 (the paper's timing); lag 1 is a robustness row.
+
 ## Trading costs: limits, not replication
 
 The thesis does NOT reproduce European execution costs one for one. That needs intraday
@@ -79,8 +95,10 @@ quote and venue data and a calibrated impact model, none of which we are simulat
 - Europe characteristics: Jensen, Kelly & Pedersen Global Factor Data
   (`contrib.global_factor` on WRDS). Forward-fill monthly to daily as in the US build.
 - Europe evaluation factors: Fama-French international five-factor; JKP as cross-check.
-- European universe: 500 largest pooled across AT BE DK FI FR DE IE IT NL NO PT ES SE
-  CH GB, point in time monthly, returns in EUR with USD as robustness.
+- European universe: 200 largest pooled across the 17 exchange countries of europe17
+  (GB DE FR CH NL IT ES SE BE DK FI NO IE PT AT LU GR), point in time monthly, returns
+  in ECU/EUR with USD as robustness. (The proposal's 500 was replaced on 2026-10-10:
+  EU rank ~125-193 has the cap of the US 500th.)
 
 OPEN, to settle before the feature builder is written: JKP's European characteristics do
 not map one to one onto the 39 US Chen-Pelger-Zhu definitions. Current plan is the
