@@ -19,6 +19,8 @@ Tables (all names as on WRDS PostgreSQL):
   crsp.ccmxpf_lnkhist      CRSP-Compustat link (permno <-> gvkey with date ranges).
   comp.funda               Compustat annual fundamentals, the items the characteristics need.
   ff.factors_daily/monthly Fama-French three factors + momentum + risk-free rate.
+  ff.fivefactors_daily/monthly  five factors (+ rmw, cma) + momentum + rf, for the
+                           evaluation regressions only (`fetch_ff5_factors`, 2026-10-10).
 
 The CRSP pulls keep every share class and issuer type that is a plain common share
 (sharetype NS, securitytype EQTY, securitysubtype COM, regular-way, actively trading)
@@ -187,6 +189,13 @@ def fetch_compustat_annual(db, start_year: int, end_year: int) -> pd.DataFrame:
 def fetch_ff_factors(db) -> tuple[pd.DataFrame, pd.DataFrame]:
     daily = db.raw_sql("select date, mktrf, smb, hml, rf, umd from ff.factors_daily", date_cols=["date"])
     monthly = db.raw_sql("select date, mktrf, smb, hml, rf, umd from ff.factors_monthly", date_cols=["date"])
+    return daily, monthly
+
+
+def fetch_ff5_factors(db) -> tuple[pd.DataFrame, pd.DataFrame]:
+    cols = "date, mktrf, smb, hml, rmw, cma, rf, umd"
+    daily = db.raw_sql(f"select {cols} from ff.fivefactors_daily", date_cols=["date"])
+    monthly = db.raw_sql(f"select {cols} from ff.fivefactors_monthly", date_cols=["date"])
     return daily, monthly
 
 

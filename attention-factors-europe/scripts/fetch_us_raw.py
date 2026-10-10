@@ -1,7 +1,7 @@
 """Stage 1: pull the raw US tables from WRDS once.
 
     python scripts/fetch_us_raw.py [--config configs/us_data.yaml] [--years 2025 2024 ...] [--delisting]
-                                   [--extra] [--global-home]
+                                   [--extra] [--global-home] [--ff5]
 
 Resumable: yearly CRSP daily files that already exist are skipped, so a dropped
 connection costs one year, not the whole pull. --years pulls only the listed daily years
@@ -11,8 +11,9 @@ of the range in parallel. --delisting pulls only crsp_delisting.parquet (seconds
 (depositary receipts, units, trusts; receipt caps from comp.secm; funda currency; FX;
 see wrds_us.pull_extra) to an existing raw directory, with manifest_extra.json.
 --global-home adds the receipt issuers' Compustat Global month-end rows (global_home/, see
-wrds_us.pull_global_home; needs --extra's files). Output goes to raw.dir from the config,
-with a manifest.json.
+wrds_us.pull_global_home; needs --extra's files). --ff5 adds ff5_daily / ff5_monthly.parquet
+(Fama-French five factors + momentum, for the evaluation regressions). Output goes to
+raw.dir from the config, with a manifest.json.
 """
 
 from __future__ import annotations
@@ -36,13 +37,18 @@ def main():
     ap.add_argument("--delisting", action="store_true", help="pull only the delisting-day rows")
     ap.add_argument("--extra", action="store_true", help="pull the paper-style universe additions")
     ap.add_argument("--global-home", action="store_true", help="pull the receipt issuers' home-market rows")
+    ap.add_argument("--ff5", action="store_true", help="pull only the Fama-French five factors + momentum")
     args = ap.parse_args()
     cfg = yaml.safe_load(Path(args.config).read_text())
     raw_dir = ROOT / cfg["raw"]["dir"]
 
     db = compustat_us.connect(ROOT)  # same .env / pgpass login as the universe build
     try:
-        if args.global_home:
+        if args.ff5:
+            for name, df in zip(("ff5_daily", "ff5_monthly"), wrds_us.fetch_ff5_factors(db)):
+                df.to_parquet(raw_dir / f"{name}.parquet", index=False)
+                print(f"{name}: {len(df):,} rows, {df['date'].min().date()} .. {df['date'].max().date()}", flush=True)
+        elif args.global_home:
             m = wrds_us.pull_global_home(db, raw_dir, cfg["raw"]["start_year"], cfg["raw"]["end_year"])
             print(m["tables"])
         elif args.extra:
