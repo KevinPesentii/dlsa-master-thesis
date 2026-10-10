@@ -1,0 +1,42 @@
+# Parametric benchmark of Epstein, Wang, Choi & Pelger (2025), Table 2, "PCA + OU Thresh":
+# the PCA residuals of the two-step benchmark (same stage one as configs/us_pca_longconv.yaml)
+# traded with the Ornstein-Uhlenbeck threshold rule of Avellaneda & Lee (2010), "the same
+# implementation as in" Guijarro-Ordonez, Pelger & Zanotti (their Section III.C, Appendix B).
+# Nothing is trained. docs/pca_ou_threshold_benchmark.md has the rule and its sources.
+#   python scripts/build_pca_residuals.py --config configs/us_pca_longconv.yaml   (shared stage one)
+#   python scripts/run_pca_longconv.py    --config configs/us_pca_ou.yaml [--K 30]
+
+market: us
+seed: 0                          # recorded only: the rule is deterministic
+
+data:
+  dir: data/us/shared
+  history_start: 1989-01-01
+  raw_daily_dir: data/us/shared/raw/crsp_daily
+
+sample:
+  start: 1998-01-01              # first out-of-sample day
+  end: 2021-12-31
+
+factors:
+  kind: pca
+  n_factors: [1, 3, 5, 8, 10, 15, 30, 100]   # the K column of Table 2
+  cov_window: 252
+  loading_window: 252            # read back from the stage-one meta.json at run time
+  out_dir: data/us/shared/pca_l252
+
+policy:
+  kind: ou_threshold
+  residual_lookback: 30          # the OU is fitted to the cumulative path of the last 30 residuals
+  input: cumulative              # required: GPZ's preprocess_ou fits the cumulative path
+  input_scale: 1.0               # s-score and R2 are scale-free; kept at 1 for the record
+  c_thresh: 1.25                 # |s| that opens a position; GPZ validate over {1, 1.25, 1.5}
+  c_crit: 0.25                   # minimum R2 of the AR(1) fit; over {0.25, 0.5, 0.75}
+
+objective:                       # evaluation only
+  turnover_cost: 0.0005          # ||w_t - w_{t-1}||_1
+  short_cost: 0.0001             # ||max(-w_t, 0)||_1
+
+evaluation:
+  save_weights: true
+  cost_grid_bps: [0, 1, 2, 5, 10, 20, 30, 50]
