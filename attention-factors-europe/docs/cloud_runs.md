@@ -172,16 +172,22 @@ On the laptop (PowerShell), from the branch to run, committed and pushed:
 cd C:\Users\henri\Desktop\SSE\masterThesis\Code\dlsa-europe\attention-factors-europe
 $PY = "C:\Users\henri\miniconda3\envs\afe\python.exe"
 & $PY scripts\run_matrix.py --dry-run | Select-Object -First 3    # 252 jobs
-& $PY scripts\make_bundle.py --out $env:TEMP\afe_bundle             # ~0.3 GB: afe.bundle, afe_data.tar, SHA256SUMS
+& $PY scripts\make_bundle.py --out $env:TEMP\afe_bundle             # ~0.3 GB: afe_data.tar, SHA256SUMS, COMMIT
 $IP = "1.2.3.4"
-scp $env:TEMP\afe_bundle\afe.bundle $env:TEMP\afe_bundle\afe_data.tar $env:TEMP\afe_bundle\SHA256SUMS "ubuntu@${IP}:~"
+scp $env:TEMP\afe_bundle\afe_data.tar $env:TEMP\afe_bundle\SHA256SUMS $env:TEMP\afe_bundle\COMMIT "ubuntu@${IP}:~"
 ssh "ubuntu@$IP"
 ```
+
+The code is cloned on the machine from the public fork; only the licensed data is copied.
+(Without GitHub access: `make_bundle.py --git-bundle`, copy `afe.bundle` too, and clone
+from `~/afe.bundle` instead.)
 
 On the machine:
 
 ```bash
-git clone -b ops/thesis-runs ~/afe.bundle ~/dlsa       # the branch make_bundle printed
+read BRANCH COMMIT < ~/COMMIT
+git clone --depth 1 -b $BRANCH https://github.com/KevinPesentii/dlsa-master-thesis.git ~/dlsa
+[ "$(git -C ~/dlsa rev-parse HEAD)" = "$COMMIT" ] && echo "commit OK" || echo "COMMIT DIFFERS: stop"
 cd ~/dlsa/attention-factors-europe
 tar -xf ~/afe_data.tar && sha256sum -c ~/SHA256SUMS     # every line "OK"
 bash scripts/cloud_setup.sh                              # ends with "afe ok, torch 2.14.0+cpu"

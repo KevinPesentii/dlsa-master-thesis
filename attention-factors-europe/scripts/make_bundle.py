@@ -67,9 +67,7 @@ def main():
     upstream = subprocess.run(["git", "rev-parse", "@{u}"], cwd=ROOT, text=True, capture_output=True).stdout.strip()
     if upstream != commit:
         print(f"WARNING: {branch} at {commit[:10]} is not what origin has ({upstream[:10] or 'no upstream'}); push it")
-    (out / "COMMIT").write_text(f"{branch} {commit}
-", newline="
-")
+    (out / "COMMIT").write_text(f"{branch} {commit}\n", newline="\n")
     if args.git_bundle:
         subprocess.run(["git", "bundle", "create", str(out / "afe.bundle"), branch], cwd=ROOT, check=True)
     sums = []
