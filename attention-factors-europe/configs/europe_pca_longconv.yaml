@@ -1,0 +1,59 @@
+# Two-step benchmark (Table 2, "PCA Factors") on the headline European data: europe17 top 200
+# with holidays filled (data/europe17/holfill, stage 2b), training from 1993 as the attention
+# runs (configs/europe_headline.yaml), positions held on non-traded closes. Stage one as
+# configs/us_pca_longconv.yaml (252-day correlation PCA, 252-day loadings); the policy is
+# the headline LongConv (cumulative input / window_vol, input_scale 0.313, batch 63), so the
+# two rows differ only in the factors.
+#   python scripts/build_pca_residuals.py --config configs/europe_pca_longconv.yaml
+#   python scripts/run_pca_longconv.py    --config configs/europe_pca_longconv.yaml [--K 30]
+
+market: europe17
+seed: 0
+
+data:
+  dir: data/europe17/holfill
+  rf_file: data/europe17/shared/rf_daily.parquet   # Bundesbank 1M rate, calendar-day accrual (stage 2)
+
+sample:
+  start: 1998-01-01              # first out-of-sample day
+  end: 2021-12-31
+  data_start: 1993-01-01         # no training date before this (as configs/europe_headline.yaml)
+
+factors:
+  kind: pca
+  n_factors: [1, 3, 5, 8, 10, 15, 30, 100]
+  cov_window: 252
+  loading_window: 252
+  out_dir: data/europe17/holfill/pca_l252
+
+policy:
+  kind: longconv
+  layers: 1
+  hidden: 32
+  residual_lookback: 30
+  dropout: 0.1
+  lambda_squash: 0.001
+  input: cumulative
+  input_normalise: window_vol
+  input_scale: 0.313
+
+objective:
+  turnover_cost: 0.0005
+  short_cost: 0.0001
+  subtract_rf: true
+
+execution:
+  lag: 0
+  stale_when_closed: true        # evaluation: a closed name keeps its position (run_pca_longconv.execute)
+
+training:
+  window_years: 8
+  refit: annual
+  epochs: 30
+  lr: 0.003
+  weight_decay: 0.05
+  batch_days: 63
+
+evaluation:
+  save_weights: true
+  cost_grid_bps: [0, 1, 2, 5, 10, 20, 30, 50]

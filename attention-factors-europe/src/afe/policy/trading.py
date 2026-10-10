@@ -103,9 +103,11 @@ def sharpe_loss(net: torch.Tensor, rf: torch.Tensor, valid: torch.Tensor, subtra
 
 
 def make_windows(resid: np.ndarray, idx: np.ndarray, n: np.ndarray, t0: int, t1: int, L: int,
-                 scale: float, cumulative: bool):
+                 scale: float, cumulative: bool, normalise: str = "none", vol_floor: float = 1e-4):
     """Residual windows for dates t0..t1-1 in slot layout: X[t, s] = resid[t-L : t, idx[t, s]].
-    A slot is tradable when it is in the PCA set and all L residuals are finite."""
+    A slot is tradable when it is in the PCA set and all L residuals are finite. `normalise`
+    "window_vol" divides each window by its own residual volatility before the cumulative sum,
+    as model/attention_pipeline.residual_windows does, so both Table 2 rows see one input."""
     T = t1 - t0
     S = idx.shape[1]
     X = np.zeros((T, S, L), dtype=np.float32)
@@ -121,6 +123,10 @@ def make_windows(resid: np.ndarray, idx: np.ndarray, n: np.ndarray, t0: int, t1:
         win = np.where(ok[None, :], win, pad)
         X[i, :m] = win.T
         tradable[i, :m] = ok
+    if normalise == "window_vol":
+        X = X / np.maximum(X.std(axis=-1, keepdims=True), vol_floor)
+    elif normalise != "none":
+        raise ValueError(f"unknown policy.input_normalise: {normalise}")
     if cumulative:
         X = np.cumsum(X, axis=-1)
     return X * scale, tradable

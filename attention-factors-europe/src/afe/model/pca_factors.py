@@ -36,6 +36,7 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+import pyarrow.parquet as pq
 from scipy.linalg import eigh
 
 
@@ -46,13 +47,16 @@ class Panel:
     R: np.ndarray                  # (T, N) float64, NaN where no return
     member: np.ndarray             # (T, N) bool, in the universe on that day
     rf: np.ndarray                 # (T,) float64 daily risk-free rate
+    closed: np.ndarray | None = None  # (T, N) bool, returns.traded False (market closed); None = all traded
 
 
 def load_panel(data_dir: Path, end: str, history_start: str | None = None,
-               raw_daily_dir: Path | None = None) -> Panel:
+               raw_daily_dir: Path | None = None, rf_file: Path | None = None) -> Panel:
     """Wide return panel of the pool plus the universe mask.  Rows before the first
-    universe month are taken from the raw daily files (needed for the first PCA window)."""
-    ret = pd.read_parquet(data_dir / "returns.parquet", columns=["date", "sec_id", "ret"])
+    universe month are taken from the raw daily files (needed for the first PCA window).
+    rf from `rf_file` (date, rf), by default the US build's raw/ff_daily.parquet."""
+    has_traded = "traded" in pq.read_schema(data_dir / "returns.parquet").names
+    ret = pd.read_parquet(data_dir / "returns.parquet", columns=["date", "sec_id", "ret"] + (["traded"] if has_traded else []))
     ret = ret[ret["date"] <= pd.Timestamp(end)]
     pool = np.sort(ret["sec_id"].unique())
     first = ret["date"].min()
@@ -75,9 +79,14 @@ def load_panel(data_dir: Path, end: str, history_start: str | None = None,
     uni_wide = uni.assign(one=1.0).pivot(index="ym", columns="sec_id", values="one").reindex(columns=pool).notna()
     member = uni_wide.reindex(dates.to_period("M"), fill_value=False).to_numpy()
 
-    ff = pd.read_parquet(data_dir / "raw" / "ff_daily.parquet", columns=["date", "rf"])
+    ff = pd.read_parquet(rf_file or data_dir / "raw" / "ff_daily.parquet", columns=["date", "rf"])
     rf = ff.set_index("date")["rf"].astype("float64").reindex(dates).ffill().fillna(0.0).to_numpy()
-    return Panel(dates, pool, R.to_numpy(), member, rf)
+    closed = None
+    if has_traded:
+        nt = ret[~ret["traded"].astype(bool)]
+        closed = (nt.assign(one=True).pivot(index="date", columns="sec_id", values="one")
+                  .reindex(index=dates, columns=pool).notna().to_numpy())
+    return Panel(dates, pool, R.to_numpy(), member, rf, closed)
 
 
 def full_history(R: np.ndarray, window: int) -> np.ndarray:

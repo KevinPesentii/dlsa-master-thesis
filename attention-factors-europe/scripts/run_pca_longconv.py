@@ -59,11 +59,34 @@ class Stage1:
             warnings.simplefilter("ignore", RuntimeWarning)      # days before the universe starts
             self.mkt_ew = np.nanmean(np.where(panel.member, panel.R, np.nan), axis=1)
 
-    def batch(self, t0: int, t1: int, L: int, scale: float, cumulative: bool) -> trading.SlotBatch:
-        X, tradable = trading.make_windows(self.resid, self.idx, self.n, t0, t1, L, scale, cumulative)
+    def batch(self, t0: int, t1: int, L: int, scale: float, cumulative: bool,
+              normalise: str = "none") -> trading.SlotBatch:
+        X, tradable = trading.make_windows(self.resid, self.idx, self.n, t0, t1, L, scale, cumulative, normalise)
         f = lambda a: torch.from_numpy(np.array(a[t0:t1]))  # noqa: E731  (copies out of the memmap)
         return trading.SlotBatch(torch.from_numpy(X), torch.from_numpy(tradable), f(self.V), f(self.B),
                                  f(self.invvol), f(self.idx), f(self.R_slot), f(self.rf), self.n_pool)
+
+
+def window_start(cfg: dict, year: int) -> pd.Timestamp:
+    """As run_attention_us.window_start: `window_years` back, never before sample.data_start."""
+    start = pd.Timestamp(year - cfg["training"]["window_years"], 1, 1)
+    data_start = cfg["sample"].get("data_start")
+    return max(start, pd.Timestamp(data_start)) if data_start else start
+
+
+def execute(wp: np.ndarray, panel: pca_factors.Panel, t_idx: np.ndarray, cfg: dict) -> np.ndarray:
+    """Pool weights held, as run_attention_us.daily_book: the targets traded `execution.lag`
+    closes later, a name keeping its position at a close its market did not trade
+    (returns.traded False) when execution.stale_when_closed. Evaluation only; the policy is
+    trained on its targets."""
+    e = cfg.get("execution") or {}
+    lag, stale = int(e.get("lag", 0)), bool(e.get("stale_when_closed", True))
+    closed = None
+    if stale and panel.closed is not None:
+        closed = torch.from_numpy(panel.closed[int(t_idx[0]) - 1:int(t_idx[-1])])
+    if not lag and closed is None:
+        return wp
+    return trading.execute(torch.from_numpy(wp), closed, lag).numpy()
 
 
 def sub(b: trading.SlotBatch, s: int, e: int) -> trading.SlotBatch:
@@ -105,6 +128,15 @@ def train_one_window(model, b: trading.SlotBatch, cfg: dict, rng: np.random.Gene
             log(f"      epoch {epoch + 1:2d}: block Sharpe (daily) {-np.mean(losses):.3f}")
 
 
+def load_panel(cfg: dict, end: str) -> pca_factors.Panel:
+    """The return panel of the config: data.dir, plus the optional raw pre-history
+    (data.history_start / raw_daily_dir, US) and rf file (data.rf_file, Europe)."""
+    d = cfg["data"]
+    opt = lambda k: ROOT / d[k] if d.get(k) else None  # noqa: E731
+    return pca_factors.load_panel(ROOT / d["dir"], end, str(d["history_start"]) if d.get("history_start") else None,
+                                  opt("raw_daily_dir"), opt("rf_file"))
+
+
 @torch.no_grad()
 def evaluate_window(model, b: trading.SlotBatch):
     model.eval()
@@ -121,6 +153,7 @@ def run_K(K: int, cfg: dict, seed: int, panel: pca_factors.Panel, years: list[in
     run_dir = runs.create_run(f"pca_{kind}_K{K}_s{seed}", {**cfg, "K": K, "years": years}, seed)
     log(f"K={K}: run dir {run_dir}")
     L, scale, cum = pc["residual_lookback"], pc["input_scale"], pc["input"] == "cumulative"
+    norm = pc.get("input_normalise", "none")
     if kind == "ou_threshold" and not cum:
         raise ValueError("the OU model is fitted to the cumulative residual path (policy.input)")
     torch.manual_seed(seed)
@@ -132,15 +165,15 @@ def run_K(K: int, cfg: dict, seed: int, panel: pca_factors.Panel, years: list[in
         t_te1 = dates.searchsorted(pd.Timestamp(year + 1, 1, 1))
         t0 = time.time()
         if kind == "longconv":
-            t_tr0 = dates.searchsorted(pd.Timestamp(year - cfg["training"]["window_years"], 1, 1))
-            train_b = s1.batch(t_tr0, t_te0, L, scale, cum)
+            t_tr0 = dates.searchsorted(window_start(cfg, year))
+            train_b = s1.batch(t_tr0, t_te0, L, scale, cum, norm)
             log(f"  {year}: train {dates[t_tr0]:%Y-%m-%d}..{dates[t_te0 - 1]:%Y-%m-%d} "
                 f"({t_te0 - t_tr0} days, {int(train_b.tradable.sum(1).float().mean())} tradable/day), "
                 f"test {t_te1 - t_te0} days")
             model = LongConvPolicy(pc["hidden"], L, pc["dropout"], pc["lambda_squash"], pc["layers"])
             train_one_window(model, train_b, cfg, rng, log)
             del train_b
-            test_b = s1.batch(t_te0, t_te1, L, scale, cum)
+            test_b = s1.batch(t_te0, t_te1, L, scale, cum, norm)
             w = evaluate_window(model, test_b)
         else:
             test_b = s1.batch(t_te0, t_te1, L, scale, cum)
@@ -155,14 +188,17 @@ def run_K(K: int, cfg: dict, seed: int, panel: pca_factors.Panel, years: list[in
         log(f"      done in {time.time() - t0:.0f}s")
 
     t_idx = np.concatenate(date_all)
-    wp = np.concatenate(w_pool_all)
+    wp = execute(np.concatenate(w_pool_all), panel, t_idx, cfg)
     gross = (wp * s1.R_pool[t_idx]).sum(axis=1)
     turnover = np.abs(np.diff(wp, axis=0, prepend=np.zeros((1, wp.shape[1]), dtype=wp.dtype))).sum(axis=1)
     short = np.clip(-wp, 0, None).sum(axis=1)
     daily = pd.DataFrame({"date": dates[t_idx], "gross": gross, "turnover": turnover, "short": short,
                           "n_traded": (wp != 0).sum(axis=1), "mkt_ew": s1.mkt_ew[t_idx], "rf": s1.rf[t_idx]})
     m = metrics.performance(daily, ob["turnover_cost"], ob["short_cost"], ev["cost_grid_bps"])
-    m.update({"K": K, "seed": seed, "policy": kind, "policy_input": pc["input"],
+    e = cfg.get("execution") or {}
+    m.update({"K": K, "seed": seed, "policy": kind, "policy_input": pc["input"], "policy_input_normalise": norm,
+              "execution_lag": int(e.get("lag", 0)),
+              "stale_when_closed": bool(e.get("stale_when_closed", True)) and panel.closed is not None,
               "factor_model": f"pca_cov{meta['cov_window']}_loadings{meta['loading_window'] or 'projection'}"})
     runs.write_metrics(run_dir, m)
     daily.to_csv(run_dir / "oos_daily.csv", index=False)
@@ -209,8 +245,7 @@ def main():
     years = args.years or list(range(y0, y1 + 1))
 
     log = lambda s: print(s, flush=True)  # noqa: E731
-    panel = pca_factors.load_panel(ROOT / cfg["data"]["dir"], str(cfg["sample"]["end"]),
-                                   str(cfg["data"]["history_start"]), ROOT / cfg["data"]["raw_daily_dir"])
+    panel = load_panel(cfg, str(cfg["sample"]["end"]))
     log(f"panel {panel.R.shape}, torch threads {torch.get_num_threads()}")
     log("      K    SR     mu   sigma   SRnet  munet signet   beta")
     for K in Ks:

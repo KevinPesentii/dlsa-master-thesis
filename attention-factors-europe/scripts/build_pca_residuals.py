@@ -21,6 +21,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
 from afe.model import pca_factors  # noqa: E402
+from run_pca_longconv import load_panel  # noqa: E402
 
 
 def main():
@@ -39,8 +40,7 @@ def main():
     lw = fc["loading_window"] if args.loading_window is None else args.loading_window
 
     t0 = time.time()
-    panel = pca_factors.load_panel(ROOT / cfg["data"]["dir"], end, str(cfg["data"]["history_start"]),
-                                   ROOT / cfg["data"]["raw_daily_dir"])
+    panel = load_panel(cfg, end)
     print(f"panel: {panel.R.shape[0]} days x {panel.R.shape[1]} names, "
           f"{panel.dates[0]:%Y-%m-%d} to {panel.dates[-1]:%Y-%m-%d}, "
           f"members/day {panel.member.sum(1)[panel.member.any(1)].mean():.0f}  ({time.time() - t0:.0f}s)")
