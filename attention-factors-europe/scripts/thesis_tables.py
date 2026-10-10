@@ -41,8 +41,8 @@ SUBPERIODS = [("1998-2009", "1998", "2009"), ("2010-2021", "2010", "2021")]
 # statutory taxes on purchases (the floor of CLAUDE.md): country -> [(from, rate)]
 TAXES = {"GB": [("1900-01-01", 0.005)], "FR": [("2012-08-01", 0.002), ("2017-01-01", 0.003)],
          "IT": [("2013-03-01", 0.0012), ("2014-01-01", 0.0010)]}
-COUNTRY = {"GB": "United Kingdom", "FR": "France", "DE": "Germany", "CH": "Switzerland", "NL": "Netherlands",
-           "IT": "Italy", "ES": "Spain", "SE": "Sweden"}   # returns.country is ISO 3166 alpha-2
+COUNTRY = {"GBR": "United Kingdom", "FRA": "France", "DEU": "Germany", "CHE": "Switzerland", "NLD": "Netherlands",
+           "ITA": "Italy", "ESP": "Spain", "SWE": "Sweden"}   # universe_asof.country (ISO alpha-3)
 
 INDEX: list[dict] = []
 
@@ -115,7 +115,7 @@ def t01_sample(out: Path) -> None:
     num, disp = {}, {}
     comp = {}
     for m, mk in [("us", "us"), ("eu", "europe17")]:
-        u = td.universe_by_month(td.ROOT / DATA[m], mk)
+        u = td.universe_by_month(mk)
         u["year"] = u["date"].dt.year
         jan = u[u["date"].dt.month == 1]
         g = jan.groupby("year")["cap_usd_bn"]
@@ -141,18 +141,18 @@ def t01_sample(out: Path) -> None:
     disp_df.columns = [f"{a} {b}" for a, b in disp_df.columns]
     disp_df.index.name = "January"
     write(out, "T01_sample", num_df, disp_df, "Table 1. The two universes",
-          "Members on the first trading day of January and their market capitalisation in billions of USD: "
+          "Members in January and the market capitalisation that ranked them (previous month end), billions of USD: "
           "the 500 largest US listings (paper-style universe, CRSP CIZ) and the 200 largest European companies "
           "of europe17 (17 exchange countries, one line per company, Compustat Global; numeraire converted at "
-          "the day's USD rate).",
-          [f"Distinct companies 1998-2021: US {comp['US']:,}, Europe {comp['Europe']:,}. Capitalisation is the "
-           "previous month's (the ranking variable)."], "data/us/shared, data/europe17/holfill (universe, returns)")
+          "the day's USD rate). US capitalisation is company level (all share classes).",
+          [f"Distinct companies 1998-2021: US {comp['US']:,}, Europe {comp['Europe']:,}."],
+          "data/us/private/universe_asof.parquet, data/europe17/private/universe_asof.parquet")
     share.index.name = "January"
     write(out, "T01b_europe_countries", share, share.map(lambda x: fmt(x, 1)),
           "Table 1b. Country composition of the European universe",
-          "Share of the 200 members by exchange country, percent, first trading day of January.",
+          "Share of the 200 members by country, percent, January.",
           ["Other: Belgium, Denmark, Finland, Norway, Ireland, Portugal, Austria, Luxembourg and Greece."],
-          "data/europe17/holfill/universe.parquet, returns.parquet (country)")
+          "data/europe17/private/universe_asof.parquet (country)")
 
 
 def t02_characteristics(out: Path) -> None:

@@ -174,19 +174,21 @@ def str_factor(data_dir: Path, lo: float = 0.3, hi: float = 0.7) -> pd.Series:
 # ------------------------------------------------------------------ universe
 
 
-def universe_by_month(data_dir: Path, market: str, root: Path = ROOT) -> pd.DataFrame:
-    """Members on each month's first trading day: count, smallest / median / largest cap in USD
-    bn (US build: USD millions; Europe: numeraire millions over numeraire per USD), country."""
-    u = pd.read_parquet(data_dir / "universe.parquet")
-    first = u.groupby("month").size().index
-    cols = ["date", "sec_id", "mktcap_lag"] + (["country"] if market != "us" else [])
-    r = pd.read_parquet(data_dir / "returns.parquet", columns=cols)
-    r = r[r["date"].isin(first)]
-    m = u.rename(columns={"month": "date"}).merge(r, on=["date", "sec_id"], how="left")
-    if market != "us":
-        fx = pd.read_parquet(root / f"data/{market}/shared/fx_to_numeraire_daily.parquet")
-        usd = fx[fx["currency"] == "USD"].set_index("date")["eur_per_unit"].astype("float64").sort_index()
-        m["cap_usd_bn"] = m["mktcap_lag"] / usd.reindex(usd.index.union(first)).ffill().reindex(m["date"]).to_numpy() / 1e3
-    else:
-        m["cap_usd_bn"] = m["mktcap_lag"] / 1e3
-    return m
+def universe_by_month(market: str, root: Path = ROOT) -> pd.DataFrame:
+    """Members of each month (dated the month's first calendar day) with the capitalisation that ranked them (previous month end, from
+    the build's as-of table), in billions of USD, and their country. US: company level (CRSP
+    cap_co, USD millions); Europe: numeraire millions over numeraire per USD on the month's
+    first trading day. (returns.mktcap_lag is not used: a few European rows carry one share
+    class only, e.g. SEB on 1998-06-01.)"""
+    if market == "us":
+        a = pd.read_parquet(root / "data/us/private/universe_asof.parquet")
+        return pd.DataFrame({"date": a["month"].dt.to_timestamp(), "sec_id": a["primary_permno"].astype(str),
+                             "cap_rank": a["cap_rank"], "cap_usd_bn": a["cap_co"] / 1e3, "country": "USA"})
+    a = pd.read_parquet(root / f"data/{market}/private/universe_asof.parquet")
+    fx = pd.read_parquet(root / f"data/{market}/shared/fx_to_numeraire_daily.parquet")
+    usd = fx[fx["currency"] == "USD"].set_index("date")["eur_per_unit"].astype("float64").sort_index()
+    days = pd.DatetimeIndex(a["month_start"].unique())
+    x = usd.reindex(usd.index.union(days)).ffill()
+    return pd.DataFrame({"date": a["month"].dt.to_timestamp(), "sec_id": a["gvkey"], "cap_rank": a["cap_rank"],
+                         "cap_usd_bn": a["mktcap"] / x.reindex(a["month_start"]).to_numpy() / 1e3,
+                         "country": a["country"]})
