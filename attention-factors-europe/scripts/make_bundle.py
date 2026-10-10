@@ -1,10 +1,12 @@
 """Pack what the thesis matrix needs for an external machine (docs/cloud_runs.md, section 7).
 
-    python scripts/make_bundle.py [--out runs/_bundle/<stamp>]
+    python scripts/make_bundle.py [--out runs/_bundle/<stamp>] [--git-bundle]
 
-Writes three files:
-  afe.bundle      the current branch as a git bundle (clone it; run manifests then name
-                  this commit). The tree must be clean.
+The code comes from the public fork (git clone --depth 1 -b <branch>), so only the data
+travels. The tree must be clean and the branch pushed. Writes:
+  COMMIT          branch and commit to clone; the machine checks `git rev-parse HEAD`.
+  afe.bundle      only with --git-bundle (a machine without GitHub access): the branch
+                  with its whole history, ~0.8 GB.
   afe_data.tar    the schema tables the runners read, under data/ as in the repo. The PCA
                   stage ones are NOT included: the matrix rebuilds them (prep jobs), which
                   is faster than moving 6 GB.
@@ -50,6 +52,7 @@ def sha256(path: Path) -> str:
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--out", type=Path)
+    ap.add_argument("--git-bundle", action="store_true", help="also write the branch as a git bundle")
     args = ap.parse_args()
     commit = runs.git_commit(ROOT)
     if commit.endswith("-dirty"):
@@ -61,7 +64,14 @@ def main():
     if missing:
         raise SystemExit(f"missing: {missing}")
 
-    subprocess.run(["git", "bundle", "create", str(out / "afe.bundle"), branch], cwd=ROOT, check=True)
+    upstream = subprocess.run(["git", "rev-parse", "@{u}"], cwd=ROOT, text=True, capture_output=True).stdout.strip()
+    if upstream != commit:
+        print(f"WARNING: {branch} at {commit[:10]} is not what origin has ({upstream[:10] or 'no upstream'}); push it")
+    (out / "COMMIT").write_text(f"{branch} {commit}
+", newline="
+")
+    if args.git_bundle:
+        subprocess.run(["git", "bundle", "create", str(out / "afe.bundle"), branch], cwd=ROOT, check=True)
     sums = []
     with tarfile.open(out / "afe_data.tar", "w") as tar:
         for f in FILES:
