@@ -146,3 +146,66 @@ rerun alone (`--first Y --last Y`) and merged with the others:
 
 Numbers from different CPUs differ in the last digits (float rounding), which is far
 below seed noise.
+
+## 7. The thesis matrix (2026-10-10)
+
+`configs/thesis_matrix.yaml` is the whole set of runs behind the thesis tables, fixed
+before any of it ran: the headline grid (attention, PCA + LongConv, PCA + OU, every K, five
+seeds, both markets), the characteristic-group ablation, the robustness rows and the
+2022-2025 holdout, 252 jobs. `scripts/run_matrix.py` runs them on one machine: each job is
+one full sequential runner process (all years, so lagged and held positions cross year
+ends exactly as on the laptop; no year merging), longest first, as many at a time as
+`--jobs` and the memory budget allow. The two PCA stage ones are built on the machine first.
+
+Size: about 150 laptop process-hours by the matrix's own rough cost model (US attention
+K=30 about an hour per job at 2 threads; Europe about half; K=100 about twice). Memory:
+about 5.5 GB per US attention job, 3 GB per Europe job (estimates with margin; the US
+validation runner peaked at 4.4 GB). Machine: **m7i.24xlarge** (96 vCPU, 384 GiB) runs 46
+jobs x 2 threads without hitting the memory budget, so expect roughly 3-5 hours. A
+c7i.24xlarge (192 GiB) also works; the budget then keeps about 28 US jobs in flight.
+Because a reclaimed spot machine loses everything, prefer **on-demand** for this run, or
+copy `runs/` home every hour or two (the ledger lets a new machine skip what came back).
+
+On the laptop (PowerShell), from the branch to run, committed and pushed:
+
+```powershell
+cd C:\Users\henri\Desktop\SSE\masterThesis\Code\dlsa-europe\attention-factors-europe
+$PY = "C:\Users\henri\miniconda3\envs\afe\python.exe"
+& $PY scripts\run_matrix.py --dry-run | Select-Object -First 3    # 252 jobs
+& $PY scripts\make_bundle.py --out $env:TEMP\afe_bundle             # ~0.3 GB: afe.bundle, afe_data.tar, SHA256SUMS
+$IP = "1.2.3.4"
+scp $env:TEMP\afe_bundle\afe.bundle $env:TEMP\afe_bundle\afe_data.tar $env:TEMP\afe_bundle\SHA256SUMS "ubuntu@${IP}:~"
+ssh "ubuntu@$IP"
+```
+
+On the machine:
+
+```bash
+git clone -b ops/thesis-runs ~/afe.bundle ~/dlsa       # the branch make_bundle printed
+cd ~/dlsa/attention-factors-europe
+tar -xf ~/afe_data.tar && sha256sum -c ~/SHA256SUMS     # every line "OK"
+bash scripts/cloud_setup.sh                              # ends with "afe ok, torch 2.14.0+cpu"
+PY=~/afe-venv/bin/python
+$PY scripts/run_matrix.py --smoke --jobs 16              # builds both PCA stage ones (~20 min), then
+                                                         # every spec once at 1 epoch; ends "0 failed"
+tmux new -s afe
+$PY scripts/run_matrix.py --jobs 46 --threads 2 2>&1 | tee runs/matrix_console.log
+```
+
+Progress: `tail -f runs/matrix_console.log`, `htop`, one log per job in
+`runs/_matrix/thesis/logs/`. Restarting the same command skips finished jobs; add
+`--retry-failed` to rerun failures (their logs say why). `--groups headline` (or ablation,
+robustness, extension) runs a subset. At the end it prints a table by spec and writes
+`runs/_matrix/thesis/summary.csv` (one row per run) and `summary_by_spec.csv` (mean and sd
+over seeds).
+
+Bring everything home (run directories hold the daily series, weights and yearly models;
+several GB) and terminate the machine:
+
+```bash
+tar -czf ~/runs_thesis.tgz -C ~/dlsa/attention-factors-europe runs
+```
+```powershell
+scp "ubuntu@${IP}:~/runs_thesis.tgz" $env:TEMP\
+tar -xzf $env:TEMP\runs_thesis.tgz -C C:\Users\henri\Desktop\SSE\masterThesis\Code\dlsa-europe\attention-factors-europe
+```

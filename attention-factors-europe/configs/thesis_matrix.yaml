@@ -1,0 +1,100 @@
+# The thesis run matrix, fixed 2026-10-10 before any of it runs (pre-registration).
+# scripts/run_matrix.py expands it into one job per (spec, K, seed): one runner process with
+# a resolved config (base config + `use` blocks + `set`), written next to the logs. Every
+# spec is a complete 1998-2021 out-of-sample run unless its `set` moves the sample.
+#   python scripts/run_matrix.py --dry-run          # the job list and its size
+#   python scripts/run_matrix.py --smoke            # every spec once: smallest K, seed 0, 1 epoch, 1 year
+#   python scripts/run_matrix.py --jobs 46 --threads 2
+# Tables and figures each spec feeds: see the thesis skeleton (headline = Tables 4-6, 9 and
+# Figures 3-5; ablation = Table 10; robustness = Table 11; extension = the 2022-25 holdout).
+
+name: thesis
+
+sets:
+  seeds5: [0, 1, 2, 3, 4]
+  seeds3: [0, 1, 2]
+  seed0: [0]
+  K_attention: [1, 3, 5, 8, 15, 30, 100]   # Table 2's attention rows
+  K_pca: [1, 3, 5, 8, 10, 15, 30, 100]     # Table 2's PCA rows
+  K30: [30]
+
+blocks:                          # override blocks, dotted keys into the base config
+  save_models:                   # yearly state_dicts for the factor figures (small)
+    evaluation.save_models: true
+  headline_policy:               # the PCA rows trade with the headline LongConv
+    policy.input: cumulative
+    policy.input_normalise: window_vol
+    policy.input_scale: 0.313
+    training.batch_days: 63
+  sobol035:                      # the US validation-search winner (search run 20260926T104159Z_search_K30)
+    objective.lambda_var: 9.11
+    policy.input_scale: 0.878
+    policy.input_normalise: none
+    model.lambda_ridge: 1.16e-05
+    model.score_std_target: null
+    training.batch_days: 63
+  paper_table4:                  # Table 4 as published; ridge and batch (not in the paper) from us_replication.yaml
+    objective.lambda_var: 100
+    policy.input_scale: 1.0
+    policy.input_normalise: none
+    model.lambda_ridge: 0.0001
+    model.score_std_target: null
+    training.batch_days: 125
+  lag1:
+    execution.lag: 1
+
+prep:                            # stage-one builds the PCA specs wait for; skipped when `done` exists
+  pca_us:
+    script: scripts/build_pca_residuals.py
+    config: configs/us_pca_longconv.yaml
+    done: data/us/shared/pca_l252/meta.json
+    mem_gb: 10
+    cost: 60
+  pca_europe17:
+    script: scripts/build_pca_residuals.py
+    config: configs/europe_pca_longconv.yaml
+    done: data/europe17/holfill/pca_l252/meta.json
+    mem_gb: 4
+    cost: 20
+
+specs:
+  # --- headline: Tables 4-6, Figures 3-5 -------------------------------------------------
+  - {name: us_attention, group: headline, runner: attention, config: configs/us_headline.yaml, K: K_attention, seeds: seeds5, use: [save_models]}
+  - {name: eu_attention, group: headline, runner: attention, config: configs/europe_headline.yaml, K: K_attention, seeds: seeds5, use: [save_models]}
+  - {name: us_pca_longconv, group: headline, runner: pca, config: configs/us_pca_longconv.yaml, K: K_pca, seeds: seeds5, use: [headline_policy], after: pca_us}
+  - {name: eu_pca_longconv, group: headline, runner: pca, config: configs/europe_pca_longconv.yaml, K: K_pca, seeds: seeds5, after: pca_europe17}
+  - {name: us_pca_ou, group: headline, runner: pca, config: configs/us_pca_ou.yaml, K: K_pca, seeds: seed0, after: pca_us}
+  - {name: eu_pca_ou, group: headline, runner: pca, config: configs/europe_pca_ou.yaml, K: K_pca, seeds: seed0, after: pca_europe17}
+
+  # --- ablation: Table 10 (the paper's Table 3), K = 30 -------------------------------------
+  - {name: us_drop_past_returns, group: ablation, runner: attention, config: configs/us_headline.yaml, K: K30, seeds: seeds3, set: {features.drop_groups: [past_returns]}}
+  - {name: us_drop_investment, group: ablation, runner: attention, config: configs/us_headline.yaml, K: K30, seeds: seeds3, set: {features.drop_groups: [investment]}}
+  - {name: us_drop_profitability, group: ablation, runner: attention, config: configs/us_headline.yaml, K: K30, seeds: seeds3, set: {features.drop_groups: [profitability]}}
+  - {name: us_drop_intangibles, group: ablation, runner: attention, config: configs/us_headline.yaml, K: K30, seeds: seeds3, set: {features.drop_groups: [intangibles]}}
+  - {name: us_drop_value, group: ablation, runner: attention, config: configs/us_headline.yaml, K: K30, seeds: seeds3, set: {features.drop_groups: [value]}}
+  - {name: us_drop_trading_frictions, group: ablation, runner: attention, config: configs/us_headline.yaml, K: K30, seeds: seeds3, set: {features.drop_groups: [trading_frictions]}}
+  - {name: eu_drop_past_returns, group: ablation, runner: attention, config: configs/europe_headline.yaml, K: K30, seeds: seeds3, set: {features.drop_groups: [past_returns]}}
+  - {name: eu_drop_investment, group: ablation, runner: attention, config: configs/europe_headline.yaml, K: K30, seeds: seeds3, set: {features.drop_groups: [investment]}}
+  - {name: eu_drop_profitability, group: ablation, runner: attention, config: configs/europe_headline.yaml, K: K30, seeds: seeds3, set: {features.drop_groups: [profitability]}}
+  - {name: eu_drop_intangibles, group: ablation, runner: attention, config: configs/europe_headline.yaml, K: K30, seeds: seeds3, set: {features.drop_groups: [intangibles]}}
+  - {name: eu_drop_value, group: ablation, runner: attention, config: configs/europe_headline.yaml, K: K30, seeds: seeds3, set: {features.drop_groups: [value]}}
+  - {name: eu_drop_trading_frictions, group: ablation, runner: attention, config: configs/europe_headline.yaml, K: K30, seeds: seeds3, set: {features.drop_groups: [trading_frictions]}}
+
+  # --- robustness: Table 11, one change from the headline per row, K = 30 --------------------
+  - {name: us_lag1, group: robustness, runner: attention, config: configs/us_headline.yaml, K: K30, seeds: seeds3, use: [lag1]}
+  - {name: eu_lag1, group: robustness, runner: attention, config: configs/europe_headline.yaml, K: K30, seeds: seeds3, use: [lag1]}
+  - {name: us_pca_longconv_lag1, group: robustness, runner: pca, config: configs/us_pca_longconv.yaml, K: K30, seeds: seeds3, use: [headline_policy, lag1], after: pca_us}
+  - {name: eu_pca_longconv_lag1, group: robustness, runner: pca, config: configs/europe_pca_longconv.yaml, K: K30, seeds: seeds3, use: [lag1], after: pca_europe17}
+  - {name: eu_unfilled, group: robustness, runner: attention, config: configs/europe_headline.yaml, K: K30, seeds: seeds3, set: {data.dir: data/europe17/shared}}
+  - {name: eu_europe12, group: robustness, runner: attention, config: configs/europe_headline.yaml, K: K30, seeds: seeds3, set: {market: europe12, data.dir: data/europe12/holfill}}
+  - {name: us_top200, group: robustness, runner: attention, config: configs/us_headline.yaml, K: K30, seeds: seeds3, set: {sample.universe_size: 200}}
+  - {name: us_raw_input, group: robustness, runner: attention, config: configs/us_headline.yaml, K: K30, seeds: seeds3, set: {policy.input: raw}}
+  - {name: eu_raw_input, group: robustness, runner: attention, config: configs/europe_headline.yaml, K: K30, seeds: seeds3, set: {policy.input: raw}}
+  - {name: us_sobol035, group: robustness, runner: attention, config: configs/us_headline.yaml, K: K30, seeds: seeds3, use: [sobol035]}
+  - {name: eu_sobol035, group: robustness, runner: attention, config: configs/europe_headline.yaml, K: K30, seeds: seeds3, use: [sobol035]}
+  - {name: us_paper_table4, group: robustness, runner: attention, config: configs/us_headline.yaml, K: K30, seeds: seeds3, use: [paper_table4]}
+  - {name: eu_paper_table4, group: robustness, runner: attention, config: configs/europe_headline.yaml, K: K30, seeds: seeds3, use: [paper_table4]}
+
+  # --- extension: 2022-2025, never seen by any choice above ----------------------------------
+  - {name: us_attention_2022_2025, group: extension, runner: attention, config: configs/us_headline.yaml, K: K30, seeds: seeds5, set: {sample.start: 2022-01-01, sample.end: 2025-12-31}}
+  - {name: eu_attention_2022_2025, group: extension, runner: attention, config: configs/europe_headline.yaml, K: K30, seeds: seeds5, set: {sample.start: 2022-01-01, sample.end: 2025-12-31}}
