@@ -152,10 +152,19 @@ below seed noise.
 `configs/thesis_matrix.yaml` is the whole set of runs behind the thesis tables, fixed
 before any of it ran: the headline grid (attention, PCA + LongConv, PCA + OU, every K, five
 seeds, both markets), the characteristic-group ablation, the robustness rows and the
-2022-2025 holdout, 252 jobs. `scripts/run_matrix.py` runs them on one machine: each job is
+2022-2025 holdout: 239 runs. `scripts/run_matrix.py` runs them on one machine: each job is
 one full sequential runner process (all years, so lagged and held positions cross year
 ends exactly as on the laptop; no year merging), longest first, as many at a time as
 `--jobs` and the memory budget allow. The two PCA stage ones are built on the machine first.
+
+Every return uses validated hyperparameters (fit 1990-1995, net Sharpe on 1996-1997). The
+attention headline values are already in `configs/us_headline.yaml` / `europe_headline.yaml`
+(the US search, run on the laptop). Five more searches run on the machine before the runs
+that need them: PCA + LongConv, PCA + OU thresholds, attention with raw input, attention at
+lag 1, PCA + LongConv at lag 1 (`searches:` in the matrix; each uses 8-12 job slots for
+roughly 45 minutes). The runs that do not wait on a search (about 140, the long US
+attention grid among them) start at once. `runs/_matrix/thesis/searches.json` lists what
+each search selected.
 
 Size: about 150 laptop process-hours by the matrix's own rough cost model (US attention
 K=30 about an hour per job at 2 threads; Europe about half; K=100 about twice). Memory:
@@ -171,7 +180,7 @@ On the laptop (PowerShell), from the branch to run, committed and pushed:
 ```powershell
 cd C:\Users\henri\Desktop\SSE\masterThesis\Code\dlsa-europe\attention-factors-europe
 $PY = "C:\Users\henri\miniconda3\envs\afe\python.exe"
-& $PY scripts\run_matrix.py --dry-run | Select-Object -First 3    # 252 jobs
+& $PY scripts\run_matrix.py --dry-run | Select-Object -First 3    # 246 jobs: 2 PCA builds, 5 searches, 239 runs
 & $PY scripts\make_bundle.py --out $env:TEMP\afe_bundle             # ~0.3 GB: afe_data.tar, SHA256SUMS, COMMIT
 $IP = "1.2.3.4"
 scp $env:TEMP\afe_bundle\afe_data.tar $env:TEMP\afe_bundle\SHA256SUMS $env:TEMP\afe_bundle\COMMIT "ubuntu@${IP}:~"
@@ -192,8 +201,8 @@ cd ~/dlsa/attention-factors-europe
 tar -xf ~/afe_data.tar && sha256sum -c ~/SHA256SUMS     # every line "OK"
 bash scripts/cloud_setup.sh                              # ends with "afe ok, torch 2.14.0+cpu"
 PY=~/afe-venv/bin/python
-$PY scripts/run_matrix.py --smoke --jobs 16              # builds both PCA stage ones (~20 min), then
-                                                         # every spec once at 1 epoch; ends "0 failed"
+$PY scripts/run_matrix.py --smoke --jobs 16              # builds both PCA stage ones (~20 min), each search
+                                                         # on 2 points, every spec once at 1 epoch; "0 failed"
 tmux new -s afe
 $PY scripts/run_matrix.py --jobs 46 --threads 2 2>&1 | tee runs/matrix_console.log
 ```

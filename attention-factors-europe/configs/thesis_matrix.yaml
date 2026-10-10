@@ -7,6 +7,16 @@
 #   python scripts/run_matrix.py --jobs 46 --threads 2
 # Tables and figures each spec feeds: see the thesis skeleton (headline = Tables 4-6, 9 and
 # Figures 3-5; ablation = Table 10; robustness = Table 11; extension = the 2022-25 holdout).
+#
+# Every return comes from validated hyperparameters (decided 2026-10-10): selected on the
+# first US training window (fit 1990-1995, score the net Sharpe on 1996-1997), the rule of
+# configs/us_search.yaml, and used unchanged in Europe. The attention headline values are
+# in configs/us_headline.yaml / europe_headline.yaml (the US search run on the laptop);
+# the searches below run on the machine first, and a spec with `hyper:` trades with that
+# search's winner: the PCA benchmarks get their own search, and rows that change how the
+# model trades (raw input, a one-day lag) are re-validated under that change. Rows that
+# change only the data (Europe, europe12, unfilled holidays, US top 200) and the ablation
+# keep the headline values, as the paper's Table 3 does.
 
 name: thesis
 
@@ -21,25 +31,6 @@ sets:
 blocks:                          # override blocks, dotted keys into the base config
   save_models:                   # yearly state_dicts for the factor figures (small)
     evaluation.save_models: true
-  headline_policy:               # the PCA rows trade with the headline LongConv
-    policy.input: cumulative
-    policy.input_normalise: window_vol
-    policy.input_scale: 0.313
-    training.batch_days: 63
-  sobol035:                      # the US validation-search winner (search run 20260926T104159Z_search_K30)
-    objective.lambda_var: 9.11
-    policy.input_scale: 0.878
-    policy.input_normalise: none
-    model.lambda_ridge: 1.16e-05
-    model.score_std_target: null
-    training.batch_days: 63
-  paper_table4:                  # Table 4 as published; ridge and batch (not in the paper) from us_replication.yaml
-    objective.lambda_var: 100
-    policy.input_scale: 1.0
-    policy.input_normalise: none
-    model.lambda_ridge: 0.0001
-    model.score_std_target: null
-    training.batch_days: 125
   lag1:
     execution.lag: 1
 
@@ -57,14 +48,21 @@ prep:                            # stage-one builds the PCA specs wait for; skip
     mem_gb: 4
     cost: 20
 
+searches:                        # scripts/search_validation.py --stage select, on the machine
+  us_raw:   {config: configs/us_search_raw.yaml, workers: 12, mem_gb_per_worker: 2.5}
+  us_lag1:  {config: configs/us_search_lag1.yaml, workers: 12, mem_gb_per_worker: 2.5}
+  pca:      {config: configs/us_search_pca.yaml, workers: 8, mem_gb_per_worker: 3, after: pca_us}
+  pca_lag1: {config: configs/us_search_pca_lag1.yaml, workers: 8, mem_gb_per_worker: 3, after: pca_us}
+  ou:       {config: configs/us_search_ou.yaml, workers: 3, mem_gb_per_worker: 3, after: pca_us}
+
 specs:
   # --- headline: Tables 4-6, Figures 3-5 -------------------------------------------------
   - {name: us_attention, group: headline, runner: attention, config: configs/us_headline.yaml, K: K_attention, seeds: seeds5, use: [save_models]}
   - {name: eu_attention, group: headline, runner: attention, config: configs/europe_headline.yaml, K: K_attention, seeds: seeds5, use: [save_models]}
-  - {name: us_pca_longconv, group: headline, runner: pca, config: configs/us_pca_longconv.yaml, K: K_pca, seeds: seeds5, use: [headline_policy], after: pca_us}
-  - {name: eu_pca_longconv, group: headline, runner: pca, config: configs/europe_pca_longconv.yaml, K: K_pca, seeds: seeds5, after: pca_europe17}
-  - {name: us_pca_ou, group: headline, runner: pca, config: configs/us_pca_ou.yaml, K: K_pca, seeds: seed0, after: pca_us}
-  - {name: eu_pca_ou, group: headline, runner: pca, config: configs/europe_pca_ou.yaml, K: K_pca, seeds: seed0, after: pca_europe17}
+  - {name: us_pca_longconv, group: headline, runner: pca, config: configs/us_pca_longconv.yaml, K: K_pca, seeds: seeds5, hyper: pca, after: pca_us}
+  - {name: eu_pca_longconv, group: headline, runner: pca, config: configs/europe_pca_longconv.yaml, K: K_pca, seeds: seeds5, hyper: pca, after: pca_europe17}
+  - {name: us_pca_ou, group: headline, runner: pca, config: configs/us_pca_ou.yaml, K: K_pca, seeds: seed0, hyper: ou, after: pca_us}
+  - {name: eu_pca_ou, group: headline, runner: pca, config: configs/europe_pca_ou.yaml, K: K_pca, seeds: seed0, hyper: ou, after: pca_europe17}
 
   # --- ablation: Table 10 (the paper's Table 3), K = 30 -------------------------------------
   - {name: us_drop_past_returns, group: ablation, runner: attention, config: configs/us_headline.yaml, K: K30, seeds: seeds3, set: {features.drop_groups: [past_returns]}}
@@ -81,19 +79,15 @@ specs:
   - {name: eu_drop_trading_frictions, group: ablation, runner: attention, config: configs/europe_headline.yaml, K: K30, seeds: seeds3, set: {features.drop_groups: [trading_frictions]}}
 
   # --- robustness: Table 11, one change from the headline per row, K = 30 --------------------
-  - {name: us_lag1, group: robustness, runner: attention, config: configs/us_headline.yaml, K: K30, seeds: seeds3, use: [lag1]}
-  - {name: eu_lag1, group: robustness, runner: attention, config: configs/europe_headline.yaml, K: K30, seeds: seeds3, use: [lag1]}
-  - {name: us_pca_longconv_lag1, group: robustness, runner: pca, config: configs/us_pca_longconv.yaml, K: K30, seeds: seeds3, use: [headline_policy, lag1], after: pca_us}
-  - {name: eu_pca_longconv_lag1, group: robustness, runner: pca, config: configs/europe_pca_longconv.yaml, K: K30, seeds: seeds3, use: [lag1], after: pca_europe17}
+  - {name: us_lag1, group: robustness, runner: attention, config: configs/us_headline.yaml, K: K30, seeds: seeds3, use: [lag1], hyper: us_lag1}
+  - {name: eu_lag1, group: robustness, runner: attention, config: configs/europe_headline.yaml, K: K30, seeds: seeds3, use: [lag1], hyper: us_lag1}
+  - {name: us_pca_longconv_lag1, group: robustness, runner: pca, config: configs/us_pca_longconv.yaml, K: K30, seeds: seeds3, use: [lag1], hyper: pca_lag1, after: pca_us}
+  - {name: eu_pca_longconv_lag1, group: robustness, runner: pca, config: configs/europe_pca_longconv.yaml, K: K30, seeds: seeds3, use: [lag1], hyper: pca_lag1, after: pca_europe17}
   - {name: eu_unfilled, group: robustness, runner: attention, config: configs/europe_headline.yaml, K: K30, seeds: seeds3, set: {data.dir: data/europe17/shared}}
   - {name: eu_europe12, group: robustness, runner: attention, config: configs/europe_headline.yaml, K: K30, seeds: seeds3, set: {market: europe12, data.dir: data/europe12/holfill}}
   - {name: us_top200, group: robustness, runner: attention, config: configs/us_headline.yaml, K: K30, seeds: seeds3, set: {sample.universe_size: 200}}
-  - {name: us_raw_input, group: robustness, runner: attention, config: configs/us_headline.yaml, K: K30, seeds: seeds3, set: {policy.input: raw}}
-  - {name: eu_raw_input, group: robustness, runner: attention, config: configs/europe_headline.yaml, K: K30, seeds: seeds3, set: {policy.input: raw}}
-  - {name: us_sobol035, group: robustness, runner: attention, config: configs/us_headline.yaml, K: K30, seeds: seeds3, use: [sobol035]}
-  - {name: eu_sobol035, group: robustness, runner: attention, config: configs/europe_headline.yaml, K: K30, seeds: seeds3, use: [sobol035]}
-  - {name: us_paper_table4, group: robustness, runner: attention, config: configs/us_headline.yaml, K: K30, seeds: seeds3, use: [paper_table4]}
-  - {name: eu_paper_table4, group: robustness, runner: attention, config: configs/europe_headline.yaml, K: K30, seeds: seeds3, use: [paper_table4]}
+  - {name: us_raw_input, group: robustness, runner: attention, config: configs/us_headline.yaml, K: K30, seeds: seeds3, hyper: us_raw}
+  - {name: eu_raw_input, group: robustness, runner: attention, config: configs/europe_headline.yaml, K: K30, seeds: seeds3, hyper: us_raw}
 
   # --- extension: 2022-2025, never seen by any choice above ----------------------------------
   - {name: us_attention_2022_2025, group: extension, runner: attention, config: configs/us_headline.yaml, K: K30, seeds: seeds5, set: {sample.start: 2022-01-01, sample.end: 2025-12-31}}
