@@ -226,3 +226,43 @@ tar -czf ~/runs_thesis.tgz -C ~/dlsa/attention-factors-europe runs
 scp "ubuntu@${IP}:~/runs_thesis.tgz" $env:TEMP\
 tar -xzf $env:TEMP\runs_thesis.tgz -C C:\Users\henri\Desktop\SSE\masterThesis\Code\dlsa-europe\attention-factors-europe
 ```
+
+## 8. The Europe-validated matrix (2026-10-12)
+
+`configs/thesis_matrix_europe.yaml` reruns the 121 Europe runs of section 7 with
+hyperparameters validated on EUROPEAN data. Its six searches are the US ones
+(`configs/us_search*.yaml`) with only the data changed (`configs/europe_search_*.yaml`):
+every candidate is fitted on 1993-1995 and scored by its net Sharpe on 1996-1997, the same
+Sobol points in the same order, and each search carries its US winner into the finalists.
+The runs wait for their search; `runs/_matrix/thesis_eu/searches.json` lists the winners.
+Spec names are section 7's, so the Europe rows with the US values (`runs/_matrix/thesis`)
+stay the comparison.
+
+Size: in the section 7 run the Europe jobs took 4,242 process-minutes, the longest 92
+(attention K = 100); the six searches together fit in the 46 slots and take roughly 15-40
+minutes. Expect about 2-2.5 hours on 46 slots, more if a winner trains slower (e.g. batch
+63). Memory is about 3 GB per job, so a **c7i.24xlarge** (192 GiB) is enough; the
+m7i.24xlarge works as before. Storage: **40 GiB** (the Europe PCA stage one is 5.7 GB).
+
+Everything else is section 7 with three changes: the bundle carries only the European
+tables (`--markets europe`, about 0.15 GB, no CRSP data), every `run_matrix.py` command
+names the matrix, and the results come home under their own name.
+
+```powershell
+& $PY scripts\run_matrix.py --matrix configs\thesis_matrix_europe.yaml --dry-run | Select-Object -First 1   # 128 jobs: 1 PCA build, 6 searches, 121 runs
+& $PY scripts\make_bundle.py --markets europe --out $env:TEMP\afe_bundle_eu
+scp $env:TEMP\afe_bundle_eu\afe_data.tar $env:TEMP\afe_bundle_eu\SHA256SUMS $env:TEMP\afe_bundle_eu\COMMIT "ubuntu@${IP}:~"
+```
+
+On the machine, after the clone, `sha256sum -c` and `cloud_setup.sh` of section 7:
+
+```bash
+$PY scripts/run_matrix.py --matrix configs/thesis_matrix_europe.yaml --smoke --jobs 16   # PCA stage one (~5 min), "0 failed"
+tmux new -s afe
+$PY scripts/run_matrix.py --matrix configs/thesis_matrix_europe.yaml --jobs 46 --threads 2 2>&1 | tee runs/matrix_eu_console.log
+tar -czf ~/runs_thesis_eu.tgz -C ~/dlsa/attention-factors-europe runs
+```
+
+At home, unpack `runs_thesis_eu.tgz` as in section 7: the run directories have new
+timestamped names and the ledger is `runs/_matrix/thesis_eu`, so nothing of the first
+matrix is overwritten.

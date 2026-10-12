@@ -15,8 +15,9 @@ produces it, survive in European equities?
 Two legs:
 1. US replication, Jan 1998 - Dec 2021, to validate the pipeline against the paper's
    net Sharpe of 2.28.
-2. Europe, SAME window 1998-2021, SAME hyperparameters as the US headline. Weights
-   re-estimated on European data.
+2. Europe, SAME window 1998-2021. Weights re-estimated on European data, with the US
+   headline hyperparameters and (decided 2026-10-12) with hyperparameters validated on
+   European data by the same pre-registered searches.
 
 ## Hard invariants
 
@@ -34,7 +35,10 @@ weaken a test to make code pass.
   listed common-equity line, receipts at company-level cap (docs/us_characteristics.md).
 - Weights refit ANNUALLY, on rolling 8-year windows. Not the 125/1000-day schedule of
   Guijarro-Ordonez, Pelger & Zanotti.
-- Europe uses the US-validated config. No European hyperparameter search.
+- Hyperparameters come only from a pre-registered search on a market's first training
+  window, never from out-of-sample years. Europe: the US search's values, or (decided
+  2026-10-12) the same searches on Europe's own first window (`configs/europe_search_*.yaml`:
+  fit 1993-1995, net Sharpe on 1996-1997; only the data differ from the US searches).
 - A Sharpe above 10 is a diagnostic of a broken universe, not a result. Long & Xiao
   (2024) was withdrawn for exactly this.
 - US CRSP data comes from the CIZ tables (`crsp.dsf_v2`), never legacy `crsp.dsf`.
@@ -78,6 +82,12 @@ weaken a test to make code pass.
   every non-traded close (`execution.stale_when_closed`). `data/<market>/shared/` stays
   the unfilled build, for the robustness row.
 - Execution lag 0 (the paper's timing); lag 1 is a robustness row.
+- Europe-validated rows (decided 2026-10-12): `configs/thesis_matrix_europe.yaml` reruns
+  every Europe row of the thesis matrix with the winners of the six searches repeated on
+  Europe's first window (each carries its US winner into the finalists); results in
+  `runs/_matrix/thesis_eu`. OPEN: which of the two Europe sets is the Europe headline.
+  Fix it before those results are read; choosing after would be selection on
+  out-of-sample years.
 
 ## Trading costs: limits, not replication
 

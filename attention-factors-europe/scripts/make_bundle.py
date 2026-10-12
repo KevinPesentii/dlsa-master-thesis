@@ -1,13 +1,15 @@
 """Pack what the thesis matrix needs for an external machine (docs/cloud_runs.md, section 7).
 
-    python scripts/make_bundle.py [--out runs/_bundle/<stamp>] [--git-bundle]
+    python scripts/make_bundle.py [--out runs/_bundle/<stamp>] [--git-bundle] [--markets europe]
 
 The code comes from the public fork (git clone --depth 1 -b <branch>), so only the data
 travels. The tree must be clean and the branch pushed. Writes:
   COMMIT          branch and commit to clone; the machine checks `git rev-parse HEAD`.
   afe.bundle      only with --git-bundle (a machine without GitHub access): the branch
                   with its whole history, ~0.8 GB.
-  afe_data.tar    the schema tables the runners read, under data/ as in the repo. The PCA
+  afe_data.tar    the schema tables the runners read, under data/ as in the repo; with
+                  --markets only those markets' (configs/thesis_matrix_europe.yaml needs
+                  only europe: no CRSP data travels). The PCA
                   stage ones are NOT included: the matrix rebuilds them (prep jobs), which
                   is faster than moving 6 GB.
   SHA256SUMS      sha256sum format; on the machine: (cd <repo dir> && sha256sum -c SHA256SUMS)
@@ -30,15 +32,15 @@ sys.path.insert(0, str(ROOT / "src"))
 from afe import runs  # noqa: E402
 
 TABLES = ("returns", "universe", "features")
-FILES = (
-    [f"data/us/shared/{t}.parquet" for t in TABLES]
+FILES = {
+    "us": [f"data/us/shared/{t}.parquet" for t in TABLES]
     + [f"data/us/shared/raw/{f}.parquet" for f in ("ff_daily", "ff_monthly", "ff5_daily", "ff5_monthly")]
-    + ["data/us/shared/raw/crsp_daily/1989.parquet"]          # the first 252-day PCA window
-    + [f"data/europe17/holfill/{t}.parquet" for t in TABLES]  # headline Europe
+    + ["data/us/shared/raw/crsp_daily/1989.parquet"],         # the first 252-day PCA window
+    "europe": [f"data/europe17/holfill/{t}.parquet" for t in TABLES]  # headline Europe
     + [f"data/europe17/shared/{t}.parquet" for t in TABLES + ("rf_daily", "market_daily", "factors_daily",
                                                               "fx_to_numeraire_daily")]
-    + [f"data/europe12/holfill/{t}.parquet" for t in TABLES]  # robustness
-)
+    + [f"data/europe12/holfill/{t}.parquet" for t in TABLES],  # robustness
+}
 
 
 def sha256(path: Path) -> str:
@@ -53,14 +55,17 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--out", type=Path)
     ap.add_argument("--git-bundle", action="store_true", help="also write the branch as a git bundle")
+    ap.add_argument("--markets", nargs="+", choices=list(FILES), default=list(FILES),
+                    help="only these markets' tables (default: all)")
     args = ap.parse_args()
+    files = [f for m in args.markets for f in FILES[m]]
     commit = runs.git_commit(ROOT)
     if commit.endswith("-dirty"):
         raise SystemExit(f"git tree is dirty ({commit}); commit first")
     branch = subprocess.check_output(["git", "branch", "--show-current"], cwd=ROOT, text=True).strip()
     out = args.out or ROOT / "runs" / "_bundle" / datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     out.mkdir(parents=True, exist_ok=True)
-    missing = [f for f in FILES if not (ROOT / f).exists()]
+    missing = [f for f in files if not (ROOT / f).exists()]
     if missing:
         raise SystemExit(f"missing: {missing}")
 
@@ -72,13 +77,14 @@ def main():
         subprocess.run(["git", "bundle", "create", str(out / "afe.bundle"), branch], cwd=ROOT, check=True)
     sums = []
     with tarfile.open(out / "afe_data.tar", "w") as tar:
-        for f in FILES:
+        for f in files:
             tar.add(ROOT / f, arcname=f)
             sums.append(f"{sha256(ROOT / f)}  {f}")
             print(f"  {f}  {(ROOT / f).stat().st_size / 2 ** 20:7.1f} MB", flush=True)
     (out / "SHA256SUMS").write_text("\n".join(sums) + "\n", newline="\n")
     size = sum(p.stat().st_size for p in out.iterdir()) / 2 ** 20
-    print(f"branch {branch} at {commit[:10]}; {len(FILES)} data files; {size:.0f} MB in {out}")
+    print(f"branch {branch} at {commit[:10]}; {len(files)} data files ({' '.join(args.markets)}); "
+          f"{size:.0f} MB in {out}")
 
 
 if __name__ == "__main__":

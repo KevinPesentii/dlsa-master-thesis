@@ -1,0 +1,73 @@
+# The Europe-validated runs, fixed 2026-10-12 before any of it runs (pre-registration): every
+# Europe row of configs/thesis_matrix.yaml again, trading with hyperparameters selected on
+# EUROPEAN data instead of the US values. Same protocol as the US: each search below is its
+# configs/us_search*.yaml counterpart with only the data changed (europe17 top 200, holidays
+# filled, positions held on non-traded closes, training from 1993), so every candidate is
+# fitted on 1993-1995 and scored by its net Sharpe on 1996-1997, and nothing dated after 1997
+# moves a choice. The Sobol points are the US searches' (same space, seed and order), and each
+# search carries its US winner into the finalists (`finalists.keep`), so the US values are
+# scored on Europe's validation years on the same seeds and win there if they are best.
+# Every spec trades with a Europe search's winner (`hyper:`); rows that change only the data
+# (unfilled holidays, europe12) and the ablation keep the Europe headline values, as in the
+# US matrix. Spec names are configs/thesis_matrix.yaml's: the results go to
+# runs/_matrix/thesis_eu, and the Europe rows of runs/_matrix/thesis (US values) stay the
+# comparison.
+#   python scripts/run_matrix.py --matrix configs/thesis_matrix_europe.yaml --dry-run
+#   python scripts/run_matrix.py --matrix configs/thesis_matrix_europe.yaml --smoke --jobs 16
+#   python scripts/run_matrix.py --matrix configs/thesis_matrix_europe.yaml --jobs 46 --threads 2
+
+name: thesis_eu
+
+sets:
+  seeds5: [0, 1, 2, 3, 4]
+  seeds3: [0, 1, 2]
+  seed0: [0]
+  K_attention: [1, 3, 5, 8, 15, 30, 100]   # Table 2's attention rows
+  K_pca: [1, 3, 5, 8, 10, 15, 30, 100]     # Table 2's PCA rows
+  K30: [30]
+
+blocks:                          # override blocks, dotted keys into the base config
+  save_models:                   # yearly state_dicts for the factor figures (small)
+    evaluation.save_models: true
+  lag1:
+    execution.lag: 1
+
+prep:                            # stage-one build the PCA searches and specs wait for; skipped when `done` exists
+  pca_europe17:
+    script: scripts/build_pca_residuals.py
+    config: configs/europe_pca_longconv.yaml
+    done: data/europe17/holfill/pca_l252/meta.json
+    mem_gb: 4
+    cost: 20
+
+searches:                        # scripts/search_validation.py --stage select; 46 slots together
+  eu:          {config: configs/europe_search_headline.yaml, workers: 12, mem_gb_per_worker: 2}
+  eu_raw:      {config: configs/europe_search_raw.yaml, workers: 10, mem_gb_per_worker: 2}
+  eu_lag1:     {config: configs/europe_search_lag1.yaml, workers: 10, mem_gb_per_worker: 2}
+  eu_pca:      {config: configs/europe_search_pca.yaml, workers: 6, mem_gb_per_worker: 2, after: pca_europe17}
+  eu_pca_lag1: {config: configs/europe_search_pca_lag1.yaml, workers: 6, mem_gb_per_worker: 2, after: pca_europe17}
+  eu_ou:       {config: configs/europe_search_ou.yaml, workers: 2, mem_gb_per_worker: 2, after: pca_europe17}
+
+specs:
+  # --- headline: Tables 4-6, Figures 3-5 -------------------------------------------------
+  - {name: eu_attention, group: headline, runner: attention, config: configs/europe_headline.yaml, K: K_attention, seeds: seeds5, use: [save_models], hyper: eu}
+  - {name: eu_pca_longconv, group: headline, runner: pca, config: configs/europe_pca_longconv.yaml, K: K_pca, seeds: seeds5, hyper: eu_pca, after: pca_europe17}
+  - {name: eu_pca_ou, group: headline, runner: pca, config: configs/europe_pca_ou.yaml, K: K_pca, seeds: seed0, hyper: eu_ou, after: pca_europe17}
+
+  # --- ablation: Table 10 (the paper's Table 3), K = 30 -------------------------------------
+  - {name: eu_drop_past_returns, group: ablation, runner: attention, config: configs/europe_headline.yaml, K: K30, seeds: seeds3, hyper: eu, set: {features.drop_groups: [past_returns]}}
+  - {name: eu_drop_investment, group: ablation, runner: attention, config: configs/europe_headline.yaml, K: K30, seeds: seeds3, hyper: eu, set: {features.drop_groups: [investment]}}
+  - {name: eu_drop_profitability, group: ablation, runner: attention, config: configs/europe_headline.yaml, K: K30, seeds: seeds3, hyper: eu, set: {features.drop_groups: [profitability]}}
+  - {name: eu_drop_intangibles, group: ablation, runner: attention, config: configs/europe_headline.yaml, K: K30, seeds: seeds3, hyper: eu, set: {features.drop_groups: [intangibles]}}
+  - {name: eu_drop_value, group: ablation, runner: attention, config: configs/europe_headline.yaml, K: K30, seeds: seeds3, hyper: eu, set: {features.drop_groups: [value]}}
+  - {name: eu_drop_trading_frictions, group: ablation, runner: attention, config: configs/europe_headline.yaml, K: K30, seeds: seeds3, hyper: eu, set: {features.drop_groups: [trading_frictions]}}
+
+  # --- robustness: Table 11, one change from the headline per row, K = 30 --------------------
+  - {name: eu_lag1, group: robustness, runner: attention, config: configs/europe_headline.yaml, K: K30, seeds: seeds3, use: [lag1], hyper: eu_lag1}
+  - {name: eu_pca_longconv_lag1, group: robustness, runner: pca, config: configs/europe_pca_longconv.yaml, K: K30, seeds: seeds3, use: [lag1], hyper: eu_pca_lag1, after: pca_europe17}
+  - {name: eu_unfilled, group: robustness, runner: attention, config: configs/europe_headline.yaml, K: K30, seeds: seeds3, hyper: eu, set: {data.dir: data/europe17/shared}}
+  - {name: eu_europe12, group: robustness, runner: attention, config: configs/europe_headline.yaml, K: K30, seeds: seeds3, hyper: eu, set: {market: europe12, data.dir: data/europe12/holfill}}
+  - {name: eu_raw_input, group: robustness, runner: attention, config: configs/europe_headline.yaml, K: K30, seeds: seeds3, hyper: eu_raw}
+
+  # --- extension: 2022-2025, never seen by any choice above ----------------------------------
+  - {name: eu_attention_2022_2025, group: extension, runner: attention, config: configs/europe_headline.yaml, K: K30, seeds: seeds5, hyper: eu, set: {sample.start: 2022-01-01, sample.end: 2025-12-31}}
