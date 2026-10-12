@@ -1,9 +1,12 @@
 # Two-step benchmark (Table 2, "PCA Factors") on the headline European data: europe17 top 200
 # with holidays filled (data/europe17/holfill, stage 2b), training from 1993 as the attention
 # runs (configs/europe_headline.yaml), positions held on non-traded closes. Stage one as
-# configs/us_pca_longconv.yaml (252-day correlation PCA, 252-day loadings); the policy is
-# the headline LongConv (cumulative input / window_vol, input_scale 0.313, batch 63), so the
-# two rows differ only in the factors.
+# configs/us_pca_longconv.yaml (252-day correlation PCA, 252-day loadings), and so is the
+# policy block: it is the base candidate of the PCA searches (configs/us_search_pca.yaml on
+# US data, configs/europe_search_pca.yaml on these). Every matrix run replaces input_scale,
+# input, input_normalise and batch_days with a search winner's (`hyper:`), so those four
+# values never reach a matrix run. (To 2026-10-12 they were sobol-009's: 0.313, window_vol,
+# batch 63; overridden the same way.)
 #   python scripts/build_pca_residuals.py --config configs/europe_pca_longconv.yaml
 #   python scripts/run_pca_longconv.py    --config configs/europe_pca_longconv.yaml [--K 30]
 
@@ -34,8 +37,8 @@ policy:
   dropout: 0.1
   lambda_squash: 0.001
   input: cumulative
-  input_normalise: window_vol
-  input_scale: 0.313
+  input_normalise: none
+  input_scale: 100.0
 
 objective:
   turnover_cost: 0.0005
@@ -52,7 +55,7 @@ training:
   epochs: 30
   lr: 0.003
   weight_decay: 0.05
-  batch_days: 63
+  batch_days: 125
 
 evaluation:
   save_weights: true

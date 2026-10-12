@@ -12,7 +12,8 @@ configs/us_search.yaml fixes the space, the budget and the rule; commit it first
 
 --first-oos-year moves the window: 2012 fits 2004-2009 and validates 2010-2011. Inside the
 out-of-sample period that is a check of how stable the choice is, not a replacement for it.
---keep carries named candidates into the finalists (e.g. an earlier window's winner).
+--keep carries named candidates into the finalists (e.g. an earlier window's winner);
+`finalists.keep` in the search config does the same as part of the pre-registration.
 
 1. search: Sobol points over the knobs the paper leaves open, plus the base config, one seed.
 2. finalists: the best `top` points and the base config on more seeds; the winner has the
@@ -274,10 +275,10 @@ def main():
         cfg = with_overrides(cfg, S.get("fixed") or {})   # held fixed for every candidate, part of the base
         if args.first_oos_year:
             S["first_oos_year"] = args.first_oos_year
-        S["finalists"]["keep"] = args.keep
+        S["finalists"]["keep"] = args.keep or S["finalists"].get("keep", [])
         if args.smoke:
             S["search"]["n_points"] = 2
-            S["finalists"].update(top=1, seeds=S["finalists"]["seeds"][:1])
+            S["finalists"].update(top=1, seeds=S["finalists"]["seeds"][:1], keep=[])
             S["robustness"] = {"seeds": [], "knobs": {}}
             if "training" in cfg:
                 cfg["training"]["epochs"] = 1
