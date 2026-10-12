@@ -15,9 +15,9 @@ produces it, survive in European equities?
 Two legs:
 1. US replication, Jan 1998 - Dec 2021, to validate the pipeline against the paper's
    net Sharpe of 2.28.
-2. Europe, SAME window 1998-2021. Weights re-estimated on European data, with the US
-   headline hyperparameters and (decided 2026-10-12) with hyperparameters validated on
-   European data by the same pre-registered searches.
+2. Europe, SAME window 1998-2021. Weights re-estimated on European data, with
+   hyperparameters validated on European data by the same pre-registered searches
+   (the headline, decided 2026-10-12) and with the US headline values (comparison).
 
 ## Hard invariants
 
@@ -65,8 +65,8 @@ weaken a test to make code pass.
 
 ## Headline specification (decided 2026-10-10)
 
-- Configs: `configs/us_headline.yaml`, `configs/europe_headline.yaml`. One set of
-  hyperparameters for both markets, selected by the pre-registered US search
+- Configs: `configs/us_headline.yaml`, `configs/europe_headline.yaml`. Until 2026-10-12
+  one set of hyperparameters for both markets, selected by the pre-registered US search
   (`configs/us_search.yaml`, fit 1990-1995, net Sharpe on 1996-1997; run
   20261010T110947Z_search_K30_val1996-1997): sobol-036 = lambda_var 17.6, input_scale
   87.9, score temperature 0.342, lambda_ridge 2.63e-5, batch 125, cumulative input /
@@ -82,12 +82,12 @@ weaken a test to make code pass.
   every non-traded close (`execution.stale_when_closed`). `data/<market>/shared/` stays
   the unfilled build, for the robustness row.
 - Execution lag 0 (the paper's timing); lag 1 is a robustness row.
-- Europe-validated rows (decided 2026-10-12): `configs/thesis_matrix_europe.yaml` reruns
-  every Europe row of the thesis matrix with the winners of the six searches repeated on
-  Europe's first window (each carries its US winner into the finalists); results in
-  `runs/_matrix/thesis_eu`. OPEN: which of the two Europe sets is the Europe headline.
-  Fix it before those results are read; choosing after would be selection on
-  out-of-sample years.
+- Europe headline = Europe-validated values (decided 2026-10-12, before any of those
+  runs existed): `configs/thesis_matrix_europe.yaml` reruns every Europe row of the
+  thesis matrix with the winners of the six searches repeated on Europe's first window
+  (each carries its US winner into the finalists); results in `runs/_matrix/thesis_eu`.
+  The Europe rows of `runs/_matrix/thesis` (US values) are the comparison, not the
+  headline, whatever the two show.
 
 ## Trading costs: limits, not replication
 

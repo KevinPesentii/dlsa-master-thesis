@@ -3,6 +3,9 @@
 # scripts/fill_europe_holidays.py) with positions held on non-traded closes, and the
 # hyperparameters the US validation search selected (configs/us_headline.yaml: sobol-036
 # of configs/us_search.yaml). Nothing here was chosen on European data.
+# Since 2026-10-12 the Europe HEADLINE trades with the Europe search's winner instead
+# (configs/thesis_matrix_europe.yaml, `hyper: eu`), which replaces the eight searched values
+# below; with these values (US) the file is the comparison row of configs/thesis_matrix.yaml.
 #   python scripts/run_attention_us.py --config configs/europe_headline.yaml
 
 market: europe17
