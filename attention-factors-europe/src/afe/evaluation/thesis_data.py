@@ -8,6 +8,10 @@ turnover - short_cost * short with the costs of its own manifest. The "combinati
 spec is the equal-weighted average of its seeds' daily series (one portfolio of the seed
 strategies), used where a single return series is needed (cumulative returns, alphas);
 the tables report the mean and spread of the per-seed statistics.
+
+A second matrix (`override`, e.g. runs/_matrix/thesis_eu) replaces every spec it holds; the
+runs it replaces stay available under the spec name + `suffix` (Europe with the US values:
+eu_attention_usvals), so a table can show both.
 """
 
 from __future__ import annotations
@@ -57,10 +61,17 @@ PAPER_T4 = {"policy.hidden": 32, "policy.dropout": 0.1, "model.embedding_dim": 3
 
 
 class Matrix:
-    def __init__(self, matrix_dir: Path, runs_dir: Path | None = None):
+    def __init__(self, matrix_dir: Path, runs_dir: Path | None = None, override: Path | None = None,
+                 suffix: str = "_usvals"):
         self.dir = Path(matrix_dir)
+        self.override = Path(override) if override else None
         self.runs_dir = Path(runs_dir) if runs_dir else self.dir.parents[1]
         s = pd.read_csv(self.dir / "summary.csv")
+        if self.override is not None:
+            o = pd.read_csv(self.override / "summary.csv")
+            replaced = s["spec"].isin(set(o["spec"]))
+            s.loc[replaced, "spec"] = s.loc[replaced, "spec"] + suffix
+            s = pd.concat([s, o], ignore_index=True)
         s["run"] = [self.runs_dir / Path(p.replace("\\", "/")).name for p in s["run_dir"]]
         missing = [str(p) for p in s["run"] if not (p / "oos_daily.csv").exists()]
         if missing:

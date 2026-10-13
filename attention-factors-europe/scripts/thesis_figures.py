@@ -1,6 +1,9 @@
 """The thesis figures from the run matrix (static, for print): PNG (300 dpi) and PDF.
 
-    python scripts/thesis_figures.py --out <dir> [--matrix runs/_matrix/thesis] [--only f02_cumulative ...]
+    python scripts/thesis_figures.py --out <dir> [--matrix runs/_matrix/thesis]
+                                     [--europe-matrix runs/_matrix/thesis_eu] [--only f02_cumulative ...]
+
+Europe comes from --europe-matrix when it exists (as scripts/thesis_tables.py).
 
 Writes <out>/figures/<name>.png/.pdf and <out>/figures/index.json (title, caption, source),
 and the series behind each line chart as <out>/figures/data/<name>.csv. Colours follow the
@@ -48,6 +51,7 @@ COUNTRY = {"GB": "United Kingdom", "GBR": "United Kingdom", "FR": "France", "FRA
            "DEU": "Germany", "CH": "Switzerland", "CHE": "Switzerland", "NL": "Netherlands", "NLD": "Netherlands",
            "IT": "Italy", "ITA": "Italy", "ES": "Spain", "ESP": "Spain", "SE": "Sweden", "SWE": "Sweden"}
 INDEX: list[dict] = []
+SRC = "runs/_matrix/thesis"      # set in main(): the matrix directories the numbers come from
 
 plt.rcParams.update({
     "font.family": ["Segoe UI", "DejaVu Sans"], "font.size": 8.5, "axes.titlesize": 9, "axes.titleweight": "bold",
@@ -186,7 +190,7 @@ def cumulative(out: Path, M: td.Matrix, col: str, name: str, title: str) -> None
          "2021, log scale, " + ("after 5bp per unit turnover and 1bp per unit short position; " if col == "net" else "before costs; ")
          + "each strategy is the equal-weighted combination of its seeds (PCA + OU: one deterministic run); the "
          "equal-weighted universe for reference. Portfolios are scaled to ||w||_1 = 1, so levels are not "
-         "comparable with the market's.", "runs/_matrix/thesis (headline)", pd.DataFrame(keep))
+         "comparable with the market's.", SRC + " (headline)", pd.DataFrame(keep))
 
 
 def f02_cumulative(out, M):
@@ -232,7 +236,7 @@ def f04_sharpe_vs_k(out: Path, M: td.Matrix) -> None:
     save(fig, out, "F04_net_sharpe_vs_k", "Figure 4. Net Sharpe ratio and the number of factors",
          "Out-of-sample net Sharpe ratio, 1998-2021, against K: mean over seeds (line) and the range over seeds "
          "(band); PCA + OU is one deterministic run. Hollow markers: the attention model in the paper's Table 2 (US).",
-         "runs/_matrix/thesis (headline); Epstein et al. (2025) Table 2", pd.DataFrame(rows).set_index(["market", "model", "K"]))
+         SRC + " (headline); Epstein et al. (2025) Table 2", pd.DataFrame(rows).set_index(["market", "model", "K"]))
 
 
 def f05_break_even(out: Path, M: td.Matrix) -> None:
@@ -268,7 +272,7 @@ def f05_break_even(out: Path, M: td.Matrix) -> None:
          "K = 30, 1998-2021, mean over seeds: the net Sharpe ratio for a cost of 0-20bp per unit turnover (shorting "
          "cost 1bp kept); dots: the break-even cost (mean over seeds, Table 6). The statutory transaction taxes of "
          "the European markets (UK 50bp, France 20-30bp, Italy 10-12bp on purchases) are in Table 6.",
-         "runs/_matrix/thesis (headline)", pd.DataFrame(rows, index=pd.Index(costs, name="cost_bp")))
+         SRC + " (headline)", pd.DataFrame(rows, index=pd.Index(costs, name="cost_bp")))
 
 
 def f06_annual(out: Path, M: td.Matrix) -> None:
@@ -290,7 +294,7 @@ def f06_annual(out: Path, M: td.Matrix) -> None:
     save(fig, out, "F06_net_sharpe_by_year", "Figure 6. Net Sharpe ratio by year",
          "Net Sharpe ratio within each calendar year, K = 30, mean over seeds: attention factors and the two-step "
          "PCA + LongConv benchmark. Table A1 has the values, including PCA + OU and the 2022-2025 holdout.",
-         "runs/_matrix/thesis (headline)", pd.DataFrame(rows))
+         SRC + " (headline)", pd.DataFrame(rows))
 
 
 def f07_turnover(out: Path, M: td.Matrix) -> None:
@@ -315,7 +319,7 @@ def f07_turnover(out: Path, M: td.Matrix) -> None:
     save(fig, out, "F07_turnover", "Figure 7. Turnover over time",
          "Daily turnover ||w_t - w_t-1||_1 of the K = 30 strategies (||w||_1 = 1), 126-day moving average, "
          "equal-weighted combination of the seeds. A turnover of 0.5 at 5bp costs 6.3% a year.",
-         "runs/_matrix/thesis (headline)", pd.DataFrame(rows))
+         SRC + " (headline)", pd.DataFrame(rows))
 
 
 def f08_ablation(out: Path, M: td.Matrix) -> None:
@@ -351,7 +355,7 @@ def f08_ablation(out: Path, M: td.Matrix) -> None:
     save(fig, out, "F08_ablation", "Figure 8. Removing one characteristic group",
          "Change in the net Sharpe ratio of the attention model (K = 30, 1998-2021) when a characteristic group is "
          "removed, against the headline model on the same seeds 0-2 (mean and sd of the paired differences). "
-         "Hollow markers: the same change in the paper's Table 3.", "runs/_matrix/thesis (ablation, headline)",
+         "Hollow markers: the same change in the paper's Table 3.", SRC + " (ablation, headline)",
          pd.DataFrame(rows).set_index(["market", "dropped"]))
 
 
@@ -378,7 +382,7 @@ def f09_holdout(out: Path, M: td.Matrix) -> None:
     save(fig, out, "F09_holdout_2022_2025", "Figure 9. The 2022-2025 holdout",
          "Cumulative gross and net return of the attention model (K = 30, equal-weighted combination of seeds 0-4) "
          "after the paper's sample, same hyperparameters, annual refits on the preceding eight years.",
-         "runs/_matrix/thesis (extension)", pd.DataFrame(keep))
+         SRC + " (extension)", pd.DataFrame(keep))
 
 
 # ------------------------------------------------------------------ factor structure
@@ -470,7 +474,7 @@ def f10_factor_map(out: Path, M: td.Matrix, day: str = "2021-01-04") -> None:
          f"t-SNE map of the loadings of the members on the first {8} attention factors (K = 8, seed 0), "
          f"first trading day of 2021, model trained on 2013-2020 (the paper's Figure 3). Members close together load "
          "alike. Highlighted: three industries (SIC) in each market, and the three largest countries in Europe; "
-         "grey: the rest.", "runs/_matrix/thesis (us/eu_attention K=8 seed 0, models/2021.pt); CRSP secinfo, "
+         "grey: the rest.", SRC + " (us/eu_attention K=8 seed 0, models/2021.pt); CRSP secinfo, "
          "Compustat Global universe table (names, SIC, country)", data)
 
 
@@ -504,7 +508,7 @@ def t14_top_names(out: Path, M: td.Matrix, day: str = "2021-01-04") -> None:
         lines.append("")
     (d / "T14_factor_top_names.md").write_text("\n".join(lines), encoding="utf-8")
     INDEX.append({"name": "T14_factor_top_names", "title": "Table A3. The ten largest weights of the first six attention factors",
-                  "caption": lines[2], "source": "runs/_matrix/thesis (K=8 seed 0, models/2021.pt)",
+                  "caption": lines[2], "source": SRC + " (K=8 seed 0, models/2021.pt)",
                   "files": ["tables/T14_factor_top_names.csv", "tables/T14_factor_top_names.md"]})
     print("  T14_factor_top_names (table, written with the figures)")
 
@@ -513,9 +517,15 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--out", type=Path, default=ROOT / "results" / "thesis")
     ap.add_argument("--matrix", type=Path, default=ROOT / "runs" / "_matrix" / "thesis")
+    ap.add_argument("--europe-matrix", type=Path, default=ROOT / "runs" / "_matrix" / "thesis_eu",
+                    help="Europe-validated runs; ignored if missing (then Europe = the US values)")
     ap.add_argument("--only", nargs="*")
     args = ap.parse_args()
-    M = td.Matrix(args.matrix, ROOT / "runs")
+    global SRC
+    eu = args.europe_matrix if (args.europe_matrix / "summary.csv").exists() else None
+    M = td.Matrix(args.matrix, ROOT / "runs", override=eu)
+    if eu is not None:
+        SRC = f"{args.matrix.relative_to(ROOT).as_posix()} (US) + {eu.relative_to(ROOT).as_posix()} (Europe)"
     jobs = {"f01_universe": lambda: f01_universe(args.out), "f02_cumulative": lambda: f02_cumulative(args.out, M),
             "f03_cumulative_gross": lambda: f03_cumulative_gross(args.out, M),
             "f04_sharpe_vs_k": lambda: f04_sharpe_vs_k(args.out, M), "f05_break_even": lambda: f05_break_even(args.out, M),

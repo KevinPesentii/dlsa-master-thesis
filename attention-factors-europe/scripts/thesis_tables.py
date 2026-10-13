@@ -1,7 +1,12 @@
 """The thesis tables from the run matrix (configs/thesis_matrix.yaml) and the searches.
 
     python scripts/thesis_tables.py --out <dir> [--matrix runs/_matrix/thesis]
+                                    [--europe-matrix runs/_matrix/thesis_eu]
                                     [--main-search runs/<US headline search run>]
+
+Europe comes from --europe-matrix when it exists (configs/thesis_matrix_europe.yaml: every
+Europe row on values validated on Europe's first window, the headline since 2026-10-12); the
+Europe runs of --matrix with the US values stay available as <spec>_usvals (thesis_data.Matrix).
 
 Writes <out>/tables/<name>.csv (full precision), .md and .tex (formatted, with caption and
 notes), and <out>/tables/index.json (title, caption, notes, source of every table), which
@@ -45,6 +50,7 @@ COUNTRY = {"GBR": "United Kingdom", "FRA": "France", "DEU": "Germany", "CHE": "S
            "ITA": "Italy", "ESP": "Spain", "SWE": "Sweden"}   # universe_asof.country (ISO alpha-3)
 
 INDEX: list[dict] = []
+SRC = "runs/_matrix/thesis"      # set in main(): the matrix directories the numbers come from
 
 
 def spec(m: str, model: str) -> str:
@@ -187,14 +193,44 @@ def t02_characteristics(out: Path) -> None:
            "(–)."], "REGISTRY (src/afe/data/characteristics.py); coverage tables of both builds")
 
 
+ROLES = {"attention": "Attention (headline)", "raw": "Attention, raw input", "lag1": "Attention, lag 1",
+         "pca": "PCA + LongConv", "pca_lag1": "PCA + LongConv, lag 1", "ou": "PCA + OU"}
+
+
 def search_dirs(matrix_dir: Path, main: Path) -> dict[str, Path]:
-    return {"attention": main, **{k: matrix_dir / "searches" / k for k in ["us_raw", "us_lag1", "pca", "pca_lag1", "ou"]}}
+    """The US searches by role (the attention headline search ran on the laptop)."""
+    return {"attention": main, "raw": matrix_dir / "searches" / "us_raw", "lag1": matrix_dir / "searches" / "us_lag1",
+            **{k: matrix_dir / "searches" / k for k in ["pca", "pca_lag1", "ou"]}}
 
 
-def t03_hyperparameters(out: Path, matrix_dir: Path, main: Path) -> None:
-    dirs = search_dirs(matrix_dir, main)
-    labels = {"attention": "Attention (headline)", "us_raw": "Attention, raw input", "us_lag1": "Attention, lag 1",
-              "pca": "PCA + LongConv", "pca_lag1": "PCA + LongConv, lag 1", "ou": "PCA + OU"}
+def europe_search_dirs(europe_dir: Path) -> dict[str, Path]:
+    names = {"attention": "eu", "raw": "eu_raw", "lag1": "eu_lag1", "pca": "eu_pca", "pca_lag1": "eu_pca_lag1", "ou": "eu_ou"}
+    return {k: europe_dir / "searches" / n for k, n in names.items()}
+
+
+def t03_hyperparameters(out: Path, matrix_dir: Path, main: Path, europe_dir: Path | None = None) -> None:
+    us = search_dirs(matrix_dir, main)
+    hyper_table(out, "T03_hyperparameters", "Table 3. Hyperparameters and how they were selected", us, None,
+                "Every reported US return uses values selected on the first US training window: fitted on "
+                "1990-1995, scored by the net Sharpe ratio on 1996-1997, nothing later loaded (the paper's Appendix "
+                "B protocol). Sobol points over the knobs the paper leaves open (128 for attention, 64 for PCA + "
+                "LongConv, the 3 x 3 grid of Guijarro-Ordonez et al. for the OU thresholds); the best five and the "
+                "base config rerun on seeds 0-2, the best mean wins. "
+                + ("Europe: Table 3b." if europe_dir is not None else "Europe uses the US values unchanged."))
+    if europe_dir is not None:
+        hyper_table(out, "T03b_hyperparameters_europe", "Table 3b. Hyperparameters selected on European data",
+                    europe_search_dirs(europe_dir), us,
+                    "The searches of Table 3 repeated on the first European training window: every candidate "
+                    "fitted on 1993-1995 (the European panel is too thin before 1993) and scored by the net Sharpe "
+                    "ratio on 1996-1997, on europe17 with holidays filled. Same space, same Sobol points, same "
+                    "budget and rule; each search also carried its US winner into the finalists, so the US values "
+                    "were scored on the same European validation years and seeds (last row). Every European return "
+                    "uses these values; Table 11 shows the US values in Europe for comparison.")
+
+
+def hyper_table(out: Path, name: str, title: str, dirs: dict[str, Path], us_dirs: dict[str, Path] | None,
+                caption: str) -> None:
+    labels = ROLES
     vals, info = {}, {}
     space = {}
     for k, d in dirs.items():
@@ -213,6 +249,10 @@ def t03_hyperparameters(out: Path, matrix_dir: Path, main: Path) -> None:
         info[labels[k]] = {"candidate": w["name"], "val_net": w["val_net_SR"],
                            "base_val_net": base["val_net_SR"] if base else np.nan,
                            "points": mets.get("n_search_points"), "fixed": S.get("fixed") or {}}
+        if us_dirs is not None:                  # the US winner, carried into these finalists
+            us_w, _ = selected_values(us_dirs[k])
+            r = next((r for r in mets.get("finalists", []) if r["name"] == us_w["name"]), None)
+            info[labels[k]]["us_winner"] = f"{us_w['name']}: {fmt(r['val_net_SR'])}" if r else us_w["name"]
     keys = ["objective.lambda_var", "policy.input_scale", "model.score_std_target", "model.lambda_ridge",
             "training.batch_days", "policy.input", "policy.input_normalise", "model.level_hidden",
             "execution.lag", "policy.c_thresh", "policy.c_crit"]
@@ -221,16 +261,13 @@ def t03_hyperparameters(out: Path, matrix_dir: Path, main: Path) -> None:
     t.insert(0, "Paper (Table 4)", [td.PAPER_T4.get(k, "–") if k in td.PAPER_T4 else "not stated" for k in keys])
     extra = pd.DataFrame({lab: {"selected candidate": i["candidate"], "validation net SR (winner)": fmt(i["val_net"]),
                                 "validation net SR (base config)": fmt(i["base_val_net"]),
-                                "candidates searched": i["points"]} for lab, i in info.items()})
+                                "candidates searched": i["points"],
+                                **({"validation net SR (US winner)": i["us_winner"]} if "us_winner" in i else {})}
+                          for lab, i in info.items()})
     t = pd.concat([t, extra]).fillna("")
     t = t.map(lambda x: "off" if x is None else (f"{x:.3g}" if isinstance(x, float) else x))
     t.index.name = "Hyperparameter"
-    write(out, "T03_hyperparameters", t, t, "Table 3. Hyperparameters and how they were selected",
-          "Every reported return uses values selected on the first US training window: fitted on 1990-1995, "
-          "scored by the net Sharpe ratio on 1996-1997, nothing later loaded (the paper's Appendix B protocol). "
-          "Sobol points over the knobs the paper leaves open (128 for attention, 64 for PCA + LongConv, the 3 x 3 "
-          "grid of Guijarro-Ordonez et al. for the OU thresholds); the best five and the base config rerun on "
-          "seeds 0-2, the best mean wins. Europe uses the US values unchanged.",
+    write(out, name, t, t, title, caption,
           ["Fixed at the paper's Table 4 values: hidden 32, dropout 0.1, embedding 32, 30 epochs, one layer, "
            "learning rate 0.003, weight decay 0.05 on LongConv, squash 0.001, lookback 30. off = no score temperature."],
           "search runs (manifest.json, metrics.json): " + ", ".join(str(p.relative_to(td.ROOT)) for p in dirs.values()))
@@ -277,14 +314,17 @@ def t04_t05(out: Path, M: td.Matrix) -> None:
                "w_t-1||_1 with ||w||_1 = 1; short = mean ||max(-w, 0)||_1; break-even = the per-unit turnover cost "
                "at which the mean net return is zero (shorting cost kept). Mean over seeds 0-4 (sd in parentheses); "
                "PCA + OU is deterministic.")
-        notes = ["Hyperparameters: Table 3 (validated on the first US window; Europe uses the US values)."]
+        notes = (["Hyperparameters: Table 3 (validated on the first US window, 1990-1997)."] if m == "us" else
+                 ["Hyperparameters: Table 3b (validated on the first European window, 1993-1997). The same rows "
+                  "with the US values: Table 11."] if "eu_attention_usvals" in set(M.summary["spec"]) else
+                 ["Hyperparameters: Table 3 (validated on the first US window; Europe uses the US values)."])
         if m == "us":
             notes.append("Paper columns: Epstein, Wang, Choi and Pelger (2025), Table 2, for comparison only.")
         else:
             notes.append("Europe: europe17 top 200, ECU/EUR, holidays filled, positions held on non-traded closes; "
                          "training windows start in 1993 (8 years from 2001).")
         write(out, name, t, disp, f"Table {num_}. Out-of-sample performance, {MARKETS[m]}", cap, notes,
-              "runs/_matrix/thesis (headline group): oos_daily.csv of every run")
+              SRC + " (headline group): oos_daily.csv of every run")
 
 
 def tax_cost(run: Path, countries: pd.Series) -> pd.Series:
@@ -356,7 +396,7 @@ def t06_costs(out: Path, M: td.Matrix) -> None:
            "The taxes fall on purchases of the shares themselves: synthetic exposure (CFDs, total return "
            "swaps) is outside UK stamp duty and the French FTT, so this is the floor for a cash-equity "
            "implementation."],
-          "runs/_matrix/thesis: oos_daily.csv, weights.parquet; data/europe17/holfill/returns.parquet (country)")
+          SRC + ": oos_daily.csv, weights.parquet; data/europe17/holfill/returns.parquet (country)")
 
 
 def t07_inference(out: Path, M: td.Matrix) -> None:
@@ -383,6 +423,20 @@ def t07_inference(out: Path, M: td.Matrix) -> None:
     rows.append({"comparison": "Attention: US − Europe (common days)", "diff": T["diff"].mean(), "se": T["se"].mean(),
                  "mdd_5pct": T["mdd_5pct"].mean(), "p_max": T["p"].max(), "n_sig": int((T["p"] < 0.05).sum()),
                  "pairs": len(T), "days": int(T["T"].mean())})
+    for model in ["attention", "pca_longconv"]:
+        sp = spec("eu", model)
+        if f"{sp}_usvals" not in set(M.summary["spec"]):
+            continue
+        a_, b_ = M.per_seed(sp, 30), M.per_seed(f"{sp}_usvals", 30)
+        tests = []
+        for s_ in a_:
+            if s_ in b_:
+                j = a_[s_][["net"]].join(b_[s_][["net"]], lsuffix="_a", rsuffix="_b", how="inner")
+                tests.append(stats.sharpe_diff(j["net_a"].to_numpy(), j["net_b"].to_numpy()))
+        T = pd.DataFrame(tests)
+        rows.append({"comparison": f"Europe {MODELS[model]}: European − US values", "diff": T["diff"].mean(),
+                     "se": T["se"].mean(), "mdd_5pct": T["mdd_5pct"].mean(), "p_max": T["p"].max(),
+                     "n_sig": int((T["p"] < 0.05).sum()), "pairs": len(T), "days": int(T["T"].mean())})
     single = []
     for m in MARKETS:
         for model in MODELS:
@@ -401,14 +455,16 @@ def t07_inference(out: Path, M: td.Matrix) -> None:
           "of the same seed (PCA + OU: its one run): the difference, its HAC standard error (Ledoit-Wolf delta "
           "method, Newey-West kernel), the smallest difference the sample resolves at 5% (1.96 se, Lo 2002), the "
           "largest p-value over the pairs and how many are below 0.05.",
-          ["US vs Europe pairs the two markets' seed-s runs on the days both traded."],
-          "runs/_matrix/thesis (headline): oos_daily.csv")
+          ["US vs Europe pairs the two markets' seed-s runs on the days both traded. European − US values: "
+           "the same model and seed in Europe with the values validated on European data (Table 3b) and with "
+           "the US values (Table 3)."],
+          SRC + " (headline): oos_daily.csv")
     s = pd.DataFrame(single).set_index("strategy")
     disp = pd.DataFrame({"SR net": s["SR_net"].map(fmt), "HAC se": s["se"].map(fmt), "Seed min": s["min"].map(fmt),
                          "Seed max": s["max"].map(fmt), "Seeds": s["seeds"].map(fmt)}, index=s.index)
     write(out, "T07b_sharpe_se", s, disp, "Table 7b. Net Sharpe ratios with standard errors (K = 30)",
           "Mean over seeds of the net Sharpe ratio and of its HAC standard error, and the range over seeds.",
-          [], "runs/_matrix/thesis (headline): oos_daily.csv")
+          [], SRC + " (headline): oos_daily.csv")
 
 
 def t08_alphas(out: Path, M: td.Matrix) -> None:
@@ -437,7 +493,7 @@ def t08_alphas(out: Path, M: td.Matrix) -> None:
           ["US: WRDS ff.fivefactors_daily (UMD). Europe: Ken French's Europe five factors and momentum (USD) in "
            "ECU/EUR, market in excess of the Bundesbank rate. STR: own daily factor per universe (bottom minus top "
            "30% of last month's return, equal-weighted), as Ken French has none for Europe. All t-statistics in "
-           "the CSV."], "runs/_matrix/thesis; data/us/shared/raw/ff5_daily.parquet; Europe zips in "
+           "the CSV."], SRC + "; data/us/shared/raw/ff5_daily.parquet; Europe zips in "
                        "data/europe/private/raw/external; features.parquet (ST_Rev)")
 
 
@@ -460,7 +516,7 @@ def t09_subperiods(out: Path, M: td.Matrix) -> None:
           "Gross and net Sharpe ratios by subperiod, K = 30, mean over seeds. 2022-2025: the attention model "
           "run past the paper's sample with the same hyperparameters and annual refits; no choice of the thesis "
           "used these years.", ["– : not run (the benchmarks stop in 2021)."],
-          "runs/_matrix/thesis (headline, extension)")
+          SRC + " (headline, extension)")
 
 
 def t10_ablation(out: Path, M: td.Matrix) -> None:
@@ -491,7 +547,7 @@ def t10_ablation(out: Path, M: td.Matrix) -> None:
           "Attention factors, K = 30, 1998-2021, each characteristic group removed from estimation and evaluation "
           "(its characteristics and their cross-sectional medians), same hyperparameters; mean over seeds 0-2 "
           "(sd of the gross SR in parentheses). The baseline is the headline model on the same seeds.",
-          ["Paper columns: Epstein et al. (2025), Table 3 (US)."], "runs/_matrix/thesis (ablation, headline)")
+          ["Paper columns: Epstein et al. (2025), Table 3 (US)."], SRC + " (ablation, headline)")
 
 
 def t11_robustness(out: Path, M: td.Matrix) -> None:
@@ -502,6 +558,10 @@ def t11_robustness(out: Path, M: td.Matrix) -> None:
                 ("Europe", "Attention, raw input", "eu_raw_input"), ("Europe", "Attention, holidays unfilled", "eu_unfilled"),
                 ("Europe", "Attention, europe12", "eu_europe12"),
                 ("Europe", "PCA + LongConv, headline", "eu_pca_longconv"), ("Europe", "PCA + LongConv, lag 1", "eu_pca_longconv_lag1")]
+    if "eu_attention_usvals" in set(M.summary["spec"]):
+        rows_def.insert(rows_def.index(("Europe", "Attention, lag 1", "eu_lag1")),
+                        ("Europe", "Attention, US values", "eu_attention_usvals"))
+        rows_def.append(("Europe", "PCA + LongConv, US values", "eu_pca_longconv_usvals"))
     rows = []
     for mk, lab, sp in rows_def:
         ps = per_seed_stats(M, sp, 30, seeds=[0, 1, 2])
@@ -521,11 +581,12 @@ def t11_robustness(out: Path, M: td.Matrix) -> None:
           "of the same model and market on the same seeds. Lag 1: weights traded one close later. Raw input: the "
           "policy sees the 30 daily residuals (the paper's wording) instead of their cumulative path. Rows that "
           "change how the model trades (lag 1, raw input) use hyperparameters re-validated under that change; "
-          "rows that change only the data keep the headline values (Table 3).",
+          "rows that change only the data keep the headline values (Tables 3 and 3b). US values (Europe): "
+          "the European rows traded with the values validated on US data instead of European data.",
           ["Top 200 (US): members up to cap rank 200 of the 500 build (ranks and medians of the 500 build). "
            "Holidays unfilled: Compustat Global as delivered (a holiday drops a country's names for 30 days before "
            "~2010). europe12: without Dublin, Lisbon, Vienna, Luxembourg and Athens."],
-          "runs/_matrix/thesis (robustness, headline)")
+          SRC + " (robustness, headline)")
 
 
 def t12_years(out: Path, M: td.Matrix) -> None:
@@ -546,10 +607,24 @@ def t12_years(out: Path, M: td.Matrix) -> None:
     t.index.name = "Year"
     write(out, "T12_net_sharpe_by_year", t, t.map(fmt), "Table A1. Net Sharpe ratio by year (K = 30)",
           "Annualised net Sharpe ratio within each calendar year, mean over seeds. 2022-2025: attention only "
-          "(the holdout runs).", [], "runs/_matrix/thesis (headline, extension)")
+          "(the holdout runs).", [], SRC + " (headline, extension)")
 
 
-def t13_searches(out: Path, matrix_dir: Path, main: Path) -> None:
+def t13_searches(out: Path, matrix_dir: Path, main: Path, europe_dir: Path | None = None) -> None:
+    finalists_table(out, main, "T13_search_finalists", "Table A2. The attention search: finalists",
+                    "US validation search ({n} Sobol points + base): the five best points and the base config on "
+                    "seeds 0-2, validation 1996-1997. The winner is the US headline configuration.",
+                    ["sobol-009 is the configuration Kevin Pesenti selected earlier from the same space."])
+    if europe_dir is not None:
+        finalists_table(out, europe_dir / "searches" / "eu", "T13b_search_finalists_europe",
+                        "Table A2b. The European attention search: finalists",
+                        "European validation search (the same {n} Sobol points + base, fitted on 1993-1995, "
+                        "validation 1996-1997): the five best points, the base config and the US winner on seeds "
+                        "0-2. The winner is the European headline configuration.",
+                        ["sobol-036 is the US winner (Table A2), carried into the finalists."])
+
+
+def finalists_table(out: Path, main: Path, name: str, title: str, caption: str, notes: list[str]) -> None:
     mets = json.loads((main / "metrics.json").read_text())
     rows = [{"name": r["name"], "val_net_SR": r["val_net_SR"], "se": r["se"], "gross_SR": r["gross_SR"],
              "turnover": r["turnover"], "values": json.dumps(r["overrides"])} for r in mets["finalists"]]
@@ -558,10 +633,7 @@ def t13_searches(out: Path, matrix_dir: Path, main: Path) -> None:
                     turnover=t["turnover"].map(fmt))
     disp.columns = ["Validation net SR", "se", "Validation gross SR", "Turnover", "Values"]
     disp.index.name = "Finalist"
-    write(out, "T13_search_finalists", t, disp, "Table A2. The attention search: finalists",
-          f"US validation search ({mets.get('n_search_points')} Sobol points + base): the five best points and the "
-          "base config on seeds 0-2, validation 1996-1997. The winner is the headline configuration.",
-          ["sobol-009 is the configuration Kevin Pesenti selected earlier from the same space."],
+    write(out, name, t, disp, title, caption.format(n=mets.get("n_search_points")), notes,
           str(main.relative_to(td.ROOT)))
 
 
@@ -569,17 +641,23 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--out", type=Path, default=ROOT / "results" / "thesis")
     ap.add_argument("--matrix", type=Path, default=ROOT / "runs" / "_matrix" / "thesis")
+    ap.add_argument("--europe-matrix", type=Path, default=ROOT / "runs" / "_matrix" / "thesis_eu",
+                    help="Europe-validated runs; ignored if missing (then Europe = the US values)")
     ap.add_argument("--main-search", type=Path, default=ROOT / "runs" / "20261010T110947Z_search_K30_val1996-1997")
     ap.add_argument("--only", nargs="*", help="table function names, e.g. t04_t05")
     args = ap.parse_args()
-    M = td.Matrix(args.matrix, ROOT / "runs")
+    global SRC
+    eu = args.europe_matrix if (args.europe_matrix / "summary.csv").exists() else None
+    M = td.Matrix(args.matrix, ROOT / "runs", override=eu)
+    if eu is not None:
+        SRC = f"{args.matrix.relative_to(ROOT).as_posix()} (US) + {eu.relative_to(ROOT).as_posix()} (Europe)"
     jobs = {"t01_sample": lambda: t01_sample(args.out), "t02_characteristics": lambda: t02_characteristics(args.out),
-            "t03_hyperparameters": lambda: t03_hyperparameters(args.out, args.matrix, args.main_search),
+            "t03_hyperparameters": lambda: t03_hyperparameters(args.out, args.matrix, args.main_search, eu),
             "t04_t05": lambda: t04_t05(args.out, M), "t06_costs": lambda: t06_costs(args.out, M),
             "t07_inference": lambda: t07_inference(args.out, M), "t08_alphas": lambda: t08_alphas(args.out, M),
             "t09_subperiods": lambda: t09_subperiods(args.out, M), "t10_ablation": lambda: t10_ablation(args.out, M),
             "t11_robustness": lambda: t11_robustness(args.out, M), "t12_years": lambda: t12_years(args.out, M),
-            "t13_searches": lambda: t13_searches(args.out, args.matrix, args.main_search)}
+            "t13_searches": lambda: t13_searches(args.out, args.matrix, args.main_search, eu)}
     for name, f in jobs.items():
         if not args.only or name in args.only:
             f()

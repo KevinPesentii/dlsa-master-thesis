@@ -98,3 +98,24 @@ def test_hyper_carries_the_europe_winner_but_never_its_data_dir(tmp_path, monkey
         cfg = rm.resolve(next(s for s in matrix["specs"] if s["name"] == name), matrix, d.parents[1])
         assert all(cfg[k.split(".")[0]][k.split(".")[1]] == v for k, v in win.items()), name
         assert cfg["data"]["dir"] == data_dir and cfg["matrix"]["hyper"]["candidate"] == "sobol-007"
+
+
+def test_matrix_override_replaces_europe_and_keeps_the_us_values(tmp_path):
+    """thesis_data.Matrix with the Europe-validated matrix: a spec it holds comes from it, and the
+    run it replaced stays reachable as <spec>_usvals; specs it does not hold are untouched."""
+    from afe.evaluation import thesis_data as td
+    runs = tmp_path / "runs"
+    for name in ("us_a", "eu_a_old", "eu_a_new"):
+        (runs / name).mkdir(parents=True)
+        (runs / name / "oos_daily.csv").write_text("date,gross\n")
+    for matrix, rows in (("thesis", [("us_attention", "us_a"), ("eu_attention", "eu_a_old")]),
+                         ("thesis_eu", [("eu_attention", "eu_a_new")])):
+        d = runs / "_matrix" / matrix
+        d.mkdir(parents=True)
+        pd.DataFrame([{"spec": s, "K": 30, "seed": 0, "SR_net": 0.0, "run_dir": f"/home/ubuntu/dlsa/runs/{r}"}
+                      for s, r in rows]).to_csv(d / "summary.csv", index=False)
+    M = td.Matrix(runs / "_matrix" / "thesis", runs, override=runs / "_matrix" / "thesis_eu")
+    assert M.runs("eu_attention", 30)["run"].iloc[0].name == "eu_a_new"
+    assert M.runs("eu_attention_usvals", 30)["run"].iloc[0].name == "eu_a_old"
+    assert M.runs("us_attention", 30)["run"].iloc[0].name == "us_a"
+    assert td.Matrix(runs / "_matrix" / "thesis", runs).runs("eu_attention", 30)["run"].iloc[0].name == "eu_a_old"
