@@ -1,6 +1,7 @@
 """Pack what the thesis matrix needs for an external machine (docs/cloud_runs.md, section 7).
 
     python scripts/make_bundle.py [--out runs/_bundle/<stamp>] [--git-bundle] [--markets europe]
+                                  [--markets us us_top800]      # configs/gap_matrix.yaml
 
 The code comes from the public fork (git clone --depth 1 -b <branch>), so only the data
 travels. The tree must be clean and the branch pushed. Writes:
@@ -40,7 +41,9 @@ FILES = {
     + [f"data/europe17/shared/{t}.parquet" for t in TABLES + ("rf_daily", "market_daily", "factors_daily",
                                                               "fx_to_numeraire_daily")]
     + [f"data/europe12/holfill/{t}.parquet" for t in TABLES],  # robustness
+    "us_top800": [f"data/us/top800/{t}.parquet" for t in TABLES],  # gap matrix only, not in the default
 }
+DEFAULT_MARKETS = ["us", "europe"]
 
 
 def sha256(path: Path) -> str:
@@ -55,8 +58,8 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--out", type=Path)
     ap.add_argument("--git-bundle", action="store_true", help="also write the branch as a git bundle")
-    ap.add_argument("--markets", nargs="+", choices=list(FILES), default=list(FILES),
-                    help="only these markets' tables (default: all)")
+    ap.add_argument("--markets", nargs="+", choices=list(FILES), default=DEFAULT_MARKETS,
+                    help="only these markets' tables (default: us europe)")
     args = ap.parse_args()
     files = [f for m in args.markets for f in FILES[m]]
     commit = runs.git_commit(ROOT)

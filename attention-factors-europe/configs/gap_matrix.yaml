@@ -1,0 +1,48 @@
+# The paper-gap follow-up runs (2026-10-16), fixed before any of them runs. They test the two
+# leading explanations in Thesis/diagnostics/2026-10-16_paper_gap (README, sections 8-9) of why
+# the US attention model trails Epstein et al. (2025): the universe, and how the factors are
+# trained. Diagnostic rows only: nothing here changes the headline (configs/us_headline.yaml),
+# and no value is selected on these out-of-sample years.
+#   python scripts/run_matrix.py --matrix configs/gap_matrix.yaml --dry-run
+#   python scripts/run_matrix.py --matrix configs/gap_matrix.yaml --smoke --jobs 8
+#   python scripts/run_matrix.py --matrix configs/gap_matrix.yaml --jobs 46 --threads 2
+# Every spec is the US headline (sobol-036) with ONE change, at K = 8 / 30 / 100 and seeds 0-2,
+# saving the yearly models for the replay of the two legs of the book (replay_legs.py in the
+# diagnostics folder). us_headline reruns the headline itself on the same machine and commit,
+# so each change is compared seed by seed against a run that differs only in that change; the
+# 2026-10-10 headline runs (runs/_matrix/thesis) are the reproducibility cross-check.
+
+name: gap
+
+sets:
+  seeds3: [0, 1, 2]
+  K_gap: [8, 30, 100]
+
+blocks:
+  save_models:                   # yearly state_dicts, for the leg replay
+    evaluation.save_models: true
+  paper_literal:                 # the paper's Table 4 and wording where the headline deviates;
+    objective.lambda_var: 6.3    # 100 on an annualised Sharpe = 100 / sqrt(252) on our daily one
+    model.score_std_target: null # no temperature calibration (the scale starts at 1)
+    policy.input: raw            # "the past 30 daily residual returns"
+    policy.input_normalise: none
+    policy.input_scale: 1.0      # decimal residuals, LongConv(eps) as written
+    training.grad_clip: null     # no gradient clipping
+                                 # knobs the paper leaves open (ridge, batch) keep the headline's values
+
+prep: {}
+
+specs:
+  # --- baseline: the headline, same machine and commit -----------------------------------------
+  - {name: us_headline, group: baseline, runner: attention, config: configs/us_headline.yaml, K: K_gap, seeds: seeds3, use: [save_models]}
+
+  # --- universe: the 800 largest listings (configs/us_data_top800.yaml). Its smallest member is
+  # the size of the smallest names in the paper's Figures 3-4 (smallest member $9.5bn in 2021; the
+  # 500-name build's $18.5bn). Characteristics are ranked within the 800. About 1.6 times the work
+  # per job; the full 1990-2021 panel load peaked at 7.9 GB private memory on the laptop.
+  - {name: us_top800, group: universe, runner: attention, config: configs/us_headline.yaml, K: K_gap, seeds: seeds3, use: [save_models], set: {data.dir: data/us/top800, sample.universe_size: 800}, mem_gb: 10.0, cost_scale: 1.6}
+
+  # --- how the factors are trained (diffuse, overlapping factors and a near-OLS loading solve) ---
+  - {name: us_ridge_1e3, group: conditioning, runner: attention, config: configs/us_headline.yaml, K: K_gap, seeds: seeds3, use: [save_models], set: {model.lambda_ridge: 0.001}}
+  - {name: us_no_temperature, group: conditioning, runner: attention, config: configs/us_headline.yaml, K: K_gap, seeds: seeds3, use: [save_models], set: {model.score_std_target: null}}
+  - {name: us_paper_literal, group: conditioning, runner: attention, config: configs/us_headline.yaml, K: K_gap, seeds: seeds3, use: [save_models, paper_literal]}

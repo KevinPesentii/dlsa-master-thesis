@@ -88,6 +88,10 @@ weaken a test to make code pass.
   (each carries its US winner into the finalists); results in `runs/_matrix/thesis_eu`.
   The Europe rows of `runs/_matrix/thesis` (US values) are the comparison, not the
   headline, whatever the two show.
+- Paper-gap diagnostics (2026-10-16): `configs/gap_matrix.yaml` (with the 800-name build
+  `configs/us_data_top800.yaml` -> `data/us/top800`) tests the explanations of the gap to the
+  paper in `Thesis/diagnostics/2026-10-16_paper_gap`. Diagnostic rows only: they never
+  replace a headline value and select nothing; results in `runs/_matrix/gap`.
 
 ## Trading costs: limits, not replication
 

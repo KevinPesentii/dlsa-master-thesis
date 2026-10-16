@@ -266,3 +266,48 @@ tar -czf ~/runs_thesis_eu.tgz -C ~/dlsa/attention-factors-europe runs
 At home, unpack `runs_thesis_eu.tgz` as in section 7: the run directories have new
 timestamped names and the ledger is `runs/_matrix/thesis_eu`, so nothing of the first
 matrix is overwritten.
+
+## 9. The paper-gap matrix (2026-10-16)
+
+`configs/gap_matrix.yaml` tests the explanations of the gap to the paper in
+`Thesis/diagnostics/2026-10-16_paper_gap`. Each row is the US headline (sobol-036) with one
+change:
+- the 800 largest listings instead of 500 (`configs/us_data_top800.yaml`, built on the laptop
+  into `data/us/top800`);
+- λ_ridge 1e-3;
+- no score temperature;
+- a paper-literal setting.
+
+The headline itself runs too, as the paired baseline. Every row runs at K = 8 / 30 / 100 and
+seeds 0-2 with the yearly models saved: 45 runs, no prep jobs, no searches. Diagnostic rows
+only: nothing is selected on them.
+
+Size, from the section 7 run (2 threads, 46 jobs in flight): US attention jobs took about
+90 / 115 / 205 minutes at K = 8 / 30 / 100.
+- The 800-name jobs do about 1.6 times the work (`cost_scale` in the matrix). The longest,
+  K = 100 on 800 names, needs roughly 5-6 hours and sets the wall-clock. Everything else is
+  done within about 3.5 hours.
+- Memory: 5.5 GB per 500-name job and 10 GB per 800-name job (`mem_gb` in the matrix; the
+  full 800-name panel load peaked at 7.9 GB on the laptop), about 290 GB for all 45. Use the
+  **m7i.24xlarge** (384 GiB) again: all 45 jobs fit its budget at once. On a c7i.24xlarge
+  (192 GiB) the budget holds about half of them back and the run takes longer.
+- Storage: 30 GiB (the bundle is about 0.4 GB, the 45 run directories about 2 GB).
+
+```powershell
+& $PY scripts\run_matrix.py --matrix configs\gap_matrix.yaml --dry-run | Select-Object -First 1   # 45 jobs
+& $PY scripts\make_bundle.py --markets us us_top800 --out $env:TEMP\afe_bundle_gap
+scp $env:TEMP\afe_bundle_gap\afe_data.tar $env:TEMP\afe_bundle_gap\SHA256SUMS $env:TEMP\afe_bundle_gap\COMMIT "ubuntu@${IP}:~"
+```
+
+On the machine, after the clone, `sha256sum -c` and `cloud_setup.sh` of section 7:
+
+```bash
+$PY scripts/run_matrix.py --matrix configs/gap_matrix.yaml --smoke --jobs 8   # 5 rows once, 1 epoch, 1998: "0 failed"
+tmux new -s afe
+$PY scripts/run_matrix.py --matrix configs/gap_matrix.yaml --jobs 46 --threads 2 2>&1 | tee runs/matrix_gap_console.log
+tar -czf ~/runs_gap.tgz -C ~/dlsa/attention-factors-europe runs
+```
+
+At home, unpack `runs_gap.tgz` as in section 7. The results are under `runs/_matrix/gap`
+(ledger, `summary.csv`, `summary_by_spec.csv`), and the run directories have new
+timestamped names, so nothing earlier is overwritten.

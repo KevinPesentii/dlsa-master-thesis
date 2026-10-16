@@ -19,7 +19,9 @@ starts and records the search, the candidate and the validation Sharpe under `ma
 A search counts as `workers` jobs against --jobs. A restarted search resumes its trials.
 
 Scheduling: longest jobs first (a rough cost per job), at most --jobs at a time and at
-most --mem-gb of estimated peak memory in flight. Each job's log is
+most --mem-gb of estimated peak memory in flight. A spec may set `mem_gb` (its peak memory
+per job, default by runner and market) and `cost_scale` (multiplies its rough cost), e.g.
+for a larger universe than the default build. Each job's log is
 runs/_matrix/<name>/logs/<job>.log; runs/_matrix/<name>/ledger.jsonl records every start
 and finish, so a restart skips the jobs that finished (their run directory has a
 metrics.json) and reruns the rest; --retry-failed also reruns failures. --summary (also
@@ -176,7 +178,8 @@ def expand(matrix: dict, groups: list[str] | None, out: Path, threads: int, smok
                 per_year = (2.0 if market == "us" else 1.0) * (1 + K / 60) if spec["runner"] == "attention" else \
                            ((1.0 if market == "us" else 0.5) if trained else 0.05)
                 jobs.append(Job(f"{spec['name']}_K{K}_s{seed}", [RUNNERS[spec["runner"]], path.name] + extra,
-                                MEM_GB[(spec["runner"], market)], per_year * len(years), after, spec, K, seed,
+                                float(spec.get("mem_gb", MEM_GB[(spec["runner"], market)])),
+                                per_year * len(years) * float(spec.get("cost_scale", 1.0)), after, spec, K, seed,
                                 make_cmd=make_cmd))
     return jobs
 
