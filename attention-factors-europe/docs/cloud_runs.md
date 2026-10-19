@@ -368,3 +368,58 @@ and **Terminate** the instance (check that EC2 -> Volumes is empty). The results
 timestamped names, so nothing earlier is overwritten. The leg replay of the saved seed-0 models
 runs on the laptop afterwards (`replay_legs.py ... --matrix gap2 --spec <row>` in the diagnostics
 folder; it loads one year of the panel at a time, so 800 names fit in memory).
+
+## 11. Experiment outside the thesis: competing factors (2026-10-19)
+
+`configs/exp_competition_matrix.yaml` is NOT a thesis run. It tests a change to Equation (1),
+`model.factor_weights: compete` (module docstring of `src/afe/model/attention_factors.py`): the
+factors compete for each name, so each factor holds fewer names and the factors hold different
+ones. Its numbers are never cited as thesis results and select nothing. Each market runs its
+headline (US sobol-036; Europe the Europe-validated sobol-110) as a 2 x 2 of softmax over names or
+competing factors, at the headline temperature or a sharp one, plus a balanced row (Sinkhorn,
+`model.sinkhorn_iters: 5`), at K = 8 / 30 and seeds 0-2: 60 runs, no prep jobs, no searches. Every
+run also writes `factor_stats` to metrics.json (effective names per factor, top-10 share, overlap
+between factors, effective factors of the loading solve), and `summary.csv` gets them as `f_*`.
+
+Machine: **m7i.8xlarge on-demand** (32 vCPU, 128 GiB, Stockholm $1.71/h), `--jobs 16 --threads 2`,
+the machine and settings of the 2026-10-18 run.
+- Durations there (2026-10-18 ledger): US headline jobs about 49 / 61 minutes at K = 8 / 30. The
+  Europe headline took 31 / 42 minutes in the run of section 8. Competition costs about 5-10% more
+  per training step. The balanced rows cost about 1.8x per step at K = 30 (laptop timing,
+  forward + backward, 2 threads), so US balanced K = 30 is the long pole at roughly 1.7 hours.
+- Total about 50 process-hours: **about 3.5 hours** wall-clock with 16 in flight, roughly $6-7.
+- Memory: 5.5 GB per US job and 3 GB per Europe job, at most about 90 GB in flight against a budget
+  of about 105 GB, so all 16 slots stay busy.
+- Storage: 30 GiB (bundle about 0.3 GB, the 60 run directories about 3 GB).
+- Why not bigger: an m7i.12xlarge (48 vCPU, `--jobs 24`) would take about 2.5 hours for the same
+  money, but it needs 48 vCPUs of on-demand quota. 32 are known to work.
+
+On the laptop, from `exp/factor-competition`, committed and pushed:
+
+```powershell
+cd C:\Users\henri\Desktop\SSE\masterThesis\Code\dlsa-competition\attention-factors-europe
+& $PY scripts\run_matrix.py --matrix configs\exp_competition_matrix.yaml --dry-run | Select-Object -First 1   # 60 jobs
+& $PY scripts\make_bundle.py --out $env:TEMP\afe_bundle_exp     # us + europe tables, ~0.3 GB
+scp $env:TEMP\afe_bundle_exp\afe_data.tar $env:TEMP\afe_bundle_exp\SHA256SUMS $env:TEMP\afe_bundle_exp\COMMIT "ubuntu@${IP}:~"
+```
+
+On the machine, after the clone, `sha256sum -c` and `cloud_setup.sh` of section 7:
+
+```bash
+$PY scripts/run_matrix.py --matrix configs/exp_competition_matrix.yaml --smoke --jobs 10   # 10 rows once, 1 epoch, 1998: "0 failed"
+tmux new -s afe
+$PY scripts/run_matrix.py --matrix configs/exp_competition_matrix.yaml --jobs 16 --threads 2 2>&1 | tee runs/matrix_exp_console.log; tar -czf ~/runs_exp.tgz -C ~/dlsa/attention-factors-europe runs; sudo shutdown -h now
+```
+
+As in section 10, the last line archives `runs/` and stops the machine. Start it again (it gets a
+new public IP), then in PowerShell
+
+```powershell
+scp "ubuntu@${IP}:~/runs_exp.tgz" $env:TEMP\
+tar -xzf $env:TEMP\runs_exp.tgz -C C:\Users\henri\Desktop\SSE\masterThesis\Code\dlsa-competition\attention-factors-europe
+```
+
+and **Terminate** the instance (check that EC2 -> Volumes is empty). The results are under
+`runs/_matrix/exp_competition` in the experiment's own worktree, apart from the thesis runs. The
+saved yearly models of the compete rows must be rebuilt with `factor_weights: compete` (and
+`sinkhorn_iters`) from the run's config. The diagnostics scripts build the softmax model by default.

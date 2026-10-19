@@ -1,0 +1,71 @@
+# EXPERIMENT OUTSIDE THE THESIS (2026-10-19): factors that compete for names. NOT in the paper,
+# not a thesis row, and nothing here may replace a headline value or be cited as a thesis result.
+# Question: if each factor holds fewer names and the factors hold DIFFERENT names, do the
+# residuals hedge better and does the book earn more net of costs? Motivation: Europe's
+# Figure 7b (Thesis/diagnostics/2026-10-15_factor_differentiation), where the factors of the
+# Europe headline all hold the same large banks.
+#
+# model.factor_weights: compete (model/attention_factors.py) takes the softmax over FACTORS for
+# each name instead of over names for each factor, then normalises each factor over names. The
+# factors split the universe between them; every name keeps a membership of 1, so it is always
+# hedged by some factor (the loadings come from the weights). model.sinkhorn_iters > 0 also
+# balances the factors to about n/K names of membership each.
+#
+#   python scripts/run_matrix.py --matrix configs/exp_competition_matrix.yaml --dry-run
+#   python scripts/run_matrix.py --matrix configs/exp_competition_matrix.yaml --smoke --jobs 10
+#   python scripts/run_matrix.py --matrix configs/exp_competition_matrix.yaml --jobs 16 --threads 2
+#
+# Each market runs a 2 x 2 (softmax over names / compete) x (its headline temperature / a sharp
+# one) and a balanced row, at K = 8 / 30, seeds 0-2: 60 runs, no prep jobs, no searches. The
+# sharp row separates the effect of competition from that of concentration alone. The sharp
+# targets are fixed here, not tuned: in a simulation of i.i.d. scores they give at
+# initialisation about the same concentration under both normalisations (US K = 30: softmax
+# at 2.0 about 34 effective names per factor, compete at 3.0 about 42; Europe K = 30: 20 and 17).
+# Training moves the temperature (log_tau is learned), so these are starting points.
+# The run reports, per year and on average, the effective names per factor, the top-10 share,
+# the overlap between factors and the effective factors of the loading solve
+# (metrics.json: factor_stats, factor_stats_by_year; summary.csv: f_*).
+
+name: exp_competition
+
+sets:
+  seeds3: [0, 1, 2]
+  K_exp: [8, 30]
+
+blocks:
+  save_models:                     # yearly state_dicts; rebuild with this run's model.factor_weights
+    evaluation.save_models: true
+  eu_values:                       # the Europe headline's values: the Europe search's winner sobol-110
+    objective.lambda_var: 1.09     # (runs/_matrix/thesis_eu/searches/eu, validation net SR 6.47),
+    policy.input_scale: 42.3       # which configs/thesis_matrix_europe.yaml applies with `hyper: eu`.
+    model.score_std_target: null   # Copied, because this matrix runs no search
+    model.lambda_ridge: 0.00255
+    training.batch_days: 250
+    policy.input: raw
+    policy.input_normalise: none
+    model.level_hidden: 0
+  compete:
+    model.factor_weights: compete
+  sharp_softmax:
+    model.score_std_target: 2.0
+  sharp_compete:
+    model.score_std_target: 3.0
+  balanced:                        # about 1.8x the factor step at K = 30 (cost_scale 1.5 below)
+    model.sinkhorn_iters: 5
+
+prep: {}
+
+specs:
+  # --- US: the headline (sobol-036), 500 names -----------------------------------------------------
+  - {name: us_softmax, group: us, runner: attention, config: configs/us_headline.yaml, K: K_exp, seeds: seeds3, use: [save_models]}
+  - {name: us_compete, group: us, runner: attention, config: configs/us_headline.yaml, K: K_exp, seeds: seeds3, use: [save_models, compete]}
+  - {name: us_softmax_sharp, group: us, runner: attention, config: configs/us_headline.yaml, K: K_exp, seeds: seeds3, use: [save_models, sharp_softmax]}
+  - {name: us_compete_sharp, group: us, runner: attention, config: configs/us_headline.yaml, K: K_exp, seeds: seeds3, use: [save_models, compete, sharp_compete]}
+  - {name: us_compete_balanced, group: us, runner: attention, config: configs/us_headline.yaml, K: K_exp, seeds: seeds3, use: [save_models, compete, sharp_compete, balanced], cost_scale: 1.5}
+
+  # --- Europe: the Europe headline (europe17 top 200, holidays filled, Europe-validated values) ------
+  - {name: eu_softmax, group: europe, runner: attention, config: configs/europe_headline.yaml, K: K_exp, seeds: seeds3, use: [save_models, eu_values]}
+  - {name: eu_compete, group: europe, runner: attention, config: configs/europe_headline.yaml, K: K_exp, seeds: seeds3, use: [save_models, eu_values, compete]}
+  - {name: eu_softmax_sharp, group: europe, runner: attention, config: configs/europe_headline.yaml, K: K_exp, seeds: seeds3, use: [save_models, eu_values, sharp_softmax]}
+  - {name: eu_compete_sharp, group: europe, runner: attention, config: configs/europe_headline.yaml, K: K_exp, seeds: seeds3, use: [save_models, eu_values, compete, sharp_compete]}
+  - {name: eu_compete_balanced, group: europe, runner: attention, config: configs/europe_headline.yaml, K: K_exp, seeds: seeds3, use: [save_models, eu_values, compete, sharp_compete, balanced], cost_scale: 1.5}

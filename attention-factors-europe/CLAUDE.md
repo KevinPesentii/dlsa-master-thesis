@@ -94,6 +94,10 @@ weaken a test to make code pass.
   replace a headline value and select nothing; results in `runs/_matrix/gap`. Likewise
   `configs/gap2_matrix.yaml` (2026-10-19; size vs breadth, with the ranks 301-800 build
   `configs/us_data_rank301_800.yaml` -> `data/us/rank301_800`): results in `runs/_matrix/gap2`.
+- OUTSIDE THE THESIS (2026-10-19, branch `exp/factor-competition`): `model.factor_weights:
+  compete` (factors compete for names; not in the paper) and `configs/exp_competition_matrix.yaml`,
+  results in `runs/_matrix/exp_competition`. Never a thesis result or a headline value; the
+  default `softmax` is Equation (1) unchanged.
 
 ## Trading costs: limits, not replication
 
