@@ -81,7 +81,8 @@ def fresh_model(cfg: dict, K: int, n_features: int, init_seed: int) -> Attention
     return AttentionArb(n_features=n_features, n_factors=K, embedding_dim=mc["embedding_dim"],
                         lambda_ridge=mc["lambda_ridge"], level_hidden=mc.get("level_hidden", 0), hidden=pc["hidden"],
                         lookback=pc["residual_lookback"], dropout=pc["dropout"],
-                        lambda_squash=pc["lambda_squash"])
+                        lambda_squash=pc["lambda_squash"], factor_weights=mc.get("factor_weights", "softmax"),
+                        sinkhorn_iters=mc.get("sinkhorn_iters", 0))
 
 
 def select_lambda(K: int, cfg: dict, seed: int, p: slots.SlotPanel, year: int,

@@ -214,6 +214,7 @@ def summary(jobs: list[Job], state: dict, out: Path) -> None:
                      "SR_net": m["net"]["SR"], "mu_net_pct": m["net"]["mu_pct"], "beta": m["beta_ew_market"],
                      "turnover": m["turnover_daily"], "short": m["short_exposure"],
                      "break_even_bps": m["break_even_turnover_cost_bps"], "first": m["first"], "last": m["last"],
+                     **{f"f_{k}": v for k, v in (m.get("factor_stats") or {}).items()},   # runs since 2026-10-19
                      "minutes": e.get("minutes"), "run_dir": e["run_dir"]})
     if not rows:
         print("no finished jobs yet")
@@ -223,7 +224,8 @@ def summary(jobs: list[Job], state: dict, out: Path) -> None:
     agg = df.groupby(["group", "spec", "K"], sort=False).agg(
         seeds=("seed", "size"), SR=("SR", "mean"), SR_sd=("SR", "std"), SR_net=("SR_net", "mean"),
         SR_net_sd=("SR_net", "std"), sigma_pct=("sigma_pct", "mean"), beta=("beta", "mean"),
-        turnover=("turnover", "mean"), short=("short", "mean"), break_even_bps=("break_even_bps", "mean"))
+        turnover=("turnover", "mean"), short=("short", "mean"), break_even_bps=("break_even_bps", "mean"),
+        **{c: (c, "mean") for c in ("f_eff_names", "f_overlap", "f_eff_factors") if c in df})
     agg.round(3).to_csv(out / "summary_by_spec.csv")
     with pd.option_context("display.width", 200, "display.max_rows", 500):
         print(agg.round(2).to_string())

@@ -91,10 +91,11 @@ class AttentionArb(nn.Module):
 
     def __init__(self, n_features: int, n_factors: int = 30, embedding_dim: int = 32,
                  lambda_ridge: float = 1e-4, hidden: int = 32, lookback: int = 30,
-                 dropout: float = 0.1, lambda_squash: float = 1e-3, level_hidden: int = 0):
+                 dropout: float = 0.1, lambda_squash: float = 1e-3, level_hidden: int = 0,
+                 factor_weights: str = "softmax", sinkhorn_iters: int = 0):
         super().__init__()
         self.factors = AttentionFactors(n_features, n_factors, embedding_dim, lambda_ridge,
-                                        level_hidden)
+                                        level_hidden, factor_weights, sinkhorn_iters)
         self.policy = LongConvPolicy(hidden, lookback, dropout, lambda_squash)
         self.lookback = lookback
 
@@ -121,7 +122,7 @@ class AttentionArb(nn.Module):
         w = w / torch.where(l1 > 0, l1, torch.ones_like(l1))
         return {"w": w, "tradable": tradable, "eps": eps, "R": R_slot,
                 "in_universe": in_universe, "w_port": w_port, "l1": l1.squeeze(1),
-                "idx": idx, "n_pool": n_pool}
+                "idx": idx, "n_pool": n_pool, "w_F": w_F}
 
 
 def explained_variance(eps: torch.Tensor, R: torch.Tensor, mask: torch.Tensor,

@@ -33,6 +33,7 @@ sys.path.insert(0, str(ROOT / "src"))
 from afe import runs  # noqa: E402
 from afe.data import slots  # noqa: E402
 from afe.evaluation import metrics  # noqa: E402
+from afe.model.attention_factors import weight_stats  # noqa: E402
 from afe.model.attention_pipeline import AttentionArb, objective, slot_batch, to_pool  # noqa: E402
 from afe.policy import trading  # noqa: E402
 
@@ -155,7 +156,7 @@ def run_K(K: int, cfg: dict, seed: int, p: slots.SlotPanel, years: list[int], lo
     rng = np.random.default_rng(seed)
     L = pc["residual_lookback"]
     dates = p.dates
-    w_slot_all, w_pool_all, t_all = [], [], []
+    w_slot_all, w_pool_all, t_all, stats = [], [], [], []
     for year in years:
         w0 = window_start(cfg, year)
         t_tr0 = dates.searchsorted(w0)
@@ -169,7 +170,9 @@ def run_K(K: int, cfg: dict, seed: int, p: slots.SlotPanel, years: list[int], lo
             f"({t_te0 - t_tr0} days), test {t_te1 - t_te0} days")
         model = AttentionArb(n_features=len(p.features), n_factors=K, embedding_dim=mc["embedding_dim"],
                              lambda_ridge=mc["lambda_ridge"], level_hidden=mc.get("level_hidden", 0), hidden=pc["hidden"], lookback=L,
-                             dropout=pc["dropout"], lambda_squash=pc["lambda_squash"])
+                             dropout=pc["dropout"], lambda_squash=pc["lambda_squash"],
+                             factor_weights=mc.get("factor_weights", "softmax"),
+                             sinkhorn_iters=mc.get("sinkhorn_iters", 0))
         train_window(model, p, t_tr0, t_te0, cfg, rng, log)
         model.eval()
         if ev.get("save_models"):       # for the factor figures: betas and weights on any date
@@ -181,16 +184,27 @@ def run_K(K: int, cfg: dict, seed: int, p: slots.SlotPanel, years: list[int], lo
         w_slot_all.append(w.numpy())
         w_pool_all.append(to_pool(w, p.idx[t_te0:t_te1], p.n_pool).numpy())
         t_all.append(np.arange(t_te0, t_te1))
+        fs = weight_stats(out["w_F"][L:], p.in_universe[t_te0:t_te1], mc["lambda_ridge"])
+        stats.append({"year": year, **fs})
         log(f"      test: net SR {metrics.annualised(parts['net'].numpy())['SR']:.2f} within the year, "
             f"EV {parts['ev'].item():.3f}, {int(out['tradable'].sum(1).float().mean())} tradable/day, "
             f"{time.time() - t0:.0f}s")
+        if fs:
+            log(f"      factors: {fs['eff_names']:.0f} effective names of {fs['names']:.0f}, top-10 share "
+                f"{fs['top_share']:.0%}, overlap {fs['overlap'] or 0:.2f}, {fs['eff_factors']:.1f} of {K} effective")
 
     t_idx = np.concatenate(t_all)
     daily = daily_book(p, np.concatenate(w_pool_all), t_idx, cfg)
     m = metrics.performance(daily, ob["turnover_cost"], ob["short_cost"], ev["cost_grid_bps"])
     m.update({"K": K, "seed": seed, "factor_model": "attention", "policy_input": pc["input"],
               "n_features": len(p.features), "drop_groups": cfg["features"].get("drop_groups") or [],
-              "execution_lag": execution(cfg)[0], "stale_when_closed": closed_mask(p, cfg, 0, 1) is not None})
+              "execution_lag": execution(cfg)[0], "stale_when_closed": closed_mask(p, cfg, 0, 1) is not None,
+              "factor_weights": mc.get("factor_weights", "softmax"), "sinkhorn_iters": mc.get("sinkhorn_iters", 0)})
+    # Factor concentration on the traded days, the mean over years (each year by its own model)
+    m["factor_stats"] = {k: float(np.mean([s[k] for s in stats if s.get(k) is not None]))
+                         for k in ("eff_names", "top_share", "overlap", "eff_factors", "names")
+                         if any(s.get(k) is not None for s in stats)}
+    m["factor_stats_by_year"] = stats
     runs.write_metrics(run_dir, m)
     daily.to_csv(run_dir / "oos_daily.csv", index=False)
     if ev.get("save_weights"):

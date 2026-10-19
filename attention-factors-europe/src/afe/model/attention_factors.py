@@ -43,6 +43,25 @@ pass an X that is already shifted.
 
 The forward pass follows the prototype in scripts/bench_epstein.py; what is added here
 is the mask, the slot layout and the NaN guard.
+
+EXPERIMENT, outside the thesis (2026-10-19): `weights="compete"`. NOT in the paper and not
+part of any thesis result; configs/exp_competition_matrix.yaml is its only user. Equation (1)
+normalises each factor's scores over assets, so every factor holds every name and nothing stops
+all K of them loading on the same names (Europe's Figure 7b). Here the factors COMPETE for each
+name instead, as in slot attention (Locatello et al. 2020):
+
+    a        = Softmax(scores, over factors)             (T, K, S), each name's column sums to 1
+    w_F[k]   = a[k] / sum_s a[k, s]                      rows sum to 1, as with the softmax
+
+A name that belongs strongly to one factor is lost to the others, so the factors split the
+universe between them and, with sharp scores, approach a partition of about n/K names each.
+Every name keeps a membership of 1 in total, which matters in this model: the loadings come from
+the weights, so a name with no weight in any factor would not be hedged at all (its residual
+would be its raw return). With `sinkhorn_iters` > 0 the memberships are also balanced across
+factors (each holds n/K of them in total, Sinkhorn-Knopp in log space, ending on the per-name
+normalisation), so one factor cannot take most of the universe. The score temperature is
+calibrated as for the softmax (the spread of all scores); under competition the spread that
+matters is across factors for a given name, which is of the same order.
 """
 
 from __future__ import annotations
@@ -51,6 +70,8 @@ import math
 
 import torch
 import torch.nn as nn
+
+WEIGHTS = ("softmax", "compete")
 
 
 class AttentionFactors(nn.Module):
@@ -61,11 +82,20 @@ class AttentionFactors(nn.Module):
         n_factors: K, number of attention factors (30 in the paper's headline).
         embedding_dim: d, embedding width (32 in Table 4).
         lambda_ridge: ridge penalty in the loading solve.
+        weights: "softmax" (Equation (1)) or "compete" (the experiment in the module docstring).
+        sinkhorn_iters: with "compete", balance the memberships across factors (0 = off).
     """
 
     def __init__(self, n_features: int, n_factors: int = 30, embedding_dim: int = 32,
-                 lambda_ridge: float = 1e-4, level_hidden: int = 0):
+                 lambda_ridge: float = 1e-4, level_hidden: int = 0, weights: str = "softmax",
+                 sinkhorn_iters: int = 0):
         super().__init__()
+        if weights not in WEIGHTS:
+            raise ValueError(f"unknown model.factor_weights: {weights} (one of {WEIGHTS})")
+        if sinkhorn_iters and weights != "compete":
+            raise ValueError("model.sinkhorn_iters needs model.factor_weights: compete")
+        self.weights = weights
+        self.sinkhorn_iters = int(sinkhorn_iters)
         self.W_K = nn.Parameter(torch.randn(n_features, embedding_dim) / math.sqrt(n_features))
         self.Q = nn.Parameter(torch.randn(n_factors, embedding_dim) / math.sqrt(embedding_dim))
         self.log_tau = nn.Parameter(torch.zeros(()))
@@ -143,7 +173,32 @@ class AttentionFactors(nn.Module):
         scores = scores * self.log_tau.exp()
         keep = tradable.unsqueeze(1)                          # (T, 1, S)
         scores = scores.masked_fill(~keep, torch.finfo(scores.dtype).min)
-        return torch.softmax(scores, dim=-1) * keep.to(scores.dtype)
+        if self.weights == "softmax":
+            return torch.softmax(scores, dim=-1) * keep.to(scores.dtype)
+        a = self.memberships(scores, keep)
+        mass = a.sum(dim=-1, keepdim=True)
+        return a / torch.where(mass > 0, mass, torch.ones_like(mass))
+
+    def memberships(self, scores: torch.Tensor, keep: torch.Tensor) -> torch.Tensor:
+        """Masked scores (T, K, S) -> a (T, K, S): each tradable name's share in each factor,
+        summing to 1 over factors (and, with Sinkhorn, to about n/K over names per factor).
+
+        A padded slot has the floor in every factor, so its membership comes back uniform
+        and the mask zeroes it; the Sinkhorn steps re-apply the floor after each
+        normalisation for the same reason. A date with nothing tradable gives zero rows."""
+        fl = keep.to(scores.dtype)
+        if not self.sinkhorn_iters:
+            a = torch.softmax(scores, dim=1) * fl
+        else:
+            floor = torch.finfo(scores.dtype).min
+            n = fl.sum(dim=-1, keepdim=True)                                   # (T, 1, 1)
+            log_mass = torch.log((n / self.K).clamp_min(1e-12))                # n/K per factor
+            la = scores
+            for _ in range(self.sinkhorn_iters):
+                la = (la - torch.logsumexp(la, dim=-1, keepdim=True) + log_mass).masked_fill(~keep, floor)
+                la = (la - torch.logsumexp(la, dim=1, keepdim=True)).masked_fill(~keep, floor)
+            a = la.exp() * fl
+        return a
 
     def loadings(self, w_F: torch.Tensor) -> torch.Tensor:
         """beta': (T, S, K) from w_F: (T, K, S), with the ridge penalty of Section 3.2."""
@@ -168,3 +223,28 @@ def compose(w_port: torch.Tensor, w_F: torch.Tensor, betaT: torch.Tensor) -> tor
     """
     bw = torch.einsum("tsk,ts->tk", betaT, w_port)
     return w_port - torch.einsum("tks,tk->ts", w_F, bw)
+
+
+def weight_stats(w_F: torch.Tensor, tradable: torch.Tensor, lambda_ridge: float, top: int = 10) -> dict:
+    """How concentrated and how distinct the factors are, averaged over the dates with names.
+
+    eff_names: 1 / sum_s w^2 per factor (the number of equal weights with the same Herfindahl).
+    top_share: weight in the factor's `top` largest names. overlap: mean cosine between the
+    weight vectors of two different factors (0 = disjoint names). eff_factors: trace of the
+    ridge hat matrix G (G + lambda I)^-1, G = w_F w_F', i.e. how many factors the loading solve
+    keeps (Thesis/diagnostics/2026-10-15_factor_differentiation). Diagnostics only."""
+    with torch.no_grad():
+        w = w_F[tradable.any(dim=-1)].double()                               # (T', K, S)
+        if w.shape[0] == 0:
+            return {}
+        K = w.shape[1]
+        sq = (w ** 2).sum(dim=-1)                                           # (T', K)
+        wn = w / sq.sqrt().clamp_min(1e-300).unsqueeze(-1)
+        cos = wn @ wn.transpose(1, 2)
+        off = (cos.sum(dim=(1, 2)) - cos.diagonal(dim1=1, dim2=2).sum(dim=-1)) / max(K * (K - 1), 1)
+        ev = torch.linalg.eigvalsh(w @ w.transpose(1, 2)).clamp_min(0)
+        return {"eff_names": float((1 / sq.clamp_min(1e-300)).mean()),
+                "top_share": float(w.topk(min(top, w.shape[-1]), dim=-1).values.sum(dim=-1).mean()),
+                "overlap": float(off.mean()) if K > 1 else None,
+                "eff_factors": float((ev / (ev + lambda_ridge).clamp_min(1e-300)).sum(dim=-1).mean()),
+                "names": float(tradable.sum(dim=-1)[tradable.any(dim=-1)].double().mean())}
