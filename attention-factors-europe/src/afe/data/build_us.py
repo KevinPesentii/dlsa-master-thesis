@@ -239,8 +239,10 @@ def build(cfg: dict, raw: up.RawUS, out_dir: Path, cutoff: pd.Timestamp | None =
 
 
 def build_report(cfg, uni, asof, ret, coverage, mc, raw, inspect_dir: Path) -> str:
+    lo, hi = int(asof["cap_rank_all"].min()), int(asof["cap_rank_all"].max())
     L = [f"US dataset built {dt.datetime.now():%Y-%m-%d %H:%M}", f"config: {cfg}", "",
-         f"universe: {uni['month'].nunique()} months x {cfg['sample']['universe_size']}, "
+         f"universe: {uni['month'].nunique()} months x {cfg['sample']['universe_size']}"
+         f"{f' (ranks {lo}-{hi})' if lo > 1 else ''}, "
          f"{uni['sec_id'].nunique()} distinct permnos; returns.parquet {len(ret):,} rows, "
          f"{ret['sec_id'].nunique()} permnos", ""]
     if len(raw.delisting):

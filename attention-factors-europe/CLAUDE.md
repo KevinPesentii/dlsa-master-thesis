@@ -91,7 +91,9 @@ weaken a test to make code pass.
 - Paper-gap diagnostics (2026-10-16): `configs/gap_matrix.yaml` (with the 800-name build
   `configs/us_data_top800.yaml` -> `data/us/top800`) tests the explanations of the gap to the
   paper in `Thesis/diagnostics/2026-10-16_paper_gap`. Diagnostic rows only: they never
-  replace a headline value and select nothing; results in `runs/_matrix/gap`.
+  replace a headline value and select nothing; results in `runs/_matrix/gap`. Likewise
+  `configs/gap2_matrix.yaml` (2026-10-19; size vs breadth, with the ranks 301-800 build
+  `configs/us_data_rank301_800.yaml` -> `data/us/rank301_800`): results in `runs/_matrix/gap2`.
 
 ## Trading costs: limits, not replication
 

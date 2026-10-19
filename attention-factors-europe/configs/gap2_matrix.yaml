@@ -1,0 +1,52 @@
+# The second paper-gap run (2026-10-19), fixed before any of it runs. The first (configs/gap_matrix.yaml,
+# runs/_matrix/gap) found that the 800 largest listings raise K = 30 net Sharpe by 0.34 and gross by 0.59,
+# with the gain nil at K = 8 and large at K = 30 / 100. It could not say why: the 800 names are our 500
+# plus 300 smaller firms (Thesis/diagnostics/2026-10-16_paper_gap/followup_universe.md, item 7).
+# Diagnostic rows only: nothing here changes the headline (configs/us_headline.yaml), and no value is
+# selected on these out-of-sample years.
+#   python scripts/run_matrix.py --matrix configs/gap2_matrix.yaml --dry-run
+#   python scripts/run_matrix.py --matrix configs/gap2_matrix.yaml --smoke --jobs 8
+#   python scripts/run_matrix.py --matrix configs/gap2_matrix.yaml --jobs 16 --threads 2
+# Every spec is the US headline (sobol-036) at K = 8 / 30 / 100 and seeds 0-2, saving the yearly models
+# for the leg replay (replay_legs.py in the diagnostics folder). us_headline and us_top800 repeat the
+# first run's rows on this machine, so each new row is compared seed by seed with baselines that differ
+# from it only in its change; runs/_matrix/gap is the cross-machine check.
+
+name: gap2
+
+sets:
+  seeds3: [0, 1, 2]
+  K_gap: [8, 30, 100]
+
+blocks:
+  save_models:                   # yearly state_dicts, for the leg replay
+    evaluation.save_models: true
+  top800:                        # the 800 largest listings (configs/us_data_top800.yaml)
+    data.dir: data/us/top800
+    sample.universe_size: 800
+  paper_literal:                 # as in configs/gap_matrix.yaml: Table 4 and the paper's wording
+    objective.lambda_var: 6.3    # 100 on an annualised Sharpe = 100 / sqrt(252) on our daily one
+    model.score_std_target: null # no temperature calibration (the scale starts at 1)
+    policy.input: raw            # "the past 30 daily residual returns"
+    policy.input_normalise: none
+    policy.input_scale: 1.0      # decimal residuals, LongConv(eps) as written
+    training.grad_clip: null     # no gradient clipping
+                                 # knobs the paper leaves open (ridge, batch) keep the headline's values
+
+prep: {}
+
+specs:
+  # --- baselines: the first run's headline and 800-name rows, same machine and commit as the rest --------
+  - {name: us_headline, group: baseline, runner: attention, config: configs/us_headline.yaml, K: K_gap, seeds: seeds3, use: [save_models]}
+  - {name: us_top800, group: baseline, runner: attention, config: configs/us_headline.yaml, K: K_gap, seeds: seeds3, use: [save_models, top800], mem_gb: 10.0, cost_scale: 1.6}
+
+  # --- size or breadth: the 500 listings ranked 301-800 (configs/us_data_rank301_800.yaml). The headline's
+  # breadth (500 names) with the smaller firms of the 800-name build: 2021 caps $9.5-42bn, against $18.5bn
+  # and up for the headline's 500 (ranks 301-500 are in both). If the 800-name gain is breadth, this row
+  # looks like the headline; if it is the smaller firms' returns, it gains like us_top800 or more.
+  # Characteristics are ranked within these 500, as in every build.
+  - {name: us_rank301_800, group: universe, runner: attention, config: configs/us_headline.yaml, K: K_gap, seeds: seeds3, use: [save_models], set: {data.dir: data/us/rank301_800}}
+
+  # --- the paper-literal setting on the 800 names: the paper's sigma and cost drag (us_paper_literal of the
+  # first run) together with the universe's gross gain. Does net Sharpe then approach the paper's 2.28?
+  - {name: us_top800_paper_literal, group: universe, runner: attention, config: configs/us_headline.yaml, K: K_gap, seeds: seeds3, use: [save_models, top800, paper_literal], mem_gb: 10.0, cost_scale: 1.6}

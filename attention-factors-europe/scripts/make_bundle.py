@@ -2,6 +2,7 @@
 
     python scripts/make_bundle.py [--out runs/_bundle/<stamp>] [--git-bundle] [--markets europe]
                                   [--markets us us_top800]      # configs/gap_matrix.yaml
+                                  [--markets us us_top800 us_rank301_800]   # configs/gap2_matrix.yaml
 
 The code comes from the public fork (git clone --depth 1 -b <branch>), so only the data
 travels. The tree must be clean and the branch pushed. Writes:
@@ -42,6 +43,7 @@ FILES = {
                                                               "fx_to_numeraire_daily")]
     + [f"data/europe12/holfill/{t}.parquet" for t in TABLES],  # robustness
     "us_top800": [f"data/us/top800/{t}.parquet" for t in TABLES],  # gap matrix only, not in the default
+    "us_rank301_800": [f"data/us/rank301_800/{t}.parquet" for t in TABLES],  # gap2 matrix only, likewise
 }
 DEFAULT_MARKETS = ["us", "europe"]
 

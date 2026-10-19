@@ -14,6 +14,7 @@ us_panel is pinned by a hand-built case with real magnitudes.
 5. Canadian filers' amounts are converted to USD at the fiscal year end; shares are not.
 6. (Found while checking prefix invariance of this build.) When a fiscal-year-end change
    makes two records usable from the same month, the later one is used, in any row order.
+7. A rank window (universe_first_rank) keeps the ranks below the top, re-ranked 1..N.
 """
 
 import numpy as np
@@ -99,6 +100,30 @@ def test_line_ranking_gives_two_classes_two_slots():
     by_company, _ = up.build_universe(co, cfg, cal)
     assert set(by_line["sec_id"]) == {"1", "2", "3"}
     assert set(by_company["sec_id"]) == {"1", "3", "4"}
+
+
+def test_rank_window_keeps_the_ranks_below_the_top():
+    """The size-vs-breadth test of the paper-gap diagnostics (2026-10-19): the 500 lines ranked
+    301-800. Here size 3 from rank 3 of six lines: the third to fifth largest, ranked 1..3 among
+    themselves, and exactly the top-5 universe without its top 2."""
+    caps = {11: 6.0e8, 12: 5.0e8, 13: 4.9e8, 14: 3.0e8, 15: 2.0e8, 16: 1.0e8}
+    elig = _elig([dict(permno=p, permco=p, month=P("2020-12"), cap=c, sharetype="NS") for p, c in caps.items()])
+    co = up.company_month(elig)
+    lines = up.line_month(elig, co)
+    cal = pd.bdate_range("2021-01-04", "2021-01-29")
+    sample = {"start": "2021-01", "end": "2021-01"}
+    window, asof = up.build_universe(lines, {"sample": {**sample, "universe_size": 3, "universe_first_rank": 3}}, cal)
+    assert window.set_index("sec_id")["cap_rank"].to_dict() == {"13": 1, "14": 2, "15": 3}
+    assert asof.set_index("primary_permno")["cap_rank_all"].to_dict() == {13: 3, 14: 4, 15: 5}
+    assert (window["month"] == pd.Timestamp("2021-01-04")).all()
+    top5, _ = up.build_universe(lines, {"sample": {**sample, "universe_size": 5}}, cal)
+    top2, _ = up.build_universe(lines, {"sample": {**sample, "universe_size": 2}}, cal)
+    assert set(window["sec_id"]) == set(top5["sec_id"]) - set(top2["sec_id"])
+    default, _ = up.build_universe(lines, {"sample": {**sample, "universe_size": 3}}, cal)
+    first1, _ = up.build_universe(lines, {"sample": {**sample, "universe_size": 3, "universe_first_rank": 1}}, cal)
+    pd.testing.assert_frame_equal(default, first1)
+    with pytest.raises(ValueError, match="only 6 eligible"):
+        up.build_universe(lines, {"sample": {**sample, "universe_size": 3, "universe_first_rank": 5}}, cal)
 
 
 def test_fiscal_year_end_change_takes_the_later_record_whatever_the_row_order():

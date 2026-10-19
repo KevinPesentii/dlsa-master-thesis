@@ -60,7 +60,10 @@ cap below its home company is left alone (one class of several; raising it would
 Global's errors). Company = permco; company cap = sum of its eligible lines' caps,
 which is `LME` and the December ME of the value ratios. Universe for month M = the 500
 largest lines by cap at the end of M-1; `month` in `universe.parquet` is the first trading
-day of M; `mktcap_lag` in `returns.parquet` is the line's cap.
+day of M; `mktcap_lag` in `returns.parquet` is the line's cap. A diagnostic build can start
+the window further down (`sample.universe_first_rank`, default 1): `configs/us_data_rank301_800.yaml`
+keeps the lines ranked 301-800, re-ranked 1-500 in `universe.parquet` (`cap_rank_all` in
+`universe_asof.parquet` keeps the rank among all lines).
 
 Pool for characteristics = every permno that is ever a member (config `pool`). Ranks and
 medians are over the 500 members of the day (`median_over`; CONFIRM 3 in schemas.md).

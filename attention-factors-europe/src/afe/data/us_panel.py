@@ -298,21 +298,30 @@ def build_universe(co: pd.DataFrame, cfg: dict, calendar: pd.DatetimeIndex) -> t
     company_month, or lines from line_month) by cap_co at the end of month M-1. Returns
     (universe per docs/schemas.md, as-of ranking table).
 
+    `sample.universe_first_rank` (default 1) starts the window further down: 301 with size
+    500 keeps the rows ranked 301-800. cap_rank is then 1..N within the window (the schema's
+    dense ranks); the as-of table's cap_rank_all keeps the rank among all rows.
+
     `month` is the first trading day of M on `calendar`. sec_id is the row's (primary)
     permno AT THE RANKING DATE, as a string.
     """
     n = int(cfg["sample"]["universe_size"])
+    first = int(cfg["sample"].get("universe_first_rank", 1))
+    if first < 1:
+        raise ValueError(f"sample.universe_first_rank must be >= 1, not {first}")
     start, end = pd.Period(cfg["sample"]["start"], "M"), pd.Period(cfg["sample"]["end"], "M")
     first_day = pd.Series(calendar, index=calendar.to_period("M")).groupby(level=0).min()
     by_month = {m: g for m, g in co.groupby("month")}
     asof, rows = [], []
     for M in pd.period_range(start, end, freq="M"):
-        snap = by_month.get(M - 1, co.iloc[:0]).nlargest(n, "cap_co")
+        eligible = by_month.get(M - 1, co.iloc[:0])
+        snap = eligible.nlargest(first - 1 + n, "cap_co").iloc[first - 1:]
         if len(snap) < n:
-            raise ValueError(f"{M}: only {len(snap)} eligible companies at the end of {M - 1}")
+            raise ValueError(f"{M}: only {len(eligible)} eligible companies at the end of {M - 1}")
         if M not in first_day.index:
             raise ValueError(f"{M}: no trading day on the calendar")
-        snap = snap.assign(cap_rank=np.arange(1, n + 1, dtype="int16"), month=M)
+        snap = snap.assign(cap_rank=np.arange(1, n + 1, dtype="int16"),
+                           cap_rank_all=np.arange(first, first + n, dtype="int16"), month=M)
         asof.append(snap)
         rows.append(pd.DataFrame({"month": first_day[M], "sec_id": snap["primary_permno"].astype(str).values,
                                   "cap_rank": snap["cap_rank"].values}))

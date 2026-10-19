@@ -311,3 +311,60 @@ tar -czf ~/runs_gap.tgz -C ~/dlsa/attention-factors-europe runs
 At home, unpack `runs_gap.tgz` as in section 7. The results are under `runs/_matrix/gap`
 (ledger, `summary.csv`, `summary_by_spec.csv`), and the run directories have new
 timestamped names, so nothing earlier is overwritten.
+
+## 10. The second paper-gap matrix (2026-10-19)
+
+`configs/gap2_matrix.yaml` asks why the 800 largest listings helped in the run of section 9
+(`runs/_matrix/gap`: K = 30 net Sharpe 1.50 -> 1.84, no gain at K = 8). The 800 names are our 500
+plus 300 smaller firms, so that run could not tell breadth (more names per factor) from size (the
+smaller firms' returns). Four rows, each at K = 8 / 30 / 100 and seeds 0-2 with the yearly models
+saved: 36 runs, no prep jobs, no searches. Diagnostic rows only: nothing is selected on them.
+- `us_headline` and `us_top800`: the rows of section 9 again, as baselines from the same machine;
+- `us_rank301_800`: the headline on the 500 listings ranked 301-800
+  (`configs/us_data_rank301_800.yaml`, built on the laptop into `data/us/rank301_800`; 2021 caps
+  $9.5-42bn, against $18.5bn and up for the headline; ranks 301-500 are in both). The headline's
+  breadth with the 800-name build's smaller firms;
+- `us_top800_paper_literal`: section 9's paper-literal setting on the 800 names. That setting had
+  the paper's σ and cost drag but lost gross Sharpe; the 800 names gained gross Sharpe.
+
+Machine: **m7i.8xlarge** on-demand (32 vCPU, 128 GiB), as for the run of 2026-10-18, with
+`--jobs 16 --threads 2`.
+- Durations on that machine (2026-10-18 ledger): 500-name jobs about 49 / 61 / 115 minutes at
+  K = 8 / 30 / 100, 800-name jobs about 57 / 74 / 206.
+- Memory: half the jobs here have 800 names (10 GB each against 5.5), so the budget (85% of RAM,
+  about 105 GB) keeps 11-14 jobs in flight rather than 16.
+- A simulation of the scheduler with those durations gives about 56 process-hours and **about
+  5 hours** wall-clock, roughly $9 at the Stockholm on-demand price ($1.71/h). The six 800-name
+  K = 100 jobs (about 3.5 hours each) start first and set the floor.
+- Storage: 30 GiB (bundle about 0.5 GB, the 36 run directories about 2 GB).
+
+On the laptop:
+
+```powershell
+& $PY scripts\run_matrix.py --matrix configs\gap2_matrix.yaml --dry-run | Select-Object -First 1   # 36 jobs
+& $PY scripts\make_bundle.py --markets us us_top800 us_rank301_800 --out $env:TEMP\afe_bundle_gap2
+scp $env:TEMP\afe_bundle_gap2\afe_data.tar $env:TEMP\afe_bundle_gap2\SHA256SUMS $env:TEMP\afe_bundle_gap2\COMMIT "ubuntu@${IP}:~"
+```
+
+On the machine, after the clone, `sha256sum -c` and `cloud_setup.sh` of section 7:
+
+```bash
+$PY scripts/run_matrix.py --matrix configs/gap2_matrix.yaml --smoke --jobs 8   # 4 rows once, 1 epoch, 1998: "0 failed"
+tmux new -s afe
+$PY scripts/run_matrix.py --matrix configs/gap2_matrix.yaml --jobs 16 --threads 2 2>&1 | tee runs/matrix_gap2_console.log; tar -czf ~/runs_gap2.tgz -C ~/dlsa/attention-factors-europe runs; sudo shutdown -h now
+```
+
+The last line archives `runs/` and stops the machine when the matrix ends, so an unattended run
+costs only its own hours (a stopped instance is billed for its volume only, a few cents a day). To
+collect: EC2 -> Instance state -> **Start** (it gets a new public IP), then in PowerShell
+
+```powershell
+scp "ubuntu@${IP}:~/runs_gap2.tgz" $env:TEMP\
+tar -xzf $env:TEMP\runs_gap2.tgz -C C:\Users\henri\Desktop\SSE\masterThesis\Code\dlsa-europe\attention-factors-europe
+```
+
+and **Terminate** the instance (check that EC2 -> Volumes is empty). The results are under
+`runs/_matrix/gap2` (ledger, `summary.csv`, `summary_by_spec.csv`); the run directories have new
+timestamped names, so nothing earlier is overwritten. The leg replay of the saved seed-0 models
+runs on the laptop afterwards (`replay_legs.py ... --matrix gap2 --spec <row>` in the diagnostics
+folder; it loads one year of the panel at a time, so 800 names fit in memory).
