@@ -423,6 +423,7 @@ On the machine, after the clone, `sha256sum -c` and `cloud_setup.sh` of section 
 ```bash
 $PY scripts/run_matrix.py --matrix configs/exp_fixedwin_matrix.yaml --smoke --jobs 2   # 2 rows once, 1 epoch, 1998: "0 failed"
 tmux new -s afe
+cd ~/dlsa/attention-factors-europe; PY=~/afe-venv/bin/python   # again inside tmux: PY does not carry over
 $PY scripts/run_matrix.py --matrix configs/exp_fixedwin_matrix.yaml --jobs 12 --threads 2 2>&1 | tee runs/matrix_fixedwin_console.log; tar -czf ~/runs_fixedwin.tgz -C ~/dlsa/attention-factors-europe runs; sudo shutdown -h now
 ```
 
@@ -431,6 +432,7 @@ Split into years instead (m7i.24xlarge; on the m7i.8xlarge `--jobs 16`):
 ```bash
 $PY scripts/run_matrix.py --matrix configs/exp_fixedwin_matrix.yaml --smoke --split-years --jobs 4   # 1998 + 1999 per row, merged: "0 failed"
 tmux new -s afe
+cd ~/dlsa/attention-factors-europe; PY=~/afe-venv/bin/python   # again inside tmux: PY does not carry over
 $PY scripts/run_matrix.py --matrix configs/exp_fixedwin_matrix.yaml --split-years --jobs 48 --threads 2 2>&1 | tee runs/matrix_fixedwin_console.log; tar -czf ~/runs_fixedwin.tgz -C ~/dlsa/attention-factors-europe runs; sudo shutdown -h now
 ```
 
@@ -447,3 +449,54 @@ tar -xzf $env:TEMP\runs_fixedwin.tgz -C C:\Users\henri\Desktop\SSE\masterThesis\
 and **Terminate** the instance (check that EC2 -> Volumes is empty). The results are under
 `runs/_matrix/exp_fixedwin` (ledger, `summary.csv`, `summary_by_spec.csv`); compare `us_fixedwin`
 with `us_headline` seed by seed.
+
+## 12. The fixed-window experiment, full sequential run (2026-11-01)
+
+`configs/exp_fixedwin_full_matrix.yaml` repeats the thesis headline row as it ran (`us_attention` of
+`configs/thesis_matrix.yaml`: K = 1 / 3 / 5 / 8 / 15 / 30 / 100, seeds 0-4, every year in one process,
+yearly models saved; net Sharpe 1.594 at K = 30 in `runs/_matrix/thesis`) twice:
+- `us_attention`: the rolling window with the headline values (sobol-036), unchanged. It is there as
+  a baseline from the same machine: the same config gave K = 30 net 1.59 on the m7i.24xlarge of
+  2026-10-10 and 1.50 on the m7i.8xlarge of 2026-10-18, half the effect being tested;
+- `us_attention_fixedwin`: `policy.residual_window: fixed` with its own validated values. Like the
+  raw-input and lag-1 rows of the thesis, it gets the headline's search with only that change held
+  fixed: `configs/us_search_fixedwin.yaml` (= `configs/us_search.yaml` plus `fixed:
+  policy.residual_window: fixed`; 128 Sobol points, fit 1990-1995, net Sharpe on 1996-1997, best mean
+  of the top 5 over seeds 0-2). The search runs on the machine first (12 workers); the fixed row
+  waits for it and runs with its winner (`hyper: us_fixedwin`); the baseline starts at once.
+
+71 jobs: 1 search and 70 runs. Diagnostic rows, outside the thesis: nothing is selected on the
+out-of-sample years. `--groups fixedwin` runs the search and the fixed row only (35 runs, compared
+with `runs/_matrix/thesis` across machines).
+
+Size, from the ledgers of the thesis run (m7i.24xlarge, 46 jobs: US attention K = 1-100 about 85-208
+minutes, the US attention searches about 40 minutes) and of 2026-10-18 (m7i.8xlarge, 16 jobs: K = 8 /
+30 / 100 about 49 / 61 / 115). A simulation of the scheduler with those durations:
+- **m7i.8xlarge** on-demand (32 vCPU, 128 GiB), `--jobs 16 --threads 2`: about **5.5 hours**, about
+  $10. The search holds 12 of the 16 slots for its first hour, then the 66 remaining runs share them.
+- **m7i.24xlarge** on-demand (96 vCPU, 384 GiB), `--jobs 46 --threads 2`, the type of the thesis run:
+  about **4.2 hours**, about $23; needs an on-demand quota of 96 vCPUs.
+- Memory: the search 30 GB (12 x 2.5), runs 5.5 GB each; inside the budget on both.
+- Storage: 30 GiB (the 70 run directories with their yearly models about 2-3 GB).
+
+On the laptop, from the branch, committed and pushed:
+
+```powershell
+& $PY scripts\run_matrix.py --matrix configs\exp_fixedwin_full_matrix.yaml --dry-run | Select-Object -First 1   # 71 jobs
+& $PY scripts\make_bundle.py --markets us --out $env:TEMP\afe_bundle_fixedwin_full
+scp $env:TEMP\afe_bundle_fixedwin_full\afe_data.tar $env:TEMP\afe_bundle_fixedwin_full\SHA256SUMS $env:TEMP\afe_bundle_fixedwin_full\COMMIT "ubuntu@${IP}:~"
+```
+
+On the machine, after the clone, `sha256sum -c` and `cloud_setup.sh` of section 7:
+
+```bash
+~/afe-venv/bin/python scripts/run_matrix.py --matrix configs/exp_fixedwin_full_matrix.yaml --smoke --jobs 4   # search on 2 points, each row once: "0 failed"
+tmux new -s afe
+cd ~/dlsa/attention-factors-europe; PY=~/afe-venv/bin/python   # again inside tmux: PY does not carry over
+$PY scripts/run_matrix.py --matrix configs/exp_fixedwin_full_matrix.yaml --jobs 16 --threads 2 2>&1 | tee runs/matrix_fixedwin_full_console.log; tar -czf ~/runs_fixedwin_full.tgz -C ~/dlsa/attention-factors-europe runs; sudo shutdown -h now
+```
+
+(`--jobs 46` on the m7i.24xlarge.) Collect as in section 11 (`runs_fixedwin_full.tgz`). The results are
+under `runs/_matrix/exp_fixedwin_full` (ledger, `summary.csv`, `summary_by_spec.csv`, `searches.json`
+with the fixed row's selected values, `searches/us_fixedwin/` with every trial); compare
+`us_attention_fixedwin` with `us_attention` seed by seed.

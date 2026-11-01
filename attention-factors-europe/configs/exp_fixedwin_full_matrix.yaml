@@ -1,0 +1,36 @@
+# Fixed-window experiment, full sequential run (2026-11-01), OUTSIDE the thesis rows. The split test
+# (configs/exp_fixedwin_matrix.yaml, runs/_matrix/exp_fixedwin, 2 seeds) found net SR +0.15 at K = 30 and
+# +0.29 at K = 100 for policy.residual_window fixed. This repeats the thesis headline row as it ran
+# (configs/thesis_matrix.yaml us_attention: K 1-100, seeds 0-4, yearly models saved, every year in one
+# process; net SR 1.594 at K = 30 in runs/_matrix/thesis) with the fixed window, next to the same row
+# with the rolling window as a baseline from the same machine: the same config gave K = 30 net 1.59
+# on the m7i.24xlarge of 2026-10-10 and 1.50 on the m7i.8xlarge of 2026-10-18, half the effect tested.
+# Like every thesis row that changes how the model trades (raw input, lag 1), the fixed row takes
+# validated values: configs/us_search_fixedwin.yaml (configs/us_search.yaml with residual_window held
+# at fixed; fit 1990-1995, net Sharpe on 1996-1997) runs on the machine first, and the fixed row runs
+# with its winner (`hyper`). The baseline keeps the headline's values, from the same search with the
+# rolling window. Diagnostic rows only: nothing is selected on the out-of-sample years, nothing
+# replaces a headline.
+#   python scripts/run_matrix.py --matrix configs/exp_fixedwin_full_matrix.yaml --dry-run
+#   python scripts/run_matrix.py --matrix configs/exp_fixedwin_full_matrix.yaml --smoke --jobs 4
+#   python scripts/run_matrix.py --matrix configs/exp_fixedwin_full_matrix.yaml --jobs 16 --threads 2
+#   (--groups fixedwin: the search and the fixed row only, compared with runs/_matrix/thesis across machines)
+
+name: exp_fixedwin_full
+
+sets:
+  seeds5: [0, 1, 2, 3, 4]
+  K_attention: [1, 3, 5, 8, 15, 30, 100]   # Table 2's attention rows, as in configs/thesis_matrix.yaml
+
+blocks:
+  save_models:                   # yearly state_dicts, as in the thesis row
+    evaluation.save_models: true
+
+prep: {}
+
+searches:                        # scripts/search_validation.py --stage select, on the machine
+  us_fixedwin: {config: configs/us_search_fixedwin.yaml, workers: 12, mem_gb_per_worker: 2.5}
+
+specs:
+  - {name: us_attention, group: baseline, runner: attention, config: configs/us_headline.yaml, K: K_attention, seeds: seeds5, use: [save_models]}
+  - {name: us_attention_fixedwin, group: fixedwin, runner: attention, config: configs/us_headline_fixedwin.yaml, K: K_attention, seeds: seeds5, use: [save_models], hyper: us_fixedwin}

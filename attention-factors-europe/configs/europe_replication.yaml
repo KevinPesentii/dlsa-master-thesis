@@ -44,6 +44,8 @@ policy:
   dropout: 0.1
   lambda_squash: 0.001
   input: cumulative              # cumulative residual path, as in the two-step benchmark
+  residual_window: rolling       # rolling: each window day keeps its own hedge (the default, as before);
+                                 # fixed: the window re-hedged with the trade date's model (us_search_fixedwin)
   input_normalise: none          # none | window_vol: divide each window by its own residual
                                  # volatility. NOT in the paper; makes the input scale-free
   input_scale: 1.0               # residuals as decimal returns, LongConv(eps) as written in the paper.

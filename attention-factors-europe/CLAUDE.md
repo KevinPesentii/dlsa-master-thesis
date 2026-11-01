@@ -97,7 +97,10 @@ weaken a test to make code pass.
 - Fixed-window experiment (2026-11-01), outside the thesis rows: `configs/exp_fixedwin_matrix.yaml`
   compares `policy.residual_window: fixed` (the 30-day window re-hedged with the trade date's
   model, `configs/us_headline_fixedwin.yaml`) with the headline's rolling window. Results in
-  `runs/_matrix/exp_fixedwin`; never a headline value.
+  `runs/_matrix/exp_fixedwin`; never a headline value. The full sequential version
+  (`configs/exp_fixedwin_full_matrix.yaml`: the thesis `us_attention` row twice, K 1-100, seeds
+  0-4) gives the fixed row its own search, `configs/us_search_fixedwin.yaml` (= us_search.yaml
+  with residual_window held fixed); results in `runs/_matrix/exp_fixedwin_full`.
 
 ## Trading costs: limits, not replication
 

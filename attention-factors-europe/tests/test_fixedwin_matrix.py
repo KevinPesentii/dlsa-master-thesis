@@ -71,3 +71,38 @@ def test_merge_job_reads_its_year_runs_from_the_ledger_and_names_the_merged_dir(
     assert rm.run_dir_of(log) == "runs/20261101T170000Z_attention_K8_s0_merged"
     log.write_text("K=8: run dir /home/ubuntu/dlsa/runs/20261101T170000Z_attention_K8_s0\n  1998: train\n")
     assert rm.run_dir_of(log) == "/home/ubuntu/dlsa/runs/20261101T170000Z_attention_K8_s0"
+
+
+def test_full_matrix_is_the_thesis_headline_row_twice_once_with_the_fixed_window(tmp_path):
+    """Sequential rows: the baseline resolves exactly like us_attention of the thesis matrix (same
+    config, K grid, seeds, save_models), the fixed row like it plus residual_window fixed."""
+    full, thesis = load("exp_fixedwin_full_matrix"), load("thesis_matrix")
+    rows = {s["name"]: s for s in full["specs"]}
+    assert set(rows) == {"us_attention", "us_attention_fixedwin"}
+    ref = next(s for s in thesis["specs"] if s["name"] == "us_attention")
+    ref_cfg = {k: v for k, v in rm.resolve(ref, thesis).items() if k != "matrix"}
+    for name, extra in (("us_attention", {}), ("us_attention_fixedwin", {"policy.residual_window": "fixed"})):
+        s = rows[name]
+        assert full["sets"][s["K"]] == thesis["sets"][ref["K"]] and full["sets"][s["seeds"]] == thesis["sets"][ref["seeds"]]
+        assert changed(rm.resolve(s, full), ref_cfg) == extra, name
+    jobs = rm.expand(full, None, tmp_path, threads=2, smoke=False)
+    runs_ = [j for j in jobs if j.spec is not None]
+    assert len(runs_) == 2 * 7 * 5 and all(j.year is None for j in runs_)
+    assert [j.id for j in jobs if j.spec is None] == ["search_us_fixedwin"]
+    assert all(j.after == (["search_us_fixedwin"] if j.spec["name"] == "us_attention_fixedwin" else [])
+               for j in runs_)
+
+
+def test_fixed_row_takes_the_winner_of_us_search_with_only_the_window_held_fixed():
+    """The pre-registered search of the fixed row is the headline's search (configs/us_search.yaml:
+    space, window, budget, rule) with residual_window held at fixed, and nothing else."""
+    full, search, ref = load("exp_fixedwin_full_matrix"), load("us_search_fixedwin"), load("us_search")
+    rows = {s["name"]: s for s in full["specs"]}
+    assert rows["us_attention_fixedwin"]["hyper"] == "us_fixedwin" and "hyper" not in rows["us_attention"]
+    assert full["searches"]["us_fixedwin"]["config"] == "configs/us_search_fixedwin.yaml"
+    assert search.pop("fixed") == {"policy.residual_window": "fixed"} and "fixed" not in ref
+    assert search == ref
+    import search_validation as sv
+    base = load("us_replication")
+    assert base["policy"]["residual_window"] == "rolling"     # the default, so the fixed key is valid
+    assert sv.with_overrides(base, {"policy.residual_window": "fixed"})["policy"]["residual_window"] == "fixed"
