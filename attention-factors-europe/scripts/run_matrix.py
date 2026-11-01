@@ -32,6 +32,14 @@ summary_by_spec.csv (mean and sd over seeds) next to the ledger.
 and each search on 2 points at 1 epoch, with its own ledger (<name>_smoke), and moves the
 run directories to runs/_smoke/, to check that everything starts and writes its outputs. A real run refuses a dirty git tree: the
 manifests must name a commit that exists.
+
+--split-years runs every out-of-sample year of an attention run as its own job
+(<job>_y<year>, one annual refit each) and then a merge job under the run's own id, which
+puts the years together with scripts/merge_year_runs.py (turnover at the year seams from
+the previous year's book), so the summary sees one run per (spec, K, seed) as before. The
+wall-clock becomes about one refit instead of 24. NOT the same numbers as a sequential run:
+run_attention_us.py seeds once per process, so every year starts from the same draw. Compare
+split runs only with split runs. With --smoke it runs the first two years and merges them.
 """
 
 from __future__ import annotations
@@ -61,6 +69,8 @@ from afe import runs  # noqa: E402
 
 RUNNERS = {"attention": "scripts/run_attention_us.py", "pca": "scripts/run_pca_longconv.py"}
 MEM_GB = {("attention", "us"): 5.5, ("attention", "europe"): 3.0, ("pca", "us"): 3.0, ("pca", "europe"): 2.0}
+YEAR_MEM_GB = {"us": 3.0, "europe": 2.0}     # one year of an attention run (--split-years): a 9-year panel
+MERGE_MEM_GB = 2.0
 
 
 @dataclass
@@ -76,6 +86,7 @@ class Job:
     done_file: Path | None = None    # prep jobs and searches
     slots: int = 1                   # job slots it occupies (a search: its workers)
     make_cmd: Callable[[], list[str]] | None = None   # built at launch (resolved after a search)
+    year: int | None = None          # one year of a split run (--split-years); its merge job has None
 
 
 def set_dotted(cfg: dict, key: str, value) -> None:
@@ -144,7 +155,8 @@ def search_job(name: str, s: dict, out: Path, threads: int, smoke: bool) -> Job:
                done_file=d / "selected.yaml", slots=workers, make_cmd=make_cmd)
 
 
-def expand(matrix: dict, groups: list[str] | None, out: Path, threads: int, smoke: bool) -> list[Job]:
+def expand(matrix: dict, groups: list[str] | None, out: Path, threads: int, smoke: bool,
+           split_years: bool = False) -> list[Job]:
     sets = matrix["sets"]
     jobs = [Job(f"prep_{name}", [sys.executable, "-u", p["script"], "--config", p["config"]], p["mem_gb"],
                 p["cost"] + 1e6, done_file=ROOT / p["done"]) for name, p in matrix["prep"].items()]
@@ -168,20 +180,40 @@ def expand(matrix: dict, groups: list[str] | None, out: Path, threads: int, smok
         trained = spec["runner"] == "attention" or cfg["policy"]["kind"] == "longconv"
         after = [f"prep_{a}" for a in ([spec["after"]] if isinstance(spec.get("after"), str) else spec.get("after", []))]
         after += [f"search_{spec['hyper']}"] if spec.get("hyper") else []
+
+        def runner_cmd(extra, write_config=write_config, r=spec["runner"]):
+            return lambda: [sys.executable, "-u", RUNNERS[r], "--config", write_config()] + extra
         for K in Ks:
             for seed in seeds:
+                job_id = f"{spec['name']}_K{K}_s{seed}"
                 extra = ["--K", str(K), "--seed", str(seed), "--threads", str(threads)]
-                if smoke:
-                    extra += ["--years", str(years[0])] + (["--epochs", "1"] if trained else [])
-                make_cmd = (lambda extra=extra, write_config=write_config, r=spec["runner"]:
-                            [sys.executable, "-u", RUNNERS[r], "--config", write_config()] + extra)
                 per_year = (2.0 if market == "us" else 1.0) * (1 + K / 60) if spec["runner"] == "attention" else \
                            ((1.0 if market == "us" else 0.5) if trained else 0.05)
-                jobs.append(Job(f"{spec['name']}_K{K}_s{seed}", [RUNNERS[spec["runner"]], path.name] + extra,
-                                float(spec.get("mem_gb", MEM_GB[(spec["runner"], market)])),
-                                per_year * len(years) * float(spec.get("cost_scale", 1.0)), after, spec, K, seed,
-                                make_cmd=make_cmd))
+                mem = float(spec.get("mem_gb", MEM_GB[(spec["runner"], market)]))
+                scale = float(spec.get("cost_scale", 1.0))
+                if split_years and spec["runner"] == "attention":
+                    year_ids = []
+                    for y in (years[:2] if smoke else years):
+                        e = extra + ["--years", str(y)] + (["--epochs", "1"] if smoke else [])
+                        year_ids.append(f"{job_id}_y{y}")
+                        jobs.append(Job(year_ids[-1], [RUNNERS[spec["runner"]], path.name] + e,
+                                        mem * YEAR_MEM_GB[market] / MEM_GB[("attention", market)], per_year * scale,
+                                        after, spec, K, seed, make_cmd=runner_cmd(e), year=y))
+                    jobs.append(Job(job_id, ["scripts/merge_year_runs.py", f"<{len(year_ids)} year runs>"],
+                                    MERGE_MEM_GB, 0.0, year_ids, spec, K, seed,
+                                    make_cmd=lambda ids=year_ids: merge_cmd(out, ids)))
+                    continue
+                if smoke:
+                    extra += ["--years", str(years[0])] + (["--epochs", "1"] if trained else [])
+                jobs.append(Job(job_id, [RUNNERS[spec["runner"]], path.name] + extra, mem,
+                                per_year * len(years) * scale, after, spec, K, seed, make_cmd=runner_cmd(extra)))
     return jobs
+
+
+def merge_cmd(out: Path, year_jobs: list[str]) -> list[str]:
+    """The merge of a split run, built at launch from its year jobs' run directories in the ledger."""
+    state = ledger_state(out / "ledger.jsonl")
+    return [sys.executable, "-u", "scripts/merge_year_runs.py"] + [state[j]["run_dir"] for j in year_jobs]
 
 
 def ledger_state(path: Path) -> dict[str, dict]:
@@ -198,7 +230,9 @@ def finished(e: dict | None) -> bool:
 
 
 def run_dir_of(log: Path) -> str | None:
-    m = re.findall(r"^K=\d+: run dir (.+)$", log.read_text(errors="replace"), flags=re.M)
+    """The run directory a runner log names, or the merged one a merge_year_runs.py log names."""
+    text = log.read_text(errors="replace")
+    m = re.findall(r"^K=\d+: run dir (.+)$", text, flags=re.M) or re.findall(r"^  -> (.+_merged)\s*$", text, flags=re.M)
     return m[-1].strip() if m else None
 
 
@@ -206,7 +240,7 @@ def summary(jobs: list[Job], state: dict, out: Path) -> None:
     rows = []
     for j in jobs:
         e = state.get(j.id)
-        if j.spec is None or not finished(e):
+        if j.spec is None or j.year is not None or not finished(e):
             continue
         m = json.loads((ROOT / e["run_dir"] / "metrics.json").read_text())
         rows.append({"spec": j.spec["name"], "group": j.spec["group"], "K": j.K, "seed": j.seed,
@@ -253,11 +287,13 @@ def main():
     ap.add_argument("--retry-failed", action="store_true")
     ap.add_argument("--summary", action="store_true", help="only write the summary of finished jobs")
     ap.add_argument("--allow-dirty", action="store_true")
+    ap.add_argument("--split-years", action="store_true",
+                    help="one job per out-of-sample year of each attention run, then a merge (see above)")
     args = ap.parse_args()
     os.chdir(ROOT)
     matrix = yaml.safe_load(Path(args.matrix).read_text())
     out = ROOT / "runs" / "_matrix" / (matrix["name"] + ("_smoke" if args.smoke else ""))
-    jobs = expand(matrix, args.groups, out, args.threads, args.smoke)
+    jobs = expand(matrix, args.groups, out, args.threads, args.smoke, args.split_years)
     ledger = out / "ledger.jsonl"
     state = ledger_state(ledger)
     if args.summary:
@@ -305,7 +341,8 @@ def main():
             if ok and args.smoke and rd:
                 dst = ROOT / "runs" / "_smoke" / Path(rd).name
                 dst.parent.mkdir(parents=True, exist_ok=True)
-                shutil.move(str(ROOT / rd), dst)
+                if (ROOT / rd).resolve() != dst.resolve():   # a merge of smoke years is written there already
+                    shutil.move(str(ROOT / rd), dst)
                 rd = str(dst.relative_to(ROOT))
             minutes = round((time.time() - t0) / 60, 1)
             record({"job": jid, "status": "ok" if ok else "failed", "returncode": proc.returncode,
@@ -318,7 +355,7 @@ def main():
         for j in blocked:
             pending.remove(j)
             failed_ids.add(j.id)
-            print(f"SKIP {j.id}: its prep job failed", flush=True)
+            print(f"SKIP {j.id}: a job it waits on failed", flush=True)
         mem = sum(j.mem_gb for j, _, _ in running.values())
         used = sum(min(j.slots, args.jobs) for j, _, _ in running.values())
         for j in list(pending):

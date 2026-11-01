@@ -391,6 +391,25 @@ every job starts at once.
   about $4 at the Stockholm on-demand price ($1.71/h).
 - Storage: 30 GiB (bundle about 0.3 GB, the 12 run directories well under 1 GB).
 
+**Faster: one job per year (`--split-years`).** Every run is 24 independent annual refits done one
+after the other, which is what makes a K = 100 job take 2 hours. With `--split-years` each year is
+its own job (288 in all, about 5 minutes each at K = 100 on that machine), and a merge job per run
+(`scripts/merge_year_runs.py`, seconds) puts the years back together under the run's id, with the
+turnover at each year seam charged from the previous year's book. The summary is as before.
+- The numbers are NOT those of a sequential run: `run_attention_us.py` seeds once per process, so
+  every year starts from the same draw. Both rows run split, so the paired comparison holds; do not
+  set split rows beside the sequential ones of `runs/_matrix/gap` / `gap2`.
+- Work: about 900 process-minutes of training (the sequential durations above, 2 x 2 x (49 + 61 +
+  115)) plus 288 panel loads of about 20 s.
+- Memory: a year job peaked at 2.0 GB (2.4 GB private) on the laptop (K = 100, 2021); the scheduler
+  counts 3 GB.
+- **m7i.24xlarge** on-demand (96 vCPU, 384 GiB, $5.14/h), `--jobs 48 --threads 2`: an estimated
+  25-40 minutes for the matrix (the range allows for a crowded machine running each job slower, as
+  the 46-job run of section 7 did), well under an hour with setup, about $5. Needs an on-demand quota
+  of 96 vCPUs (Service Quotas -> "Running On-Demand Standard instances").
+- With the 32-vCPU quota: the **m7i.8xlarge** with `--split-years --jobs 16 --threads 2`, an estimated
+  1-1.25 hours instead of about 2.
+
 On the laptop, from the branch, committed and pushed:
 
 ```powershell
@@ -407,7 +426,17 @@ tmux new -s afe
 $PY scripts/run_matrix.py --matrix configs/exp_fixedwin_matrix.yaml --jobs 12 --threads 2 2>&1 | tee runs/matrix_fixedwin_console.log; tar -czf ~/runs_fixedwin.tgz -C ~/dlsa/attention-factors-europe runs; sudo shutdown -h now
 ```
 
-The last line archives `runs/` and stops the machine when the matrix ends. To collect: EC2 ->
+Split into years instead (m7i.24xlarge; on the m7i.8xlarge `--jobs 16`):
+
+```bash
+$PY scripts/run_matrix.py --matrix configs/exp_fixedwin_matrix.yaml --smoke --split-years --jobs 4   # 1998 + 1999 per row, merged: "0 failed"
+tmux new -s afe
+$PY scripts/run_matrix.py --matrix configs/exp_fixedwin_matrix.yaml --split-years --jobs 48 --threads 2 2>&1 | tee runs/matrix_fixedwin_console.log; tar -czf ~/runs_fixedwin.tgz -C ~/dlsa/attention-factors-europe runs; sudo shutdown -h now
+```
+
+Run one or the other into a matrix directory, never both: a restart counts a run as done when its
+id has a finished entry in the ledger, whichever way it ran. The last line archives `runs/` and
+stops the machine when the matrix ends. To collect: EC2 ->
 Instance state -> **Start** (new public IP), then in PowerShell
 
 ```powershell
