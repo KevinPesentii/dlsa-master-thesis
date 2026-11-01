@@ -1,0 +1,24 @@
+# Fixed-window experiment (2026-11-01), OUTSIDE the thesis rows: does re-hedging the 30-day policy
+# window with the trade date's factor model (policy.residual_window fixed, configs/us_headline_fixedwin.yaml)
+# change what the US headline earns? Rolling (the headline) hedges each window day with its own model,
+# so the window is the past of a residual portfolio that differs from the one traded at t.
+# Diagnostic rows only: no value is selected on these out-of-sample years, nothing replaces a headline.
+#   python scripts/run_matrix.py --matrix configs/exp_fixedwin_matrix.yaml --dry-run
+#   python scripts/run_matrix.py --matrix configs/exp_fixedwin_matrix.yaml --smoke --jobs 4
+#   python scripts/run_matrix.py --matrix configs/exp_fixedwin_matrix.yaml --jobs 12 --threads 2
+# Both rows at K = 8 / 30 / 100 and seeds 0-1, so the fixed row is compared seed by seed with a rolling
+# baseline from the same machine and commit (runs/_matrix/gap and gap2 are the cross-machine check).
+
+name: exp_fixedwin
+
+sets:
+  seeds2: [0, 1]
+  K_few: [8, 30, 100]
+
+blocks: {}
+
+prep: {}
+
+specs:
+  - {name: us_headline, group: baseline, runner: attention, config: configs/us_headline.yaml, K: K_few, seeds: seeds2}
+  - {name: us_fixedwin, group: fixedwin, runner: attention, config: configs/us_headline_fixedwin.yaml, K: K_few, seeds: seeds2}

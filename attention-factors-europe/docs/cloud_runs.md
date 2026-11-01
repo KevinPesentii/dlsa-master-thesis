@@ -368,3 +368,53 @@ and **Terminate** the instance (check that EC2 -> Volumes is empty). The results
 timestamped names, so nothing earlier is overwritten. The leg replay of the saved seed-0 models
 runs on the laptop afterwards (`replay_legs.py ... --matrix gap2 --spec <row>` in the diagnostics
 folder; it loads one year of the panel at a time, so 800 names fit in memory).
+
+## 11. The fixed-window experiment (2026-11-01)
+
+`configs/exp_fixedwin_matrix.yaml` asks whether the policy should see the past of the residual
+portfolio it actually trades. The headline (`policy.residual_window: rolling`) hedges each day of
+the 30-day window with that day's factor weights and loadings; `us_fixedwin`
+(`configs/us_headline_fixedwin.yaml`) re-hedges the whole window with the trade date's
+(`src/afe/model/attention_pipeline.py`, `fixed_residual_windows`). Two rows, the US headline and the
+headline with only that change, each at K = 8 / 30 / 100 and seeds 0-1: 12 runs, no prep jobs, no
+searches. Outside the thesis rows: nothing is selected on them.
+
+Machine: **m7i.8xlarge** on-demand (32 vCPU, 128 GiB), as in section 10, with `--jobs 12 --threads 2`:
+every job starts at once.
+- Durations on that machine (2026-10-18 ledger): headline jobs about 49 / 61 / 115 minutes at
+  K = 8 / 30 / 100. The fixed window adds
+  no measurable time: on the laptop (1998, K = 30, the two side by side at 3 threads) one refit took
+  215 s against 213 s for rolling. Not measured at K = 8 / 100; the extra work is K x 30 factor returns
+  per date.
+- Memory: 5.5 GB per job, 66 GB for all 12, inside the budget (85% of RAM).
+- Wall-clock is set by the four K = 100 jobs: about 2 hours, so roughly 2.5 hours with setup and
+  about $4 at the Stockholm on-demand price ($1.71/h).
+- Storage: 30 GiB (bundle about 0.3 GB, the 12 run directories well under 1 GB).
+
+On the laptop, from the branch, committed and pushed:
+
+```powershell
+& $PY scripts\run_matrix.py --matrix configs\exp_fixedwin_matrix.yaml --dry-run | Select-Object -First 1   # 12 jobs
+& $PY scripts\make_bundle.py --markets us --out $env:TEMP\afe_bundle_fixedwin
+scp $env:TEMP\afe_bundle_fixedwin\afe_data.tar $env:TEMP\afe_bundle_fixedwin\SHA256SUMS $env:TEMP\afe_bundle_fixedwin\COMMIT "ubuntu@${IP}:~"
+```
+
+On the machine, after the clone, `sha256sum -c` and `cloud_setup.sh` of section 7:
+
+```bash
+$PY scripts/run_matrix.py --matrix configs/exp_fixedwin_matrix.yaml --smoke --jobs 2   # 2 rows once, 1 epoch, 1998: "0 failed"
+tmux new -s afe
+$PY scripts/run_matrix.py --matrix configs/exp_fixedwin_matrix.yaml --jobs 12 --threads 2 2>&1 | tee runs/matrix_fixedwin_console.log; tar -czf ~/runs_fixedwin.tgz -C ~/dlsa/attention-factors-europe runs; sudo shutdown -h now
+```
+
+The last line archives `runs/` and stops the machine when the matrix ends. To collect: EC2 ->
+Instance state -> **Start** (new public IP), then in PowerShell
+
+```powershell
+scp "ubuntu@${IP}:~/runs_fixedwin.tgz" $env:TEMP\
+tar -xzf $env:TEMP\runs_fixedwin.tgz -C C:\Users\henri\Desktop\SSE\masterThesis\Code\dlsa-europe\attention-factors-europe
+```
+
+and **Terminate** the instance (check that EC2 -> Volumes is empty). The results are under
+`runs/_matrix/exp_fixedwin` (ledger, `summary.csv`, `summary_by_spec.csv`); compare `us_fixedwin`
+with `us_headline` seed by seed.

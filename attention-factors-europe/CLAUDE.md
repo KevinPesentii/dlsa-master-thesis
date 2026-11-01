@@ -94,6 +94,10 @@ weaken a test to make code pass.
   replace a headline value and select nothing; results in `runs/_matrix/gap`. Likewise
   `configs/gap2_matrix.yaml` (2026-10-19; size vs breadth, with the ranks 301-800 build
   `configs/us_data_rank301_800.yaml` -> `data/us/rank301_800`): results in `runs/_matrix/gap2`.
+- Fixed-window experiment (2026-11-01), outside the thesis rows: `configs/exp_fixedwin_matrix.yaml`
+  compares `policy.residual_window: fixed` (the 30-day window re-hedged with the trade date's
+  model, `configs/us_headline_fixedwin.yaml`) with the headline's rolling window. Results in
+  `runs/_matrix/exp_fixedwin`; never a headline value.
 
 ## Trading costs: limits, not replication
 
