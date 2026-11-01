@@ -62,6 +62,8 @@ class SlotPanel:
     mkt_ew: np.ndarray             # (T,) equal-weighted return of the members with a return
     closed: np.ndarray | None = None  # (T, n_pool) bool, the name's market did not trade at the
                                       # close of t (returns.traded False); None = all traded
+    has_ret: np.ndarray | None = None  # (T, n_pool) bool, R_pool holds a return there (member or not);
+                                       # policy.residual_window fixed needs it
 
     @property
     def n_pool(self) -> int:
@@ -109,6 +111,7 @@ def load_slots(data_dir: Path, start: str, end: str, max_rank: int | None = None
     R_slot = np.take_along_axis(R_pool, idx, axis=1)
     in_universe = ~np.isnan(R_slot)
     R_slot = np.nan_to_num(R_slot)
+    has_ret = ~np.isnan(R_pool[:, :n_pool])
     R_pool = np.nan_to_num(R_pool[:, :n_pool])
     closed = None
     if has_traded:
@@ -158,7 +161,7 @@ def load_slots(data_dir: Path, start: str, end: str, max_rank: int | None = None
 
     return SlotPanel(dates, sec_ids, feats, torch.from_numpy(X), torch.from_numpy(R_slot),
                      torch.from_numpy(in_universe), torch.from_numpy(idx), torch.from_numpy(rf),
-                     R_pool, mkt_ew, closed)
+                     R_pool, mkt_ew, closed, has_ret)
 
 
 def drop_groups(p: SlotPanel, groups: list[str]) -> SlotPanel:

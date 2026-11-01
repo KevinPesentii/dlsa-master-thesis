@@ -17,7 +17,8 @@ space before the window is cut.
 A date is traded when the name is in the universe that day AND its residual is defined
 on each of the L preceding days. The second condition is what make_windows enforced with
 `isfinite`; with residuals built inside the graph the equivalent is membership on each
-of those days.
+of those days. That is policy.residual_window "rolling"; "fixed" re-hedges the whole
+window with the trade date's factor model instead (fixed_residual_windows).
 
 Timing: X passed to forward_span must already be lagged, i.e. row t holds what was known
 at the close of t-1. Nothing in this module shifts it.
@@ -39,10 +40,27 @@ def to_pool(x: torch.Tensor, idx: torch.Tensor, n_pool: int) -> torch.Tensor:
     return out.scatter_add(1, idx, x)[:, :-1]
 
 
+def _gather_windows(x_pool: torch.Tensor, idx: torch.Tensor, lookback: int) -> torch.Tensor:
+    """(T, P) by company -> (T-L, S, L): row i, slot s holds x of dates i..L+i-1 for the
+    company in slot s on date L+i, i.e. in the slot order of the date being traded. Padding
+    (idx == P) reads a column of zeros (False for a bool x)."""
+    T, P = x_pool.shape
+    L = lookback
+    if T <= L:
+        raise ValueError(f"span of {T} dates is too short for a lookback of {L}")
+    cols = idx[L:]                                                    # (T-L, S)
+    lags = torch.arange(L, device=x_pool.device)
+    rows = (torch.arange(T - L, device=x_pool.device)[:, None] + lags[None, :])     # (T-L, L)
+    flat = torch.cat([x_pool, x_pool.new_zeros(T, 1)], dim=1).reshape(-1)           # pad column
+    gather_idx = rows[:, None, :] * (P + 1) + cols[:, :, None]        # (T-L, S, L)
+    return flat[gather_idx.reshape(-1)].reshape(T - L, idx.shape[1], L)
+
+
 def residual_windows(eps_pool: torch.Tensor, valid_pool: torch.Tensor, idx: torch.Tensor,
                      lookback: int, cumulative: bool = True, scale: float = 1.0,
                      normalise: str = "none", vol_floor: float = 1e-4):
-    """Windows of past residuals per slot, differentiable in eps_pool.
+    """Windows of past residuals per slot, differentiable in eps_pool (policy.residual_window
+    rolling: each day of the window keeps the hedge of its own date).
 
     eps_pool: (T, P) residuals by company. valid_pool: (T, P) bool. idx: (T, S) company of
     each slot, P for padding. Returns windows (T-L, S, L) oldest first and tradable
@@ -50,25 +68,48 @@ def residual_windows(eps_pool: torch.Tensor, valid_pool: torch.Tensor, idx: torc
     strictly before the date being traded.
     """
     T, P = eps_pool.shape
-    S = idx.shape[1]
     L = lookback
-    if T <= L:
-        raise ValueError(f"span of {T} dates is too short for a lookback of {L}")
-
-    cols = idx[L:]                                                    # (T-L, S)
-    lags = torch.arange(L, device=eps_pool.device)
-    rows = (torch.arange(T - L, device=eps_pool.device)[:, None] + lags[None, :])   # (T-L, L)
-
-    flat = torch.cat([eps_pool, eps_pool.new_zeros(T, 1)], dim=1).reshape(-1)       # pad column
-    gather_idx = rows[:, None, :] * (P + 1) + cols[:, :, None]        # (T-L, S, L)
-    windows = flat[gather_idx.reshape(-1)].reshape(T - L, S, L)
-
-    vflat = torch.cat([valid_pool, valid_pool.new_zeros(T, 1)], dim=1).reshape(-1)
-    history_ok = vflat[gather_idx.reshape(-1)].reshape(T - L, S, L).all(dim=-1)
-    own_row = torch.arange(L, T, device=eps_pool.device)[:, None] * (P + 1) + cols
-    own_ok = vflat[own_row.reshape(-1)].reshape(T - L, S)
+    windows = _gather_windows(eps_pool, idx, L)
+    history_ok = _gather_windows(valid_pool, idx, L).all(dim=-1)
+    cols = idx[L:]
+    own_ok = torch.cat([valid_pool, valid_pool.new_zeros(T, 1)], dim=1)[L:].gather(1, cols)
     tradable = history_ok & own_ok & (cols < P)
+    return _policy_input(windows, tradable, cumulative, scale, normalise, vol_floor)
 
+
+def fixed_residual_windows(R_pool: torch.Tensor, has_ret: torch.Tensor, in_universe: torch.Tensor,
+                           idx: torch.Tensor, w_F: torch.Tensor, betaT: torch.Tensor, lookback: int,
+                           cumulative: bool = True, scale: float = 1.0, normalise: str = "none",
+                           vol_floor: float = 1e-4):
+    """Windows re-hedged with the factor model of the date being traded (policy.residual_window
+    fixed). For trade date t and the company i in slot s on t, each day tau = t-L..t-1 is
+
+        eps~_{i,tau} = R_{i,tau} - beta_{i,t}' (w_F,t R_tau)
+
+    with w_F,t and beta_t of date t (built from X row t, known at the close of t-1), applied
+    to the returns on tau of date t's members, whether or not they were members on tau. The
+    window is then the past path of exactly the residual portfolio that is traded at t;
+    `rolling` hedges each day with its own model, eps_tau = R_tau - beta_tau' (w_F,tau R_tau).
+
+    Tradable: in the universe at t and a return on every one of the L window days. Unlike
+    rolling, membership on those days is not needed. A constituent of w_F,t without a return
+    on a window day counts as 0 in that day's factor return.
+
+    R_pool, has_ret: (T, P) returns by company (0 where none) and where they exist.
+    in_universe (T-L, S), w_F (T-L, K, S), betaT (T-L, S, K): those of the trade dates L..T-1.
+    Differentiable in w_F and betaT; it forms K x L factor returns per date, no S x S matrix.
+    """
+    L = lookback
+    R_win = _gather_windows(R_pool, idx, L)                           # (T-L, S, L)
+    history_ok = _gather_windows(has_ret, idx, L).all(dim=-1)
+    tradable = in_universe & history_ok & (idx[L:] < R_pool.shape[1])
+    F = torch.einsum("tks,tsl->tkl", w_F, R_win)                     # date-t factors on tau
+    windows = R_win - torch.einsum("tsk,tkl->tsl", betaT, F)
+    return _policy_input(windows, tradable, cumulative, scale, normalise, vol_floor)
+
+
+def _policy_input(windows, tradable, cumulative, scale, normalise, vol_floor):
+    """Masking, normalisation, cumulative sum and scale, the same for both window kinds."""
     windows = windows * tradable.unsqueeze(-1)
     if normalise == "window_vol":
         # Each name's window divided by its own residual volatility over that window. Not in the
@@ -99,27 +140,38 @@ class AttentionArb(nn.Module):
         self.lookback = lookback
 
     def forward_span(self, X, R_slot, in_universe, idx, n_pool, cumulative=True, scale=1.0,
-                     normalise="none"):
+                     normalise="none", residual_window="rolling", R_pool=None, has_ret=None):
         """X: (T,S,M) lagged characteristics. R_slot: (T,S). in_universe: (T,S) bool.
-        idx: (T,S) int64 company column, n_pool for padding.
+        idx: (T,S) int64 company column, n_pool for padding. residual_window "fixed" also
+        needs R_pool / has_ret (T, n_pool), every company's returns (SlotPanel.R_pool).
 
         Returns a dict for dates L..T-1: asset-space weights (L1-normalised), the slot
-        tradability of those dates, and the residuals and returns of the whole span,
-        which the explained-variance term needs.
+        tradability of those dates, the policy input, and the residuals and returns of the
+        whole span, which the explained-variance term needs (same-day residuals, whatever
+        the window kind).
         """
         L = self.lookback
         w_F, betaT, eps = self.factors(X, in_universe, R_slot)
 
-        eps_pool = to_pool(eps, idx, n_pool)
-        valid_pool = to_pool(in_universe.to(eps.dtype), idx, n_pool) > 0
-        windows, tradable = residual_windows(eps_pool, valid_pool, idx, L, cumulative, scale,
-                                             normalise)
+        if residual_window == "rolling":
+            eps_pool = to_pool(eps, idx, n_pool)
+            valid_pool = to_pool(in_universe.to(eps.dtype), idx, n_pool) > 0
+            windows, tradable = residual_windows(eps_pool, valid_pool, idx, L, cumulative, scale,
+                                                 normalise)
+        elif residual_window == "fixed":
+            if R_pool is None or has_ret is None:
+                raise ValueError("residual_window fixed needs R_pool and has_ret")
+            windows, tradable = fixed_residual_windows(R_pool, has_ret, in_universe[L:], idx,
+                                                       w_F[L:], betaT[L:], L, cumulative, scale,
+                                                       normalise)
+        else:
+            raise ValueError(f"unknown policy.residual_window: {residual_window}")
 
         w_port = self.policy(windows) * tradable
         w = compose(w_port, w_F[L:], betaT[L:])
         l1 = w.abs().sum(dim=1, keepdim=True)
         w = w / torch.where(l1 > 0, l1, torch.ones_like(l1))
-        return {"w": w, "tradable": tradable, "eps": eps, "R": R_slot,
+        return {"w": w, "tradable": tradable, "windows": windows, "eps": eps, "R": R_slot,
                 "in_universe": in_universe, "w_port": w_port, "l1": l1.squeeze(1),
                 "idx": idx, "n_pool": n_pool}
 

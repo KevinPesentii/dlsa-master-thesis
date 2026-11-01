@@ -71,9 +71,14 @@ def span(model, p: slots.SlotPanel, t0: int, t1: int, cfg: dict, w_prev=None):
     span are not traded inside it, so no return after the span is ever used."""
     L, pc, ob = model.lookback, cfg["policy"], cfg["objective"]
     s = t0 - L
+    window = pc.get("residual_window", "rolling")
+    pool = {}
+    if window == "fixed":           # the window is re-hedged with every company's past returns
+        pool = {"R_pool": torch.from_numpy(p.R_pool[s:t1]), "has_ret": torch.from_numpy(p.has_ret[s:t1])}
     out = model.forward_span(p.X[s:t1], p.R[s:t1], p.in_universe[s:t1], p.idx[s:t1], p.n_pool,
                              cumulative=pc["input"] == "cumulative", scale=pc["input_scale"],
-                             normalise=pc.get("input_normalise", "none"))
+                             normalise=pc.get("input_normalise", "none"), residual_window=window,
+                             **pool)
     b = slot_batch(p.R[t0:t1], p.idx[t0:t1], p.rf[t0:t1], out["tradable"], p.n_pool)
     lag, closed = execution(cfg)[0], closed_mask(p, cfg, t0 - 1, t1 - 1)
     held = R_pool = None
@@ -189,6 +194,7 @@ def run_K(K: int, cfg: dict, seed: int, p: slots.SlotPanel, years: list[int], lo
     daily = daily_book(p, np.concatenate(w_pool_all), t_idx, cfg)
     m = metrics.performance(daily, ob["turnover_cost"], ob["short_cost"], ev["cost_grid_bps"])
     m.update({"K": K, "seed": seed, "factor_model": "attention", "policy_input": pc["input"],
+              "residual_window": pc.get("residual_window", "rolling"),
               "n_features": len(p.features), "drop_groups": cfg["features"].get("drop_groups") or [],
               "execution_lag": execution(cfg)[0], "stale_when_closed": closed_mask(p, cfg, 0, 1) is not None})
     runs.write_metrics(run_dir, m)
