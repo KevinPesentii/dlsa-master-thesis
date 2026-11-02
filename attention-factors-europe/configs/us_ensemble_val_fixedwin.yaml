@@ -1,0 +1,25 @@
+# Seed ensemble against config ensemble, K = 30, on the first training window (2026-11-02), OUTSIDE the
+# thesis rows; policy.residual_window fixed. scripts/ensemble_validation.py fits every candidate below
+# with every seed as a search trial (fit 1990-1995, booked on 1996-1997) and averages the books:
+#   seeds  = the winner (first candidate) on seeds 0-4, one book;
+#   configs = the five candidates on one seed, one book per seed, the rule's score = the mean over seeds.
+# Decision, fixed before any of these trials ran: the rule with the higher validation net Sharpe of the
+# `book` below wins. The candidates are the five best finalists of configs/us_search_fixedwin.yaml
+# (runs/_matrix/exp_fixedwin_full/searches/us_fixedwin):
+# mean validation net Sharpe over seeds 0-2 after each name, best first; the base config left out.
+#   python scripts/ensemble_validation.py --config configs/us_ensemble_val_fixedwin.yaml --jobs 25 --threads 2
+
+base_config: configs/us_replication.yaml
+fixed: {policy.residual_window: fixed}
+K: 30
+first_oos_year: 1998
+validation_years: 2
+seeds: [0, 1, 2, 3, 4]
+book: avg_l1                     # the average rescaled to ||w||_1 = 1 every day, the single runs' exposure
+
+candidates:
+  sobol-036: {objective.lambda_var: 17.6, policy.input_scale: 87.9, model.score_std_target: 0.342, model.lambda_ridge: 2.63e-05, training.batch_days: 125, policy.input: cumulative, policy.input_normalise: window_vol, model.level_hidden: 0}   # 8.07
+  sobol-009: {objective.lambda_var: 4.8, policy.input_scale: 0.313, model.score_std_target: null, model.lambda_ridge: 0.000819, training.batch_days: 63, policy.input: cumulative, policy.input_normalise: window_vol, model.level_hidden: 0}   # 7.61
+  sobol-005: {objective.lambda_var: 0.329, policy.input_scale: 0.838, model.score_std_target: 0.61, model.lambda_ridge: 3.06e-05, training.batch_days: 125, policy.input: cumulative, policy.input_normalise: window_vol, model.level_hidden: 0}   # 7.34
+  sobol-067: {objective.lambda_var: 9.85, policy.input_scale: 4.5, model.score_std_target: 0.357, model.lambda_ridge: 8.16e-05, training.batch_days: 125, policy.input: raw, policy.input_normalise: none, model.level_hidden: 0}   # 7.23
+  sobol-098: {objective.lambda_var: 0.173, policy.input_scale: 15.0, model.score_std_target: 0.634, model.lambda_ridge: 6.88e-05, training.batch_days: 125, policy.input: raw, policy.input_normalise: none, model.level_hidden: 0}   # 7.09

@@ -1,0 +1,35 @@
+# Seed ensemble against config ensemble, out of sample at K = 30 (2026-11-02), OUTSIDE the thesis rows.
+# configs/us_ensemble_val.yaml and configs/us_ensemble_val_fixedwin.yaml compare the two averages on the
+# validation window (1996-1997). These are the out-of-sample runs either answer needs: the four other
+# candidates of each config, seeds 0-4, 1998-2021, weights saved, run as the thesis runs them. The winner
+# sobol-036 already ran with both windows in runs/_matrix/exp_fixedwin_full (us_attention and
+# us_attention_fixedwin at K = 30), so the books are put together from the two ledgers afterwards.
+# The blocks are the candidates' values, copied from the two configs (tests/test_ensemble_validation.py).
+#   python scripts/run_matrix.py --matrix configs/exp_ensemble_k30_matrix.yaml --dry-run
+#   python scripts/run_matrix.py --matrix configs/exp_ensemble_k30_matrix.yaml --jobs 40 --threads 2
+
+name: exp_ensemble_k30
+
+sets:
+  seeds5: [0, 1, 2, 3, 4]
+
+blocks:
+  fixedwin: {policy.residual_window: fixed}
+  sobol-091: {objective.lambda_var: 18.9, policy.input_scale: 3.2, model.score_std_target: 0.99, model.lambda_ridge: 0.000541, training.batch_days: 63, policy.input: cumulative, policy.input_normalise: window_vol, model.level_hidden: 0}
+  sobol-067: {objective.lambda_var: 9.85, policy.input_scale: 4.5, model.score_std_target: 0.357, model.lambda_ridge: 8.16e-05, training.batch_days: 125, policy.input: raw, policy.input_normalise: none, model.level_hidden: 0}
+  sobol-009: {objective.lambda_var: 4.8, policy.input_scale: 0.313, model.score_std_target: null, model.lambda_ridge: 0.000819, training.batch_days: 63, policy.input: cumulative, policy.input_normalise: window_vol, model.level_hidden: 0}
+  sobol-073: {objective.lambda_var: 5.07, policy.input_scale: 7.87, model.score_std_target: 0.863, model.lambda_ridge: 0.00024, training.batch_days: 250, policy.input: cumulative, policy.input_normalise: none, model.level_hidden: 0}
+  sobol-005: {objective.lambda_var: 0.329, policy.input_scale: 0.838, model.score_std_target: 0.61, model.lambda_ridge: 3.06e-05, training.batch_days: 125, policy.input: cumulative, policy.input_normalise: window_vol, model.level_hidden: 0}
+  sobol-098: {objective.lambda_var: 0.173, policy.input_scale: 15.0, model.score_std_target: 0.634, model.lambda_ridge: 6.88e-05, training.batch_days: 125, policy.input: raw, policy.input_normalise: none, model.level_hidden: 0}
+
+prep: {}
+
+specs:
+  - {name: us_k30_sobol091, group: rolling, runner: attention, config: configs/us_replication.yaml, K: [30], seeds: seeds5, use: [sobol-091]}
+  - {name: us_k30_sobol067, group: rolling, runner: attention, config: configs/us_replication.yaml, K: [30], seeds: seeds5, use: [sobol-067]}
+  - {name: us_k30_sobol009, group: rolling, runner: attention, config: configs/us_replication.yaml, K: [30], seeds: seeds5, use: [sobol-009]}
+  - {name: us_k30_sobol073, group: rolling, runner: attention, config: configs/us_replication.yaml, K: [30], seeds: seeds5, use: [sobol-073]}
+  - {name: us_k30_fixedwin_sobol009, group: fixed, runner: attention, config: configs/us_replication.yaml, K: [30], seeds: seeds5, use: [fixedwin, sobol-009]}
+  - {name: us_k30_fixedwin_sobol005, group: fixed, runner: attention, config: configs/us_replication.yaml, K: [30], seeds: seeds5, use: [fixedwin, sobol-005]}
+  - {name: us_k30_fixedwin_sobol067, group: fixed, runner: attention, config: configs/us_replication.yaml, K: [30], seeds: seeds5, use: [fixedwin, sobol-067]}
+  - {name: us_k30_fixedwin_sobol098, group: fixed, runner: attention, config: configs/us_replication.yaml, K: [30], seeds: seeds5, use: [fixedwin, sobol-098]}

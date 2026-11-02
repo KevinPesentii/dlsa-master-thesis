@@ -500,3 +500,57 @@ $PY scripts/run_matrix.py --matrix configs/exp_fixedwin_full_matrix.yaml --jobs 
 under `runs/_matrix/exp_fixedwin_full` (ledger, `summary.csv`, `summary_by_spec.csv`, `searches.json`
 with the fixed row's selected values, `searches/us_fixedwin/` with every trial); compare
 `us_attention_fixedwin` with `us_attention` seed by seed.
+
+## 13. Seed ensemble against config ensemble, K = 30 (2026-11-02)
+
+One book holding the mean of the five seeds' weights beat every single seed out of sample
+(`runs/_matrix/exp_fixedwin_full/seed_ensemble.py`: K = 30 net 1.58 -> 1.97 rolling, 1.67 -> 2.06 fixed).
+Before that idea goes anywhere, the validation window has to choose it: does the protocol prefer the
+search winner on five seeds, or the search's top five configurations side by side?
+
+1. `scripts/ensemble_validation.py` on the first training window (fit 1990-1995, booked on 1996-1997),
+   once per residual window (`configs/us_ensemble_val.yaml`, `configs/us_ensemble_val_fixedwin.yaml`):
+   the five best finalists of that window's search x seeds 0-4 = 25 search trials each, whose
+   validation books are averaged both ways. The rule with the higher validation net Sharpe wins
+   (`metrics.json` -> `choice`); `books.csv` has every book.
+2. `configs/exp_ensemble_k30_matrix.yaml`: the out-of-sample runs either answer needs, the four other
+   candidates of each window at K = 30, seeds 0-4, 1998-2021 (40 runs). The winner's runs are in
+   `runs/_matrix/exp_fixedwin_full`; the books are put together at home.
+
+Size, from the K = 30 runs of the two last matrices (63 minutes each on the m7i.8xlarge at 16 jobs,
+119 on the m7i.24xlarge at 46) and one search trial about 1.5 minutes:
+- **m7i.8xlarge** on-demand, `--jobs 16`: validation about 10 minutes, then the 40 runs in three
+  waves, about **3.4 hours** in all, about $6.
+- **m7i.24xlarge** on-demand, `--jobs 25` for the validation and `--jobs 40` for the runs: one wave
+  that runs slower per job, about **2.2 hours**, about $12.
+- Memory: 2.5 GB per validation worker, 5.5 GB per run. Storage: 30 GiB is plenty.
+
+On the laptop, from the branch, committed and pushed:
+
+```powershell
+& $PY scripts\run_matrix.py --matrix configs\exp_ensemble_k30_matrix.yaml --dry-run | Select-Object -First 1   # 40 jobs
+& $PY scripts\make_bundle.py --markets us --out $env:TEMP\afe_bundle_ensemble
+scp $env:TEMP\afe_bundle_ensemble\afe_data.tar $env:TEMP\afe_bundle_ensemble\SHA256SUMS $env:TEMP\afe_bundle_ensemble\COMMIT "ubuntu@${IP}:~"
+```
+
+On the machine, after the clone, `sha256sum -c` and `cloud_setup.sh` of section 7, a smoke test
+(2 candidates x 2 seeds at 1 epoch, then each matrix row once):
+
+```bash
+cd ~/dlsa/attention-factors-europe; PY=~/afe-venv/bin/python
+$PY scripts/ensemble_validation.py --config configs/us_ensemble_val.yaml --smoke --jobs 4 --run-dir runs/_smoke/ensval   # ends "-> seeds" or "-> configs"
+$PY scripts/run_matrix.py --matrix configs/exp_ensemble_k30_matrix.yaml --smoke --jobs 8   # "0 failed"
+```
+
+Then the run in tmux, one line (m7i.8xlarge; on the m7i.24xlarge `--jobs 25` and `--jobs 40`):
+
+```bash
+tmux new -s afe
+cd ~/dlsa/attention-factors-europe; PY=~/afe-venv/bin/python   # again inside tmux: PY does not carry over
+for w in us_ensemble_val us_ensemble_val_fixedwin; do $PY scripts/ensemble_validation.py --config configs/$w.yaml --jobs 16 --threads 2 --run-dir runs/_ensval/$w; done 2>&1 | tee runs/ensval_console.log; $PY scripts/run_matrix.py --matrix configs/exp_ensemble_k30_matrix.yaml --jobs 16 --threads 2 2>&1 | tee runs/matrix_ensemble_console.log; tar -czf ~/runs_ensemble.tgz -C ~/dlsa/attention-factors-europe runs; sudo shutdown -h now
+```
+
+Progress from the laptop: `ssh "ubuntu@$IP" "tail -n 3 ~/dlsa/attention-factors-europe/runs/ensval_console.log ~/dlsa/attention-factors-europe/runs/matrix_ensemble_console.log"`.
+The validation answer is the last line of `ensval_console.log` for each window, minutes after the
+start. Collect as in section 11 (`runs_ensemble.tgz`); the results land in `runs/_ensval/<config>/`
+and `runs/_matrix/exp_ensemble_k30`.

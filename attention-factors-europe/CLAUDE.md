@@ -101,6 +101,12 @@ weaken a test to make code pass.
   (`configs/exp_fixedwin_full_matrix.yaml`: the thesis `us_attention` row twice, K 1-100, seeds
   0-4) gives the fixed row its own search, `configs/us_search_fixedwin.yaml` (= us_search.yaml
   with residual_window held fixed); results in `runs/_matrix/exp_fixedwin_full`.
+- Ensemble experiment (2026-11-02), outside the thesis rows: averaging the five seeds' weights into one
+  book raised K = 30 net Sharpe out of sample (`runs/_matrix/exp_fixedwin_full/seed_ensemble.py`), an
+  idea found after seeing those runs. So the validation window decides first:
+  `scripts/ensemble_validation.py` (`configs/us_ensemble_val*.yaml`, K = 30) compares the search winner on
+  five seeds with the search's top five configurations, and `configs/exp_ensemble_k30_matrix.yaml` runs
+  the other four candidates out of sample. Never a headline value until a decision says so.
 
 ## Trading costs: limits, not replication
 
