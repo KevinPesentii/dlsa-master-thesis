@@ -554,3 +554,40 @@ Progress from the laptop: `ssh "ubuntu@$IP" "tail -n 3 ~/dlsa/attention-factors-
 The validation answer is the last line of `ensval_console.log` for each window, minutes after the
 start. Collect as in section 11 (`runs_ensemble.tgz`); the results land in `runs/_ensval/<config>/`
 and `runs/_matrix/exp_ensemble_k30`.
+
+## 14. The headline without depositary receipts, K = 30 (2026-11-04)
+
+Taking receipts out of the saved K = 30 books lowered net Sharpe by about 0.55, all of it before 2010, and left
+one US run where Europe on the US values stands (`runs/_matrix/exp_ensemble_k30/traded/rebook_no_receipts.py`).
+Nothing was retrained there: the models still saw receipts. `configs/exp_no_receipts_matrix.yaml` retrains the
+headline, sobol-036 at K = 30 and seeds 0-4, on three universes (15 runs):
+- `us_headline`: the baseline on this machine, as in the gap matrices;
+- `us_drop_receipts`: the same members without their receipts, slots left empty. Only the receipts change, so
+  this is the row to read against `us_headline` and against the re-booked books;
+- `us_no_receipts`: the 500 largest listings that are not receipts. Slots refilled with smaller names, so it
+  moves for two reasons, and the 800-name row of section 9 says the smaller names matter.
+
+Size, from the K = 30 runs of sections 12 and 13 (63 minutes each at 16 jobs): **m7i.8xlarge** on-demand,
+`--jobs 16`, about **1.1 hours**, about $2. Memory 5.5 GB per run, storage 30 GiB.
+
+On the laptop, from the branch, committed and pushed; the two builds are about 15 minutes each and need no WRDS:
+
+```powershell
+& $PY scripts\build_us_dataset.py --config configs\us_data_no_receipts.yaml
+& $PY scripts\build_us_dataset.py --config configs\us_data_drop_receipts.yaml
+& $PY scripts\run_matrix.py --matrix configs\exp_no_receipts_matrix.yaml --dry-run | Select-Object -First 1   # 15 jobs
+& $PY scripts\make_bundle.py --markets us us_no_receipts us_drop_receipts --out $env:TEMP\afe_bundle_receipts
+scp $env:TEMP\afe_bundle_receipts\afe_data.tar $env:TEMP\afe_bundle_receipts\SHA256SUMS $env:TEMP\afe_bundle_receipts\COMMIT "ubuntu@${IP}:~"
+```
+
+On the machine, after the clone, `sha256sum -c` and `cloud_setup.sh` of section 7:
+
+```bash
+cd ~/dlsa/attention-factors-europe; PY=~/afe-venv/bin/python
+$PY scripts/run_matrix.py --matrix configs/exp_no_receipts_matrix.yaml --smoke --jobs 3   # "0 failed"
+tmux new -s afe
+cd ~/dlsa/attention-factors-europe; PY=~/afe-venv/bin/python   # again inside tmux: PY does not carry over
+$PY scripts/run_matrix.py --matrix configs/exp_no_receipts_matrix.yaml --jobs 16 --threads 2 2>&1 | tee runs/matrix_no_receipts_console.log
+```
+
+Collect as in section 11; the results land in `runs/_matrix/exp_no_receipts`.

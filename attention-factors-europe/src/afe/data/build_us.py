@@ -182,8 +182,10 @@ def build(cfg: dict, raw: up.RawUS, out_dir: Path, cutoff: pd.Timestamp | None =
     co = up.company_month(elig)
     lines = up.line_month(elig, co) if cfg.get("universe", {}).get("unit", "company") == "line" else None
     calendar = raw.ff_daily.index
+    out = cfg.get("universe", {}).get("drop_after_ranking")     # share types: ranked, then left out
+    dropped = {m: set(g["permno"]) for m, g in elig[elig["sharetype"].isin(out)].groupby("month")} if out else None
     uni, asof = up.build_universe(co if lines is None else lines,
-                                  {**cfg, "sample": {**cfg["sample"], "end": str(end)}}, calendar)
+                                  {**cfg, "sample": {**cfg["sample"], "end": str(end)}}, calendar, dropped)
     uni_members = {M: sorted(g["primary_permno"].astype(int).tolist()) for M, g in asof.groupby("month")}
     pool = sorted({p for ms in uni_members.values() for p in ms}) if cfg["pool"] == "universe" \
         else sorted(elig["permno"].unique().tolist())
@@ -240,8 +242,9 @@ def build(cfg: dict, raw: up.RawUS, out_dir: Path, cutoff: pd.Timestamp | None =
 
 def build_report(cfg, uni, asof, ret, coverage, mc, raw, inspect_dir: Path) -> str:
     lo, hi = int(asof["cap_rank_all"].min()), int(asof["cap_rank_all"].max())
+    size = uni.groupby("month").size()
     L = [f"US dataset built {dt.datetime.now():%Y-%m-%d %H:%M}", f"config: {cfg}", "",
-         f"universe: {uni['month'].nunique()} months x {cfg['sample']['universe_size']}"
+         f"universe: {uni['month'].nunique()} months x {size.min() if size.min() == size.max() else f'{size.min()}-{size.max()}'}"
          f"{f' (ranks {lo}-{hi})' if lo > 1 else ''}, "
          f"{uni['sec_id'].nunique()} distinct permnos; returns.parquet {len(ret):,} rows, "
          f"{ret['sec_id'].nunique()} permnos", ""]

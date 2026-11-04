@@ -1,0 +1,33 @@
+# The headline without depositary receipts, K = 30 (2026-11-04), OUTSIDE the thesis rows. Taking receipts
+# out of the saved books lowered net Sharpe by about 0.55, all of it before 2010, and left one US run where
+# Europe on the US values stands (runs/_matrix/exp_ensemble_k30/traded/rebook_no_receipts.py). That was a
+# re-booking: the models still saw receipts in training. These rows retrain. They change only the data, so
+# they keep the headline values and select nothing on these out-of-sample years.
+#   python scripts/run_matrix.py --matrix configs/exp_no_receipts_matrix.yaml --dry-run
+#   python scripts/run_matrix.py --matrix configs/exp_no_receipts_matrix.yaml --smoke --jobs 3
+#   python scripts/run_matrix.py --matrix configs/exp_no_receipts_matrix.yaml --jobs 16 --threads 2
+# Weights and yearly models are saved, for the books and for a leg replay. us_headline repeats the thesis
+# row on this machine, so each new row is compared seed by seed with a baseline that differs only in the data.
+
+name: exp_no_receipts
+
+sets:
+  seeds5: [0, 1, 2, 3, 4]
+
+blocks:
+  save_models:                   # yearly state_dicts, as in the gap matrices
+    evaluation.save_models: true
+
+prep: {}
+
+specs:
+  - {name: us_headline, group: baseline, runner: attention, config: configs/us_headline.yaml, K: [30], seeds: seeds5, use: [save_models]}
+
+  # Slots left empty (configs/us_data_drop_receipts.yaml): the headline's members without their receipts,
+  # so only the receipts change. The row to read against us_headline and the re-booked books.
+  - {name: us_drop_receipts, group: universe, runner: attention, config: configs/us_headline.yaml, K: [30], seeds: seeds5, use: [save_models], set: {data.dir: data/us/drop_receipts}}
+
+  # Slots refilled (configs/us_data_no_receipts.yaml): the 500 largest listings that are not receipts. It
+  # moves for two reasons: receipts leave and smaller names enter, and the 800-name row of
+  # configs/gap_matrix.yaml says the smaller names matter. Comparable with Europe's rule, no receipts.
+  - {name: us_no_receipts, group: universe, runner: attention, config: configs/us_headline.yaml, K: [30], seeds: seeds5, use: [save_models], set: {data.dir: data/us/no_receipts}}

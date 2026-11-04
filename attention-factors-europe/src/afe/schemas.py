@@ -101,11 +101,12 @@ def validate(df: pd.DataFrame, spec: TableSpec) -> None:
         raise SchemaError(f"{spec.name}: rows are not sorted by {key}")
 
 
-def validate_universe(df: pd.DataFrame, size: int = UNIVERSE_SIZE) -> None:
-    """Universe-specific checks on top of the schema: fixed size, dense ranks."""
+def validate_universe(df: pd.DataFrame, size: int | None = UNIVERSE_SIZE) -> None:
+    """Universe-specific checks on top of the schema: fixed size, dense ranks. size None: any
+    number of names, for a universe with names taken out after the ranking."""
     validate(df, UNIVERSE)
     counts = df.groupby("month").size()
-    off = counts[counts != size]
+    off = counts[counts != size] if size is not None else counts.iloc[:0]
     if len(off):
         raise SchemaError(
             f"universe: {len(off)} months do not have exactly {size} names, "
@@ -113,8 +114,8 @@ def validate_universe(df: pd.DataFrame, size: int = UNIVERSE_SIZE) -> None:
         )
     for month, grp in df.groupby("month"):
         ranks = sorted(grp["cap_rank"].tolist())
-        if ranks != list(range(1, size + 1)):
-            raise SchemaError(f"universe: cap_rank is not 1..{size} in {month.date()}")
+        if ranks != list(range(1, len(grp) + 1)):
+            raise SchemaError(f"universe: cap_rank is not 1..{len(grp)} in {month.date()}")
 
 
 def feature_columns(df: pd.DataFrame) -> list[str]:

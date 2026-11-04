@@ -107,6 +107,13 @@ weaken a test to make code pass.
   `scripts/ensemble_validation.py` (`configs/us_ensemble_val*.yaml`, K = 30) compares the search winner on
   five seeds with the search's top five configurations, and `configs/exp_ensemble_k30_matrix.yaml` runs
   the other four candidates out of sample. Never a headline value until a decision says so.
+- Receipts experiment (2026-11-04), outside the thesis rows: removing depositary receipts from the saved
+  K = 30 books lowered net Sharpe by about 0.55, all of it before 2010, an idea found after seeing those runs
+  (`runs/_matrix/exp_ensemble_k30/traded/rebook_no_receipts.py`). `configs/exp_no_receipts_matrix.yaml` retrains
+  the headline on two universes, rows that change only the data and so keep the headline values:
+  `configs/us_data_no_receipts.yaml` (the 500 largest non-receipts) and `configs/us_data_drop_receipts.yaml`
+  (the default members without their receipts, not replaced). Results in `runs/_matrix/exp_no_receipts`; they
+  bear on the US-Europe comparison, since Europe has no receipts. Never a headline value.
 
 ## Trading costs: limits, not replication
 

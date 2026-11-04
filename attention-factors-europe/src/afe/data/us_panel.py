@@ -293,7 +293,8 @@ def receipt_caps(elig: pd.DataFrame, secm: pd.DataFrame | None, ccm: pd.DataFram
     return out
 
 
-def build_universe(co: pd.DataFrame, cfg: dict, calendar: pd.DatetimeIndex) -> tuple[pd.DataFrame, pd.DataFrame]:
+def build_universe(co: pd.DataFrame, cfg: dict, calendar: pd.DatetimeIndex,
+                   dropped: dict | None = None) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Membership for month M = the `universe_size` largest rows of `co` (companies from
     company_month, or lines from line_month) by cap_co at the end of month M-1. Returns
     (universe per docs/schemas.md, as-of ranking table).
@@ -301,6 +302,10 @@ def build_universe(co: pd.DataFrame, cfg: dict, calendar: pd.DatetimeIndex) -> t
     `sample.universe_first_rank` (default 1) starts the window further down: 301 with size
     500 keeps the rows ranked 301-800. cap_rank is then 1..N within the window (the schema's
     dense ranks); the as-of table's cap_rank_all keeps the rank among all rows.
+
+    `dropped` (month -> permnos) are ranked with the rest at the end of M-1 and then left out,
+    not replaced: M keeps the plain window's members without them, so it has fewer names,
+    cap_rank 1..m among those left and cap_rank_all still counting the ones taken out.
 
     `month` is the first trading day of M on `calendar`. sec_id is the row's (primary)
     permno AT THE RANKING DATE, as a string.
@@ -322,13 +327,16 @@ def build_universe(co: pd.DataFrame, cfg: dict, calendar: pd.DatetimeIndex) -> t
             raise ValueError(f"{M}: no trading day on the calendar")
         snap = snap.assign(cap_rank=np.arange(1, n + 1, dtype="int16"),
                            cap_rank_all=np.arange(first, first + n, dtype="int16"), month=M)
+        if dropped is not None:
+            snap = snap[~snap["primary_permno"].isin(dropped.get(M - 1, ()))]
+            snap = snap.assign(cap_rank=np.arange(1, len(snap) + 1, dtype="int16"))
         asof.append(snap)
         rows.append(pd.DataFrame({"month": first_day[M], "sec_id": snap["primary_permno"].astype(str).values,
                                   "cap_rank": snap["cap_rank"].values}))
     uni = pd.concat(rows, ignore_index=True)
     uni["month"] = uni["month"].astype("datetime64[ns]")
     uni = uni.sort_values(["month", "sec_id"], ignore_index=True)
-    schemas.validate_universe(uni, size=n)
+    schemas.validate_universe(uni, size=None if dropped is not None else n)
     return uni, pd.concat(asof, ignore_index=True)
 
 
