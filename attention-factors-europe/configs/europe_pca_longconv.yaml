@@ -34,6 +34,7 @@ policy:
   layers: 1
   hidden: 32
   residual_lookback: 30
+  residual_window: rolling       # each day keeps its own hedge; fixed: the trade date's (trading.make_fixed_windows)
   dropout: 0.1
   lambda_squash: 0.001
   input: cumulative

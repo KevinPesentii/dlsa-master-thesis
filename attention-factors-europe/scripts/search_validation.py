@@ -161,14 +161,14 @@ def evaluate_pca(job: dict) -> dict:
     s1, panel, (t_tr0, t_va0, t_va1) = WORKER["s1"], WORKER["panel"], WORKER["split"]
     pc, ob = c["policy"], c["objective"]
     L, scale, cum = pc["residual_lookback"], pc["input_scale"], pc["input"] == "cumulative"
-    norm = pc.get("input_normalise", "none")
+    norm, window = pc.get("input_normalise", "none"), pc.get("residual_window", "rolling")
     t0 = time.time()
-    val_b = s1.batch(t_va0, t_va1, L, scale, cum, norm)
+    val_b = s1.batch(t_va0, t_va1, L, scale, cum, norm, window)
     if pc["kind"] == "longconv":
         init_seed = job["seed"] * 10007 + WORKER["first_oos"]
         torch.manual_seed(init_seed)
         model = LongConvPolicy(pc["hidden"], L, pc["dropout"], pc["lambda_squash"], pc["layers"])
-        rp.train_one_window(model, s1.batch(t_tr0, t_va0, L, scale, cum, norm), c,
+        rp.train_one_window(model, s1.batch(t_tr0, t_va0, L, scale, cum, norm, window), c,
                             np.random.default_rng(init_seed), lambda s: None)
         w = rp.evaluate_window(model, val_b)
     else:

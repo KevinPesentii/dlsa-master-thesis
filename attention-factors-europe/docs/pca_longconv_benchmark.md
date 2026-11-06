@@ -100,3 +100,22 @@ K = 100 explains far more.
 - Whether the authors exclude non-tradable days differently at the start of a window.
 - Seeds: Table 3 reports 0.12-0.17 SR standard deviation across seeds for the attention
   model; run `--seed 1 2 ...` before quoting a single number.
+
+## The fixed residual window (2026-11-06)
+
+`policy.residual_window: fixed` (`trading.make_fixed_windows`, tests/test_pca_fixed_window.py) re-hedges the 30-day
+window with V, B and 1/vol of the date being traded, as attention's fixed window does:
+eps~_{s,tau} = R_{s,tau} - B_{s,t}' V_t' D_t^-1 R_tau. Default stays `rolling`, each day's own hedge, so every
+earlier row reproduces. Measured on the built data, 2005, against rolling:
+
+| | tradable a day, rolling / fixed | residual sd, rolling / fixed | correlation |
+|---|---|---|---|
+| US, K = 30 | 488.3 / 489.1 | 0.0117 / 0.0100 | 0.92 |
+| Europe, K = 30 | 182.6 / 183.8 | 0.0085 / 0.0069 | 0.90 |
+| US, K = 100 | 488.3 / 489.1 | 0.0105 / 0.0061 | 0.73 |
+
+Two differences from attention. Almost no names are gained: rolling PCA already trades entrants, because stage one
+computes residuals for every pool name with a history, where rolling attention waited 30 days (480 to 497 a day).
+And the hedge is in sample: B_t is regressed on the 252 days that contain the window, so residuals shrink, more
+with K. Nothing is known too early, B_t uses returns before t only, but the window is no longer an
+out-of-sample residual path, and a policy trained on it sees a smaller, partly fitted signal.

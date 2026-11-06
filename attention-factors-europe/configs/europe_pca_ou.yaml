@@ -23,6 +23,7 @@ factors:
 policy:
   kind: ou_threshold
   residual_lookback: 30
+  residual_window: rolling       # each day keeps its own hedge; fixed: the trade date's (trading.make_fixed_windows)
   input: cumulative
   input_scale: 1.0
   c_thresh: 1.25

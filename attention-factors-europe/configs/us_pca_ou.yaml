@@ -28,6 +28,7 @@ factors:
 policy:
   kind: ou_threshold
   residual_lookback: 30          # the OU is fitted to the cumulative path of the last 30 residuals
+  residual_window: rolling       # each day keeps its own hedge; fixed: the trade date's (trading.make_fixed_windows)
   input: cumulative              # required: GPZ's preprocess_ou fits the cumulative path
   input_scale: 1.0               # s-score and R2 are scale-free; kept at 1 for the record
   c_thresh: 1.25                 # |s| that opens a position; GPZ validate over {1, 1.25, 1.5}

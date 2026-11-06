@@ -54,14 +54,21 @@ class Stage1:
         R_ext = np.concatenate([np.nan_to_num(panel.R), np.zeros((len(panel.dates), 1))], axis=1)
         self.R_slot = np.take_along_axis(R_ext, self.idx, axis=1).astype(np.float32)
         self.R_pool = np.nan_to_num(panel.R).astype(np.float32)
+        self.has_ret = np.isfinite(panel.R)
         self.rf = panel.rf.astype(np.float32)
         with np.errstate(all="ignore"), warnings.catch_warnings():
             warnings.simplefilter("ignore", RuntimeWarning)      # days before the universe starts
             self.mkt_ew = np.nanmean(np.where(panel.member, panel.R, np.nan), axis=1)
 
     def batch(self, t0: int, t1: int, L: int, scale: float, cumulative: bool,
-              normalise: str = "none") -> trading.SlotBatch:
-        X, tradable = trading.make_windows(self.resid, self.idx, self.n, t0, t1, L, scale, cumulative, normalise)
+              normalise: str = "none", window: str = "rolling") -> trading.SlotBatch:
+        if window == "rolling":
+            X, tradable = trading.make_windows(self.resid, self.idx, self.n, t0, t1, L, scale, cumulative, normalise)
+        elif window == "fixed":
+            X, tradable = trading.make_fixed_windows(self.R_pool, self.has_ret, self.idx, self.n, self.V, self.B,
+                                                     self.invvol, t0, t1, L, scale, cumulative, normalise)
+        else:
+            raise ValueError(f"unknown policy.residual_window: {window}")
         f = lambda a: torch.from_numpy(np.array(a[t0:t1]))  # noqa: E731  (copies out of the memmap)
         return trading.SlotBatch(torch.from_numpy(X), torch.from_numpy(tradable), f(self.V), f(self.B),
                                  f(self.invvol), f(self.idx), f(self.R_slot), f(self.rf), self.n_pool)
@@ -153,7 +160,7 @@ def run_K(K: int, cfg: dict, seed: int, panel: pca_factors.Panel, years: list[in
     run_dir = runs.create_run(f"pca_{kind}_K{K}_s{seed}", {**cfg, "K": K, "years": years}, seed)
     log(f"K={K}: run dir {run_dir}")
     L, scale, cum = pc["residual_lookback"], pc["input_scale"], pc["input"] == "cumulative"
-    norm = pc.get("input_normalise", "none")
+    norm, window = pc.get("input_normalise", "none"), pc.get("residual_window", "rolling")
     if kind == "ou_threshold" and not cum:
         raise ValueError("the OU model is fitted to the cumulative residual path (policy.input)")
     torch.manual_seed(seed)
@@ -166,17 +173,17 @@ def run_K(K: int, cfg: dict, seed: int, panel: pca_factors.Panel, years: list[in
         t0 = time.time()
         if kind == "longconv":
             t_tr0 = dates.searchsorted(window_start(cfg, year))
-            train_b = s1.batch(t_tr0, t_te0, L, scale, cum, norm)
+            train_b = s1.batch(t_tr0, t_te0, L, scale, cum, norm, window)
             log(f"  {year}: train {dates[t_tr0]:%Y-%m-%d}..{dates[t_te0 - 1]:%Y-%m-%d} "
                 f"({t_te0 - t_tr0} days, {int(train_b.tradable.sum(1).float().mean())} tradable/day), "
                 f"test {t_te1 - t_te0} days")
             model = LongConvPolicy(pc["hidden"], L, pc["dropout"], pc["lambda_squash"], pc["layers"])
             train_one_window(model, train_b, cfg, rng, log)
             del train_b
-            test_b = s1.batch(t_te0, t_te1, L, scale, cum, norm)
+            test_b = s1.batch(t_te0, t_te1, L, scale, cum, norm, window)
             w = evaluate_window(model, test_b)
         else:
-            test_b = s1.batch(t_te0, t_te1, L, scale, cum)
+            test_b = s1.batch(t_te0, t_te1, L, scale, cum, window=window)
             w_port = torch.from_numpy(ou_threshold.threshold_weights(
                 test_b.windows.numpy(), test_b.tradable.numpy(), pc["c_thresh"], pc["c_crit"]))
             w = trading.compose(w_port, test_b)
@@ -197,6 +204,7 @@ def run_K(K: int, cfg: dict, seed: int, panel: pca_factors.Panel, years: list[in
     m = metrics.performance(daily, ob["turnover_cost"], ob["short_cost"], ev["cost_grid_bps"])
     e = cfg.get("execution") or {}
     m.update({"K": K, "seed": seed, "policy": kind, "policy_input": pc["input"], "policy_input_normalise": norm,
+              "residual_window": window,
               "execution_lag": int(e.get("lag", 0)),
               "stale_when_closed": bool(e.get("stale_when_closed", True)) and panel.closed is not None,
               "factor_model": f"pca_cov{meta['cov_window']}_loadings{meta['loading_window'] or 'projection'}"})

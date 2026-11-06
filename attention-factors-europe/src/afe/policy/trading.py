@@ -123,10 +123,51 @@ def make_windows(resid: np.ndarray, idx: np.ndarray, n: np.ndarray, t0: int, t1:
         win = np.where(ok[None, :], win, pad)
         X[i, :m] = win.T
         tradable[i, :m] = ok
+    return _window_input(X, scale, cumulative, normalise, vol_floor), tradable
+
+
+def make_fixed_windows(R: np.ndarray, has_ret: np.ndarray, idx: np.ndarray, n: np.ndarray, V: np.ndarray,
+                       B: np.ndarray, invvol: np.ndarray, t0: int, t1: int, L: int, scale: float,
+                       cumulative: bool, normalise: str = "none", vol_floor: float = 1e-4):
+    """Windows re-hedged with the composition of the date being traded (policy.residual_window
+    fixed), the PCA counterpart of model/attention_pipeline.fixed_residual_windows. For trade
+    date t and the name in slot s on t, each day tau = t-L..t-1 is
+
+        eps~_{s,tau} = R_{s,tau} - B_{s,t}' V_t' D_t^-1 R_tau
+
+    with V, B and 1/vol of date t, which use returns before t only, applied to the returns on
+    tau of date t's PCA set. The window is the past path of exactly the residual portfolio
+    traded at t; make_windows keeps each day's own hedge. B_t was fitted on a span containing
+    these days, so the path is in sample for the hedge, and known at t.
+
+    R, has_ret: (T, P) returns by pool column, 0 where none, and where they exist. A set name
+    without a return on a window day counts as 0 in that day's factor return and is not
+    tradable. The PCA set already asks for a full 252-day history, so with L <= 252 that does
+    not happen on the built data.
+    """
+    T, S = t1 - t0, idx.shape[1]
+    X = np.zeros((T, S, L), dtype=np.float32)
+    tradable = np.zeros((T, S), dtype=bool)
+    for i, t in enumerate(range(t0, t1)):
+        m = int(n[t])
+        if m == 0 or t < L:
+            continue
+        cols = idx[t, :m]
+        win = R[t - L:t][:, cols]                          # (L, m)
+        ok = has_ret[t - L:t][:, cols].all(axis=0)
+        F = (win * invvol[t, :m]) @ np.asarray(V[t, :m])   # (L, K) date-t factors on tau
+        eps = win - F @ np.asarray(B[t, :m]).T
+        X[i, :m] = np.where(ok[None, :], eps, 0.0).T
+        tradable[i, :m] = ok
+    return _window_input(X, scale, cumulative, normalise, vol_floor), tradable
+
+
+def _window_input(X: np.ndarray, scale: float, cumulative: bool, normalise: str, vol_floor: float) -> np.ndarray:
+    """Normalisation, cumulative sum and scale, the same for both window kinds."""
     if normalise == "window_vol":
         X = X / np.maximum(X.std(axis=-1, keepdims=True), vol_floor)
     elif normalise != "none":
         raise ValueError(f"unknown policy.input_normalise: {normalise}")
     if cumulative:
         X = np.cumsum(X, axis=-1)
-    return X * scale, tradable
+    return X * scale
