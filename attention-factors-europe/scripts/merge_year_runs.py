@@ -37,10 +37,10 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
 from afe import runs  # noqa: E402
-from afe.evaluation import metrics  # noqa: E402
+from afe.evaluation import diagnostics, metrics  # noqa: E402
 
 # metrics.json keys that are per-year dictionaries: merged by union
-BY_YEAR = ("lambda_by_year", "validation_net_SR_by_year")
+BY_YEAR = ("lambda_by_year", "validation_net_SR_by_year", "year_stats")
 
 
 def load(d: Path) -> dict:
@@ -134,7 +134,21 @@ def merge_group(rs: list[dict], dry_run: bool, walk_forward: bool = False) -> No
     runs.write_metrics(out, m)
     daily.to_csv(out / "oos_daily.csv", index=False)
     pd.concat([r["w"] for r in rs], ignore_index=True).to_parquet(out / "weights.parquet", index=False)
+    merge_diagnostics(rs, out)
     print(f"  -> {out}")
+
+
+def merge_diagnostics(rs: list[dict], out: Path) -> None:
+    """The evaluation.diagnostics tables of the years, one after the other. In diag_daily and
+    name_year the first date of each year still counts a standalone year's full book as turnover."""
+    for name in diagnostics.FILES:
+        parts = [r["dir"] / f"{name}.parquet" for r in rs if (r["dir"] / f"{name}.parquet").exists()]
+        if parts:
+            pd.concat([pd.read_parquet(f) for f in parts], ignore_index=True).to_parquet(
+                out / f"{name}.parquet", index=False, compression="zstd")
+    logs = [r["dir"] / "train_log.csv" for r in rs if (r["dir"] / "train_log.csv").exists()]
+    if logs:
+        pd.concat([pd.read_csv(f) for f in logs], ignore_index=True).to_csv(out / "train_log.csv", index=False)
 
 
 def main():

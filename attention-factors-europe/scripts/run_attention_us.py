@@ -32,7 +32,7 @@ sys.path.insert(0, str(ROOT / "src"))
 
 from afe import runs  # noqa: E402
 from afe.data import slots  # noqa: E402
-from afe.evaluation import metrics  # noqa: E402
+from afe.evaluation import diagnostics, metrics  # noqa: E402
 from afe.model.attention_pipeline import AttentionArb, objective, slot_batch, to_pool  # noqa: E402
 from afe.policy import trading  # noqa: E402
 
@@ -90,14 +90,20 @@ def span(model, p: slots.SlotPanel, t0: int, t1: int, cfg: dict, w_prev=None):
     return loss, parts, out
 
 
-def daily_book(p: slots.SlotPanel, wp: np.ndarray, t_idx: np.ndarray, cfg: dict) -> pd.DataFrame:
-    """Out-of-sample daily series from the target pool weights `wp` of the consecutive days
-    t_idx (all test years together, so a lagged or stale position crosses the year end)."""
+def held_book(p: slots.SlotPanel, wp: np.ndarray, t_idx: np.ndarray, cfg: dict) -> np.ndarray:
+    """The executed book of the target pool weights `wp` of the consecutive days t_idx (all
+    test years together, so a lagged or stale position crosses the year end)."""
     if not (np.diff(t_idx) == 1).all():
         raise ValueError("out-of-sample days must be consecutive")
     lag, closed = execution(cfg)[0], closed_mask(p, cfg, int(t_idx[0]) - 1, int(t_idx[-1]))
     if lag or closed is not None:
         wp = trading.execute(torch.from_numpy(wp), closed, lag).numpy()
+    return wp
+
+
+def daily_book(p: slots.SlotPanel, wp: np.ndarray, t_idx: np.ndarray, cfg: dict) -> pd.DataFrame:
+    """Out-of-sample daily series from the target pool weights `wp` of the days t_idx."""
+    wp = held_book(p, wp, t_idx, cfg)
     gross = (wp * p.R_pool[t_idx]).sum(axis=1)
     turnover = np.abs(np.diff(wp, axis=0, prepend=np.zeros((1, wp.shape[1]), dtype=wp.dtype))).sum(axis=1)
     short = np.clip(-wp, 0, None).sum(axis=1)
@@ -107,10 +113,10 @@ def daily_book(p: slots.SlotPanel, wp: np.ndarray, t_idx: np.ndarray, cfg: dict)
 
 
 def train_window(model, p: slots.SlotPanel, t_tr0: int, t_te0: int, cfg: dict,
-                 rng: np.random.Generator, log, on_epoch=None) -> None:
+                 rng: np.random.Generator, log, on_epoch=None, curve: list | None = None) -> None:
     """`on_epoch(epoch, model)`, if given, runs after every epoch (1-based), e.g. to score a
     validation span in eval mode; tests/test_search_validation.py checks that this leaves
-    the training path unchanged."""
+    the training path unchanged. `curve`, if given, collects each epoch's means."""
     tr = cfg["training"]
     # Table 4 of the paper: weight decay 0.05 is "Adam weight decay in LongConv model", so it
     # applies to the sequence model only. The attention factor parameters (Q, W_K) are not
@@ -133,7 +139,7 @@ def train_window(model, p: slots.SlotPanel, t_tr0: int, t_te0: int, cfg: dict,
     for epoch in range(tr["epochs"]):
         model.train()
         rng.shuffle(blocks)
-        tot, ev = 0.0, 0.0
+        tot, ev, sh = 0.0, 0.0, 0.0
         for b0, b1 in blocks:
             opt.zero_grad()
             loss, parts, _ = span(model, p, b0, b1, cfg)
@@ -143,6 +149,10 @@ def train_window(model, p: slots.SlotPanel, t_tr0: int, t_te0: int, cfg: dict,
             opt.step()
             tot += loss.item()
             ev += parts["ev"].item()
+            sh += parts["sharpe_loss"].item()
+        if curve is not None:
+            curve.append({"epoch": epoch + 1, "loss": tot / len(blocks), "sharpe_part": sh / len(blocks),
+                          "ev": ev / len(blocks)})
         if epoch == 0 or (epoch + 1) % 10 == 0:
             log(f"      epoch {epoch + 1:2d}: loss {tot / len(blocks):+.3f}  "
                 f"(sharpe part {parts['sharpe_loss'].item():+.3f}, EV {ev / len(blocks):.3f})")
@@ -161,6 +171,7 @@ def run_K(K: int, cfg: dict, seed: int, p: slots.SlotPanel, years: list[int], lo
     L = pc["residual_lookback"]
     dates = p.dates
     w_slot_all, w_pool_all, t_all = [], [], []
+    rec = diagnostics.Recorder(p, L, ev["diagnostics"].get("top_n", 20)) if ev.get("diagnostics") else None
     for year in years:
         w0 = window_start(cfg, year)
         t_tr0 = dates.searchsorted(w0)
@@ -175,7 +186,8 @@ def run_K(K: int, cfg: dict, seed: int, p: slots.SlotPanel, years: list[int], lo
         model = AttentionArb(n_features=len(p.features), n_factors=K, embedding_dim=mc["embedding_dim"],
                              lambda_ridge=mc["lambda_ridge"], level_hidden=mc.get("level_hidden", 0), hidden=pc["hidden"], lookback=L,
                              dropout=pc["dropout"], lambda_squash=pc["lambda_squash"])
-        train_window(model, p, t_tr0, t_te0, cfg, rng, log)
+        curve = []
+        train_window(model, p, t_tr0, t_te0, cfg, rng, log, curve=curve)
         model.eval()
         if ev.get("save_models"):       # for the factor figures: betas and weights on any date
             (run_dir / "models").mkdir(exist_ok=True)
@@ -186,6 +198,9 @@ def run_K(K: int, cfg: dict, seed: int, p: slots.SlotPanel, years: list[int], lo
         w_slot_all.append(w.numpy())
         w_pool_all.append(to_pool(w, p.idx[t_te0:t_te1], p.n_pool).numpy())
         t_all.append(np.arange(t_te0, t_te1))
+        if rec is not None:
+            with torch.no_grad():
+                rec.add_year(out, t_te0, t_te1, year, curve, parts["ev"].item(), float(model.factors.log_tau.exp()))
         log(f"      test: net SR {metrics.annualised(parts['net'].numpy())['SR']:.2f} within the year, "
             f"EV {parts['ev'].item():.3f}, {int(out['tradable'].sum(1).float().mean())} tradable/day, "
             f"{time.time() - t0:.0f}s")
@@ -200,6 +215,10 @@ def run_K(K: int, cfg: dict, seed: int, p: slots.SlotPanel, years: list[int], lo
               "execution_lag": execution(cfg)[0], "stale_when_closed": closed_mask(p, cfg, 0, 1) is not None})
     runs.write_metrics(run_dir, m)
     daily.to_csv(run_dir / "oos_daily.csv", index=False)
+    if rec is not None:
+        rec.write(run_dir, held_book(p, np.concatenate(w_pool_all), t_idx, cfg), t_idx)
+        m["year_stats"] = rec.year_stats
+        runs.write_metrics(run_dir, m)
     if ev.get("save_weights"):
         ws = np.concatenate(w_slot_all)
         tt, ss = np.nonzero(ws != 0)

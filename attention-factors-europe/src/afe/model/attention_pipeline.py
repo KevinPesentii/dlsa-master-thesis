@@ -173,7 +173,7 @@ class AttentionArb(nn.Module):
         w = w / torch.where(l1 > 0, l1, torch.ones_like(l1))
         return {"w": w, "tradable": tradable, "windows": windows, "eps": eps, "R": R_slot,
                 "in_universe": in_universe, "w_port": w_port, "l1": l1.squeeze(1),
-                "idx": idx, "n_pool": n_pool}
+                "idx": idx, "n_pool": n_pool, "w_F": w_F[L:], "betaT": betaT[L:]}
 
 
 def explained_variance(eps: torch.Tensor, R: torch.Tensor, mask: torch.Tensor,
