@@ -17,7 +17,7 @@ diag_daily, by question:
 
   Who can be traded. n_member (slots filled), n_return (members with a return), n_tradable.
   n_new, l1_new, pnl_new, turn_new: the book in names with fewer than L days in the universe, the
-  ones policy.residual_window rolling would not trade yet. Zero by construction when rolling.
+  ones policy.residual_window rolling gives no policy position yet (its hedge can still hold them).
 
   Where the book comes from. w = (w_port - hedge) / l1. l1_port, pnl_port, turn_port are the
   policy's own positions, normalised like w; the rest of gross and turnover is the hedge.
