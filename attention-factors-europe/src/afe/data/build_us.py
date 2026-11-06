@@ -86,12 +86,14 @@ def annual_characteristics(raw: up.RawUS, co: pd.DataFrame, pool, months: pd.Per
 # ------------------------------------------------------------------ assembly
 
 
-def assemble_year(year: int, uni_members: dict, D: ch.DailyInputs, mc: pd.DataFrame, dc: pd.DataFrame,
-                  names: list[str], rf: pd.Series, start: pd.Period, end: pd.Period) -> tuple[pd.DataFrame, pd.DataFrame]:
+def assemble_year(year: int, uni_members: dict, calendar: pd.DatetimeIndex, mc: pd.DataFrame, dc: pd.DataFrame,
+                  names: list[str], rf: pd.Series, start: pd.Period, end: pd.Period,
+                  levels: bool = True) -> tuple[pd.DataFrame, pd.DataFrame]:
     """features rows for one calendar year, plus the raw (pre-normalisation) coverage.
     mc and dc arrive with the last-observed carry already applied, if it is on; what is
-    still missing here gets the cross-sectional median."""
-    dates = D.ret.index[D.ret.index.year == year]
+    still missing here gets the cross-sectional median. levels False leaves out the med_*
+    columns (features_asof.parquet)."""
+    dates = calendar[calendar.year == year]
     dc = dc[dc.index.get_level_values("date").year == year]
     parts = []
     for M, dM in dates.groupby(dates.to_period("M")).items():
@@ -115,19 +117,22 @@ def assemble_year(year: int, uni_members: dict, D: ch.DailyInputs, mc: pd.DataFr
     date_key = raw.index.get_level_values("date")
     g = raw.groupby(date_key)
     ranked = g.transform(ch.rank_quantile).astype("float64").fillna(0.0)
-    with warnings.catch_warnings():  # an all-NaN day for one characteristic is a coverage fact, reported below
-        warnings.simplefilter("ignore", RuntimeWarning)
-        meds = g.transform("median").astype("float64").fillna(0.0)
     ranked.columns = [f"char_{c}" for c in names]
-    meds.columns = [f"med_{c}" for c in names]
-    feat = pd.concat([ranked, meds], axis=1).astype("float32")
+    feat = ranked
+    if levels:
+        with warnings.catch_warnings():  # an all-NaN day for one characteristic is a coverage fact, reported below
+            warnings.simplefilter("ignore", RuntimeWarning)
+            meds = g.transform("median").astype("float64").fillna(0.0)
+        meds.columns = [f"med_{c}" for c in names]
+        feat = pd.concat([ranked, meds], axis=1)
+    feat = feat.astype("float32")
     feat["rf"] = rf.reindex(date_key).to_numpy().astype("float32")
     feat = feat.reset_index()
     feat["sec_id"] = feat["permno"].astype(str)
     feat = feat.drop(columns="permno")
     feat["date"] = feat["date"].astype("datetime64[ns]")
     feat = feat[["date", "sec_id"] + schemas.feature_columns(feat)].sort_values(["date", "sec_id"], ignore_index=True)
-    schemas.validate(feat, schemas.FEATURES)
+    schemas.validate(feat, schemas.FEATURES if levels else schemas.FEATURES_ASOF)
     return feat, coverage
 
 
@@ -217,7 +222,7 @@ def build(cfg: dict, raw: up.RawUS, out_dir: Path, cutoff: pd.Timestamp | None =
     rf = raw.ff_daily["rf"]
     writer, coverage = None, []
     for year in range(start.year, end.year + 1):
-        feat, cov = assemble_year(year, uni_members, D, mc, dc, names, rf, start, end)
+        feat, cov = assemble_year(year, uni_members, D.ret.index, mc, dc, names, rf, start, end)
         coverage.append(cov)
         table = pa.Table.from_pandas(feat, preserve_index=False)
         if writer is None:

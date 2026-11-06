@@ -237,7 +237,7 @@ def main():
     data_dir = data_dir if data_dir.is_absolute() else ROOT / data_dir
     t0 = time.time()
     first = min(years + ([select_year] if select_year else []))
-    p = slots.load_slots(data_dir, f"{base.window_start(cfg, first):%Y-%m-%d}", f"{max(years)}-12-31")
+    p = slots.load_config(cfg, data_dir, f"{base.window_start(cfg, first):%Y-%m-%d}", f"{max(years)}-12-31")
     log(f"panel {tuple(p.X.shape)} from {data_dir} in {time.time() - t0:.0f}s, "
         f"{p.dates[0]:%Y-%m-%d}..{p.dates[-1]:%Y-%m-%d}, torch threads {torch.get_num_threads()}, "
         f"lambda grid {args.grid}, tau grid {args.tau_grid}, select {args.select}, "

@@ -137,7 +137,7 @@ def build(cfg: dict, root: Path, out_dir: Path, inspect_dir: Path, cutoff: pd.Ti
     uni_members = {m: sorted(g["gvkey"].astype(str).tolist()) for m, g in detail.groupby("month")}
     writer, coverage = None, []
     for year in range(start.year, end.year + 1):
-        feat, cov = bu.assemble_year(year, uni_members, D, mc, dc, names, rf_s, start, end)
+        feat, cov = bu.assemble_year(year, uni_members, D.ret.index, mc, dc, names, rf_s, start, end)
         coverage.append(cov)
         table = pa.Table.from_pandas(feat, preserve_index=False)
         if writer is None:

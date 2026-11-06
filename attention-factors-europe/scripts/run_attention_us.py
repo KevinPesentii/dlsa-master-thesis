@@ -74,7 +74,7 @@ def span(model, p: slots.SlotPanel, t0: int, t1: int, cfg: dict, w_prev=None):
     window = pc.get("residual_window", "rolling")
     pool = {}
     if window == "fixed":           # the window is re-hedged with every company's past returns
-        pool = {"R_pool": torch.from_numpy(p.R_pool[s:t1]), "has_ret": torch.from_numpy(p.has_ret[s:t1])}
+        pool = {"R_pool": torch.from_numpy(p.R_win[s:t1]), "has_ret": torch.from_numpy(p.has_ret[s:t1])}
     out = model.forward_span(p.X[s:t1], p.R[s:t1], p.in_universe[s:t1], p.idx[s:t1], p.n_pool,
                              cumulative=pc["input"] == "cumulative", scale=pc["input_scale"],
                              normalise=pc.get("input_normalise", "none"), residual_window=window,
@@ -196,6 +196,7 @@ def run_K(K: int, cfg: dict, seed: int, p: slots.SlotPanel, years: list[int], lo
     m.update({"K": K, "seed": seed, "factor_model": "attention", "policy_input": pc["input"],
               "residual_window": pc.get("residual_window", "rolling"),
               "n_features": len(p.features), "drop_groups": cfg["features"].get("drop_groups") or [],
+              "feature_timing": cfg["features"].get("timing", "lagged"),
               "execution_lag": execution(cfg)[0], "stale_when_closed": closed_mask(p, cfg, 0, 1) is not None})
     runs.write_metrics(run_dir, m)
     daily.to_csv(run_dir / "oos_daily.csv", index=False)
@@ -238,8 +239,8 @@ def main():
     data_dir = Path(cfg["data"]["dir"])
     data_dir = data_dir if data_dir.is_absolute() else ROOT / data_dir
     t0 = time.time()
-    p = slots.load_slots(data_dir, f"{window_start(cfg, min(years)):%Y-%m-%d}", f"{max(years)}-12-31",
-                         max_rank=cfg["sample"].get("universe_size"))
+    p = slots.load_config(cfg, data_dir, f"{window_start(cfg, min(years)):%Y-%m-%d}", f"{max(years)}-12-31",
+                          max_rank=cfg["sample"].get("universe_size"))
     if cfg["features"].get("drop_groups"):
         p = slots.drop_groups(p, cfg["features"]["drop_groups"])
         log(f"dropped groups {cfg['features']['drop_groups']}: {len(p.features)} features left")

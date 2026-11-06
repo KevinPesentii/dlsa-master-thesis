@@ -132,7 +132,7 @@ def init_worker(cfg: dict, data_dir: str, first_oos: int, val_years: int, K: int
     w0 = base.window_start(cfg, first_oos)
     if first_oos - val_years <= w0.year:
         raise SystemExit(f"a window from {w0:%Y-%m-%d} leaves no training years before {val_years} validation years")
-    p = slots.load_slots(Path(data_dir), f"{w0:%Y-%m-%d}", f"{first_oos - 1}-12-31")
+    p = slots.load_config(cfg, Path(data_dir), f"{w0:%Y-%m-%d}", f"{first_oos - 1}-12-31")
     t = [p.dates.searchsorted(d) for d in (w0, pd.Timestamp(first_oos - val_years, 1, 1))]
     if p.dates[0].year > w0.year:
         raise SystemExit(f"the panel starts {p.dates[0]:%Y-%m-%d}, too late for a window from {w0:%Y-%m-%d}")

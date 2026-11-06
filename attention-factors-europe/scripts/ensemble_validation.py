@@ -137,7 +137,7 @@ def main():
                 log(f"  [{i}/{len(jobs)}] {r['name']} seed {r['seed']}: val net SR {r['net_SR']:+.2f}  {r['seconds']}s")
 
     w0 = base.window_start(cfg, first_oos)              # the panel of the search's workers
-    p = slots.load_slots(data_dir, f"{w0:%Y-%m-%d}", f"{first_oos - 1}-12-31")
+    p = slots.load_config(cfg, data_dir, f"{w0:%Y-%m-%d}", f"{first_oos - 1}-12-31")
     t_idx = np.arange(p.dates.searchsorted(pd.Timestamp(first_oos - V, 1, 1)), len(p.dates))
     W = {(n, s): np.load(run_dir / "weights" / f"{n}_s{s}.npy") for n in cands for s in seeds}
     rows = [{"book": f"single:{n}:s{s}", "kind": "single", "models": 1, "search_net_SR": trials[(n, s)]["net_SR"],

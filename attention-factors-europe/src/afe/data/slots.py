@@ -15,6 +15,9 @@ day's row of the SAME company, looked up by sec_id, never by slot. Shifting a
 slot-space array would hand a company its neighbour's characteristics after a
 rebalance. The whole row is shifted, monthly characteristics included, which is one
 day more conservative than strictly needed on the first trading day of a month.
+timing "asof" reads features_asof.parquet instead, whose row t already holds what was known
+at the close of t-1, so nothing is shifted and that extra day is gone (data/asof.py). It
+fixes the entry day too: a member has its row on its first day.
 
 ENTRY DAY. A name entering the universe has no features row on its last day outside
 it. Its char_* are set to 0 (the cross-sectional median in rank units, the build's own
@@ -32,6 +35,14 @@ residual windows and the policy all ignore it.
 Two options for robustness runs: `max_rank` keeps the members up to that cap_rank (a
 top-200 US run; the features stay ranked over the full universe of the build), and
 `drop_groups` removes a characteristic theme's char_* and med_* columns (Table 3).
+
+`medians` and `rf_input` say whether the med_* columns and rf enter X. Neither can move the
+factor weights: a column that is the same for every name on a date adds a constant to a
+row of scores, which the softmax over names drops (model/attention_factors.py). rf stays in
+the panel as the rate of the objective either way.
+
+`history` adds returns_history.parquet to R_win and has_ret, the two arrays only the fixed
+residual window reads. R_pool, which the book is valued with, never sees it.
 """
 
 from __future__ import annotations
@@ -52,7 +63,7 @@ from afe.data.characteristics import REGISTRY
 class SlotPanel:
     dates: pd.DatetimeIndex        # trading days, ascending
     sec_ids: np.ndarray            # pool, str: pool column j is company sec_ids[j]
-    features: list[str]            # the M feature columns, in schemas.feature_columns order
+    features: list[str]            # the M feature columns of X, in schemas.feature_columns order
     X: torch.Tensor                # (T, S, M) float32, row t known at the close of t-1
     R: torch.Tensor                # (T, S) float32, 0 where no return
     in_universe: torch.Tensor      # (T, S) bool
@@ -62,19 +73,36 @@ class SlotPanel:
     mkt_ew: np.ndarray             # (T,) equal-weighted return of the members with a return
     closed: np.ndarray | None = None  # (T, n_pool) bool, the name's market did not trade at the
                                       # close of t (returns.traded False); None = all traded
-    has_ret: np.ndarray | None = None  # (T, n_pool) bool, R_pool holds a return there (member or not);
+    has_ret: np.ndarray | None = None  # (T, n_pool) bool, R_win holds a return there (member or not);
                                        # policy.residual_window fixed needs it
+    R_win: np.ndarray | None = None    # (T, n_pool) float32, R_pool, plus returns_history with `history`;
+                                       # the returns of the fixed residual window
 
     @property
     def n_pool(self) -> int:
         return len(self.sec_ids)
 
 
-def load_slots(data_dir: Path, start: str, end: str, max_rank: int | None = None) -> SlotPanel:
+def load_config(cfg: dict, data_dir: Path, start: str, end: str, max_rank: int | None = None) -> SlotPanel:
+    """load_slots with the choices of a run config (its `features` and `data` blocks)."""
+    f, d = cfg["features"], cfg.get("data") or {}
+    return load_slots(data_dir, start, end, max_rank, timing=f.get("timing", "lagged"),
+                      medians=f.get("include_cross_sectional_median", True),
+                      rf_input=f.get("include_risk_free", True), history=bool(d.get("returns_history")))
+
+
+def load_slots(data_dir: Path, start: str, end: str, max_rank: int | None = None, timing: str = "lagged",
+               medians: bool = True, rf_input: bool = True, history: bool = False) -> SlotPanel:
     """Slot arrays for the trading days in [start, end]. Features of the trading day
     before `start` are read too, so that the first row is lagged like every other.
-    `max_rank`: only members with cap_rank <= max_rank."""
+    `max_rank`: only members with cap_rank <= max_rank. timing "lagged": features.parquet,
+    shifted one trading day; "asof": features_asof.parquet as it is."""
+    if timing not in ("lagged", "asof"):
+        raise ValueError(f"unknown features.timing: {timing}")
+    if timing == "asof" and medians:
+        raise ValueError("features_asof.parquet has no med_* columns: set include_cross_sectional_median false")
     data_dir = Path(data_dir)
+    table = data_dir / ("features.parquet" if timing == "lagged" else "features_asof.parquet")
     t_start, t_end = pd.Timestamp(start), pd.Timestamp(end)
     lo, hi = (t_start - pd.DateOffset(days=10)).to_pydatetime(), t_end.to_pydatetime()
 
@@ -112,7 +140,19 @@ def load_slots(data_dir: Path, start: str, end: str, max_rank: int | None = None
     in_universe = ~np.isnan(R_slot)
     R_slot = np.nan_to_num(R_slot)
     has_ret = ~np.isnan(R_pool[:, :n_pool])
+    R_win = None
+    if history:
+        h = pq.read_table(data_dir / "returns_history.parquet", columns=["date", "sec_id", "ret"],
+                          filters=[("date", ">=", t_start.to_pydatetime()), ("date", "<=", hi)]).to_pandas()
+        h["date"] = pd.to_datetime(h["date"]).astype("datetime64[ns]")
+        rows = dates.get_indexer(h["date"])
+        on = (rows >= 0) & h["sec_id"].isin(col.index).to_numpy()
+        R_win = R_pool[:, :n_pool].copy()
+        R_win[rows[on], col[h["sec_id"].to_numpy()[on]].to_numpy()] = h["ret"].to_numpy()[on]
+        has_ret = ~np.isnan(R_win)
+        R_win = np.nan_to_num(R_win)
     R_pool = np.nan_to_num(R_pool[:, :n_pool])
+    R_win = R_pool if R_win is None else R_win
     closed = None
     if has_traded:
         closed = np.zeros((T, n_pool + 1), dtype=bool)
@@ -123,9 +163,9 @@ def load_slots(data_dir: Path, start: str, end: str, max_rank: int | None = None
     mkt_ew = np.where(n_mem > 0, (R_slot * in_universe).sum(axis=1) / np.maximum(n_mem, 1), 0.0)
 
     # features: rows of the previous trading day, looked up by company
-    head = pq.read_schema(data_dir / "features.parquet").names
+    head = pq.read_schema(table).names
     feats = schemas.feature_columns(pd.DataFrame(columns=head))
-    tbl = pq.read_table(data_dir / "features.parquet", columns=["date", "sec_id"] + feats,
+    tbl = pq.read_table(table, columns=["date", "sec_id"] + feats,
                         filters=[("date", ">=", lo), ("date", "<=", hi)])
     f_date = pd.DatetimeIndex(tbl.column("date").to_pandas()).astype("datetime64[ns]")
     f_sec = tbl.column("sec_id").to_pandas().to_numpy()
@@ -145,9 +185,12 @@ def load_slots(data_dir: Path, start: str, end: str, max_rank: int | None = None
     date_vals[fpos.max(axis=1) < 0] = 0.0
     date_vals[:, is_char] = 0.0
 
-    prev = np.full(T, -1, dtype=np.int64)                       # feature date of t-1, exact
-    prev[1:] = f_t.get_indexer(dates[:-1])
-    prev[0] = f_t.searchsorted(dates[0]) - 1                    # the day before `start`, if read
+    if timing == "asof":
+        prev = f_t.get_indexer(dates)                           # row t is already what t-1 knew
+    else:
+        prev = np.full(T, -1, dtype=np.int64)                   # feature date of t-1, exact
+        prev[1:] = f_t.get_indexer(dates[:-1])
+        prev[0] = f_t.searchsorted(dates[0]) - 1                # the day before `start`, if read
     rows = np.where(prev[:, None] >= 0, fpos[np.clip(prev, 0, None)][np.arange(T)[:, None], idx], -1)
     X = F[np.clip(rows, 0, None)]
     miss = rows < 0
@@ -159,9 +202,14 @@ def load_slots(data_dir: Path, start: str, end: str, max_rank: int | None = None
     rf_col = feats.index("rf")
     rf = np.where(own >= 0, date_vals[np.clip(own, 0, None), rf_col], 0.0).astype(np.float32)
 
+    keep = [i for i, f in enumerate(feats) if f.startswith("char_") or (medians and f.startswith("med_"))
+            or (rf_input and f == "rf")]
+    if len(keep) < len(feats):
+        X, feats = X[:, :, keep], [feats[i] for i in keep]
+
     return SlotPanel(dates, sec_ids, feats, torch.from_numpy(X), torch.from_numpy(R_slot),
                      torch.from_numpy(in_universe), torch.from_numpy(idx), torch.from_numpy(rf),
-                     R_pool, mkt_ew, closed, has_ret)
+                     R_pool, mkt_ew, closed, has_ret, R_win)
 
 
 def drop_groups(p: SlotPanel, groups: list[str]) -> SlotPanel:

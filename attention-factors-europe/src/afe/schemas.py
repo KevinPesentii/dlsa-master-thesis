@@ -48,6 +48,19 @@ FEATURES = TableSpec(
     prefixes=("char_", "med_"),
 )
 
+FEATURES_ASOF = TableSpec(
+    name="features_asof",
+    key=("date", "sec_id"),
+    required={"date": DATE_DTYPE, "sec_id": ID_DTYPE, "rf": F32},
+    prefixes=("char_",),
+)
+
+RETURNS_HISTORY = TableSpec(
+    name="returns_history",
+    key=("date", "sec_id"),
+    required={"date": DATE_DTYPE, "sec_id": ID_DTYPE, "ret": F32},
+)
+
 RESIDUALS = TableSpec(
     name="residuals",
     key=("date", "sec_id"),
@@ -119,7 +132,8 @@ def validate_universe(df: pd.DataFrame, size: int | None = UNIVERSE_SIZE) -> Non
 
 
 def feature_columns(df: pd.DataFrame) -> list[str]:
-    """The 79 feature columns, in a stable order. Never rely on DataFrame order."""
+    """The feature columns, in a stable order: char_*, med_* (none in features_asof) and rf.
+    Never rely on DataFrame order."""
     chars = sorted(c for c in df.columns if c.startswith("char_"))
     meds = sorted(c for c in df.columns if c.startswith("med_"))
     return chars + meds + ["rf"]
