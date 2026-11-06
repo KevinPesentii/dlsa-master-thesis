@@ -72,11 +72,23 @@ class Matrix:
             replaced = s["spec"].isin(set(o["spec"]))
             s.loc[replaced, "spec"] = s.loc[replaced, "spec"] + suffix
             s = pd.concat([s, o], ignore_index=True)
-        s["run"] = [self.runs_dir / Path(p.replace("\\", "/")).name for p in s["run_dir"]]
+        self.summary = self._located(s)
+
+    def _located(self, s: pd.DataFrame) -> pd.DataFrame:
+        s = s.assign(run=[self.runs_dir / Path(p.replace("\\", "/")).name for p in s["run_dir"]])
         missing = [str(p) for p in s["run"] if not (p / "oos_daily.csv").exists()]
         if missing:
             raise FileNotFoundError(f"{len(missing)} run directories missing, e.g. {missing[:3]}")
-        self.summary = s
+        return s
+
+    def add(self, matrix_dir: Path, specs: list[str]) -> None:
+        """Append `specs` of another matrix: a row run apart from this one. Named one by one, since that
+        matrix may hold its own baseline under a spec of this one, which must not join or replace it."""
+        s = pd.read_csv(Path(matrix_dir) / "summary.csv")
+        s = s[s["spec"].isin(specs)]
+        if set(s["spec"]) != set(specs) or set(specs) & set(self.summary["spec"]):
+            raise ValueError(f"{specs} must be in {matrix_dir} and not yet in this matrix")
+        self.summary = pd.concat([self.summary, self._located(s)], ignore_index=True)
 
     def runs(self, spec: str, K: int, seeds: list[int] | None = None) -> pd.DataFrame:
         r = self.summary[(self.summary["spec"] == spec) & (self.summary["K"] == K)]

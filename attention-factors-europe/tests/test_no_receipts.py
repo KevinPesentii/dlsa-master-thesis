@@ -101,6 +101,29 @@ def test_matrix_expands_to_five_seeds_of_three_rows(tmp_path):
     assert sorted(j.id for j in jobs) == sorted(f"{r}_K30_s{s}" for r in EXPECTED for s in range(5))
 
 
+def test_the_row_joins_the_thesis_matrix_without_its_baseline(tmp_path):
+    """Table 11 takes us_no_receipts from its own matrix. That matrix also ran the headline, under the spec the
+    thesis matrix uses: the thesis row must keep its own runs, and a spec named twice or not there must fail."""
+    from afe.evaluation import thesis_data as td
+    runs = tmp_path / "runs"
+    for name in ("head_thesis", "head_exp", "refilled"):
+        (runs / name).mkdir(parents=True)
+        (runs / name / "oos_daily.csv").write_text("date,gross\n")
+    for matrix, rows in (("thesis", [("us_attention", "head_thesis")]),
+                         ("exp", [("us_attention", "head_exp"), ("us_no_receipts", "refilled")])):
+        d = runs / "_matrix" / matrix
+        d.mkdir(parents=True)
+        pd.DataFrame([{"spec": s, "K": 30, "seed": 0, "SR_net": 0.0, "run_dir": f"/home/ubuntu/dlsa/runs/{r}"}
+                      for s, r in rows]).to_csv(d / "summary.csv", index=False)
+    M = td.Matrix(runs / "_matrix" / "thesis", runs)
+    M.add(runs / "_matrix" / "exp", ["us_no_receipts"])
+    assert M.runs("us_no_receipts", 30)["run"].iloc[0].name == "refilled"
+    assert [p.name for p in M.runs("us_attention", 30)["run"]] == ["head_thesis"]
+    for bad in (["us_no_receipts"], ["us_attention"], ["us_not_there"]):
+        with pytest.raises(ValueError):
+            M.add(runs / "_matrix" / "exp", bad)
+
+
 def test_bundle_carries_both_universes():
     for m in ("us_no_receipts", "us_drop_receipts"):
         d = load("exp_no_receipts_matrix")["specs"]

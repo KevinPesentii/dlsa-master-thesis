@@ -562,6 +562,11 @@ def t11_robustness(out: Path, M: td.Matrix) -> None:
         rows_def.insert(rows_def.index(("Europe", "Attention, lag 1", "eu_lag1")),
                         ("Europe", "Attention, US values", "eu_attention_usvals"))
         rows_def.append(("Europe", "PCA + LongConv, US values", "eu_pca_longconv_usvals"))
+    src = SRC + " (robustness, headline)"
+    if "us_no_receipts" in set(M.summary["spec"]):
+        rows_def.insert(rows_def.index(("US", "PCA + LongConv, headline", "us_pca_longconv")),
+                        ("US", "Attention, no receipts", "us_no_receipts"))
+        src += "; runs/_matrix/exp_no_receipts (no receipts)"
     rows = []
     for mk, lab, sp in rows_def:
         ps = per_seed_stats(M, sp, 30, seeds=[0, 1, 2])
@@ -584,9 +589,11 @@ def t11_robustness(out: Path, M: td.Matrix) -> None:
           "rows that change only the data keep the headline values (Tables 3 and 3b). US values (Europe): "
           "the European rows traded with the values validated on US data instead of European data.",
           ["Top 200 (US): members up to cap rank 200 of the 500 build (ranks and medians of the 500 build). "
+           "No receipts (US): the 500 largest lines other than depositary receipts, a build of its own, so the next "
+           "largest lines take the receipts' slots; Europe's universes hold no receipts. "
            "Holidays unfilled: Compustat Global as delivered (a holiday drops a country's names for 30 days before "
            "~2010). europe12: without Dublin, Lisbon, Vienna, Luxembourg and Athens."],
-          SRC + " (robustness, headline)")
+          src)
 
 
 def t12_years(out: Path, M: td.Matrix) -> None:
@@ -643,12 +650,16 @@ def main():
     ap.add_argument("--matrix", type=Path, default=ROOT / "runs" / "_matrix" / "thesis")
     ap.add_argument("--europe-matrix", type=Path, default=ROOT / "runs" / "_matrix" / "thesis_eu",
                     help="Europe-validated runs; ignored if missing (then Europe = the US values)")
+    ap.add_argument("--receipts-matrix", type=Path, default=ROOT / "runs" / "_matrix" / "exp_no_receipts",
+                    help="holds the no-receipts row of Table 11; ignored if missing (then no such row)")
     ap.add_argument("--main-search", type=Path, default=ROOT / "runs" / "20261010T110947Z_search_K30_val1996-1997")
     ap.add_argument("--only", nargs="*", help="table function names, e.g. t04_t05")
     args = ap.parse_args()
     global SRC
     eu = args.europe_matrix if (args.europe_matrix / "summary.csv").exists() else None
     M = td.Matrix(args.matrix, ROOT / "runs", override=eu)
+    if (args.receipts_matrix / "summary.csv").exists():
+        M.add(args.receipts_matrix, ["us_no_receipts"])
     if eu is not None:
         SRC = f"{args.matrix.relative_to(ROOT).as_posix()} (US) + {eu.relative_to(ROOT).as_posix()} (Europe)"
     jobs = {"t01_sample": lambda: t01_sample(args.out), "t02_characteristics": lambda: t02_characteristics(args.out),
