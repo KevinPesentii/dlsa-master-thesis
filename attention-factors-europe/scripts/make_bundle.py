@@ -4,6 +4,7 @@
                                   [--markets us us_top800]      # configs/gap_matrix.yaml
                                   [--markets us us_top800 us_rank301_800]   # configs/gap2_matrix.yaml
                                   [--markets us us_no_receipts us_drop_receipts]   # configs/exp_no_receipts_matrix.yaml
+                                  [--markets us europe us_no_receipts us_no_receipts_asof]   # configs/thesis_v2_matrix.yaml
 
 The code comes from the public fork (git clone --depth 1 -b <branch>), so only the data
 travels. The tree must be clean and the branch pushed. Writes:
@@ -35,17 +36,19 @@ sys.path.insert(0, str(ROOT / "src"))
 from afe import runs  # noqa: E402
 
 TABLES = ("returns", "universe", "features")
+ASOF = ("features_asof", "returns_history")      # stage 2c, for model v2 (scripts/build_asof_tables.py)
 FILES = {
-    "us": [f"data/us/shared/{t}.parquet" for t in TABLES]
+    "us": [f"data/us/shared/{t}.parquet" for t in TABLES + ASOF]
     + [f"data/us/shared/raw/{f}.parquet" for f in ("ff_daily", "ff_monthly", "ff5_daily", "ff5_monthly")]
     + ["data/us/shared/raw/crsp_daily/1989.parquet"],         # the first 252-day PCA window
-    "europe": [f"data/europe17/holfill/{t}.parquet" for t in TABLES]  # headline Europe
-    + [f"data/europe17/shared/{t}.parquet" for t in TABLES + ("rf_daily", "market_daily", "factors_daily",
-                                                              "fx_to_numeraire_daily")]
-    + [f"data/europe12/holfill/{t}.parquet" for t in TABLES],  # robustness
+    "europe": [f"data/europe17/holfill/{t}.parquet" for t in TABLES + ASOF]  # headline Europe
+    + [f"data/europe17/shared/{t}.parquet" for t in TABLES + ASOF + ("rf_daily", "market_daily", "factors_daily",
+                                                                     "fx_to_numeraire_daily")]
+    + [f"data/europe12/holfill/{t}.parquet" for t in TABLES + ASOF],  # robustness
     "us_top800": [f"data/us/top800/{t}.parquet" for t in TABLES],  # gap matrix only, not in the default
     "us_rank301_800": [f"data/us/rank301_800/{t}.parquet" for t in TABLES],  # gap2 matrix only, likewise
     "us_no_receipts": [f"data/us/no_receipts/{t}.parquet" for t in TABLES],  # receipts experiment only
+    "us_no_receipts_asof": [f"data/us/no_receipts/{t}.parquet" for t in ASOF],  # its model v2 row
     "us_drop_receipts": [f"data/us/drop_receipts/{t}.parquet" for t in TABLES],  # likewise
 }
 DEFAULT_MARKETS = ["us", "europe"]

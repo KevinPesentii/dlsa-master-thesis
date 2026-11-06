@@ -1,0 +1,87 @@
+# MODEL V2 (decided 2026-11-06): configs/us_headline_v2.yaml on Europe. europe17 top 200, holidays
+# filled, training from 1993, as in configs/europe_headline.yaml. The values below (sobol-036) are
+# what configs/thesis_v2_matrix.yaml starts from: `hyper: eu_v2` replaces them with the winner of
+# configs/europe_search_v2.yaml, `hyper: us_v2` with the US search's.
+#   python scripts/run_attention_us.py --config configs/europe_headline_v2.yaml --years 1998
+
+market: europe17
+seed: 0
+
+data:
+  dir: data/europe17/holfill     # stage 2b output: shared tables + holiday fill + returns.traded
+  returns_history: true          # stage 2c: first-listing-month returns, for the windows only
+
+sample:
+  start: 1998-01-01              # first out-of-sample day; training reaches back window_years
+  end: 2021-12-31
+  data_start: 1993-01-01         # no training date before this: before 1993 the panel has no volume
+                                 # (to 1992) or high/low (to 1993), and 10 of 39 characteristics at 90%
+                                 # coverage (data/europe/availability_report.md). The 1998 window is
+                                 # 1993-1997, reaching the full window_years with 2001
+  universe_size: 200
+
+features:
+  n_characteristics: 39          # see CONFIRM 2 in docs/schemas.md
+  normalisation: rank_quantile   # see CONFIRM 1 in docs/schemas.md
+  timing: asof                   # features_asof.parquet: row t is what is known at the close of t-1.
+                                 # lagged: features.parquet shifted a day, every run before 2026-11
+  include_cross_sectional_median: false   # a column equal for every name cannot move a softmax over
+  include_risk_free: false                # names, so X is the 39 ranks (the paper: 79 features)
+
+model:
+  kind: attention
+  n_factors: 30                  # K
+  embedding_dim: 32
+  level_hidden: 0                # stays 0: its input was the levels of the medians and rf
+  score_std_target: 0.342         # initial cross-sectional spread of the attention scores;
+                                 # a scalar temperature, equivalent to rescaling Q (not in the paper)
+  lambda_ridge: 2.63e-05         # ridge in the loading solve, Section 3.2
+
+policy:
+  kind: longconv
+  layers: 1
+  hidden: 32
+  residual_lookback: 30
+  dropout: 0.1
+  lambda_squash: 0.001
+  input: cumulative              # cumulative residual path, as given: not searched (2026-11-06). The
+                                 # Europe search of 2026-10 had picked raw (sobol-110)
+  residual_window: fixed         # the whole window re-hedged with the trade date's w_F and loadings, so
+                                 # a name trades from its first day in the universe, on the returns
+                                 # it had outside. rolling: 30 days of membership first
+  input_normalise: window_vol          # none | window_vol: divide each window by its own residual
+                                 # volatility. NOT in the paper; makes the input scale-free
+  input_scale: 87.9             # residuals as decimal returns, LongConv(eps) as written in the paper.
+                                 # NOT a harmless unit: the encoder bias, GELU and the GLU gate make the
+                                 # policy depend on it; x100 traded 47% more (1998-2021, see the commit)
+
+objective:
+  lambda_var: 17.6
+  turnover_cost: 0.0005          # ||w_t - w_{t-1}||_1
+  short_cost: 0.0001             # ||max(-w_t, 0)||_1
+  subtract_rf: true              # paper: (Rbar_net - R_f) / sd in the objective
+
+execution:
+  lag: 0                         # closes between the close whose information sets the weights and the
+                                 # close they are traded at. 0 = the paper's timing: decided and traded
+                                 # at the close of t-1, earning day t. 1 = traded at the close of t
+  stale_when_closed: true        # a name whose market did not trade at a close (returns.traded False:
+                                 # its exchange's holiday, a carried price) keeps its position there
+
+training:
+  window_years: 8
+  refit: annual                  # NOT the 125/1000-day schedule of GPZ
+  epochs: 30
+  lr: 0.003
+  weight_decay: 0.05
+  batch_days: 125                 # contiguous blocks, each with residual_lookback extra dates in front
+  grad_clip: 1.0
+
+evaluation:
+  report_break_even_cost: true
+  cost_grid_bps: [0, 1, 2, 5, 10, 20, 30, 50]
+  reference_net_sharpe: 2.28     # the paper's number, for comparison only
+  save_weights: true
+  save_models: true              # yearly state_dicts, ~30 KB each; scripts/factor_replay.py reads them
+  diagnostics: {top_n: 20}       # evaluation/diagnostics.py: daily stats, factor returns, factor top
+                                 # names and characteristic exposures, name x year P&L, training curves

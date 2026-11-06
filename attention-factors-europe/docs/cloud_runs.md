@@ -591,3 +591,63 @@ $PY scripts/run_matrix.py --matrix configs/exp_no_receipts_matrix.yaml --jobs 16
 ```
 
 Collect as in section 11; the results land in `runs/_matrix/exp_no_receipts`.
+
+## 15. Model v2, the whole attention thesis matrix (2026-11-06)
+
+`configs/thesis_v2_matrix.yaml`: model v2 (`configs/us_headline_v2.yaml`, CLAUDE.md) on every attention row of
+the two thesis matrices but the raw-input ones, with the same spec names, plus a ladder of K = 30 rows on the
+old values that takes the old headline to v2 one change at a time. Four searches run first (`us_v2`,
+`us_v2_lag1`, `eu_v2`, `eu_v2_lag1`); each row but the ladder trades with a winner. 214 runs + 4 searches:
+
+| group | rows | runs |
+|---|---|---|
+| headline | `us_attention`, `eu_attention`, `eu_attention_usvalues`: K 1-100, seeds 0-4 | 105 |
+| ablation | six characteristic groups x two markets, K = 30, seeds 0-2 | 36 |
+| robustness | lag 1 x two, unfilled, europe12, US top 200, no receipts, K = 30, seeds 0-2 | 18 |
+| extension | 2022-2025 x two, K = 30, seeds 0-4 | 10 |
+| ladder | four US steps, five Europe steps, K = 30, seeds 0-4 | 45 |
+
+The PCA rows use no characteristics, so `runs/_matrix/thesis` and `thesis_eu` keep their numbers.
+
+Size: about 167 laptop process-hours by the matrix's cost model; the thesis matrix was about 150 and took 5.2
+hours on the m7i.24xlarge at 46 jobs. Expect about **6 hours**, about **$35** on-demand, spot not advised: 6
+hours is long to lose. Memory: 5.5 GB per US run, 3 GB per Europe run, 2-2.5 GB per search worker. Storage:
+**40 GiB** gp3, encrypted. Results about 3.5 GB, every run keeping its weights (15 MB a US run, 6 MB a Europe run);
+`evaluation/diagnostics.py` says what else a run keeps (6 MB at K = 30, more with K, less for Europe's names).
+
+On the laptop, from the branch, committed and pushed. The stage 2c tables take about 5 minutes and need no WRDS:
+
+```powershell
+cd C:\Users\henri\Desktop\SSE\masterThesis\Code\dlsa-model-v2\attention-factors-europe
+$PY = "C:\Users\henri\miniconda3\envs\afe\python.exe"
+foreach ($c in "us_data", "us_data_no_receipts", "europe17_data", "europe12_data") { & $PY scripts\build_asof_tables.py --config configs\$c.yaml }
+& $PY scripts\run_matrix.py --matrix configs\thesis_v2_matrix.yaml --dry-run | Select-Object -First 1   # 218 jobs
+& $PY scripts\make_bundle.py --markets us europe us_no_receipts us_no_receipts_asof --out $env:TEMP\afe_bundle_v2
+scp $env:TEMP\afe_bundle_v2\afe_data.tar $env:TEMP\afe_bundle_v2\SHA256SUMS $env:TEMP\afe_bundle_v2\COMMIT "ubuntu@${IP}:~"
+```
+
+On the machine, after the clone, `sha256sum -c` and `cloud_setup.sh` of section 7, a smoke test (each search on
+2 points at 1 epoch, then every spec once):
+
+```bash
+cd ~/dlsa/attention-factors-europe; PY=~/afe-venv/bin/python
+$PY scripts/run_matrix.py --matrix configs/thesis_v2_matrix.yaml --smoke --jobs 16   # "0 failed"
+```
+
+Then the run in tmux, one line, which also packs the results and stops the machine:
+
+```bash
+tmux new -s afe
+cd ~/dlsa/attention-factors-europe; PY=~/afe-venv/bin/python   # again inside tmux: PY does not carry over
+$PY scripts/run_matrix.py --matrix configs/thesis_v2_matrix.yaml --jobs 46 --threads 2 2>&1 | tee runs/matrix_v2_console.log; tar -czf ~/runs_v2.tgz -C ~/dlsa/attention-factors-europe runs; sudo shutdown -h now
+```
+
+Progress from the laptop: `ssh "ubuntu@$IP" "tail -n 3 ~/dlsa/attention-factors-europe/runs/matrix_v2_console.log"`.
+Look once after the first hour: the four winners are in `runs/_matrix/thesis_v2/searches/*/metrics.json`, and a net
+Sharpe above 10 on validation means something broke. A restart of the same command skips what finished.
+
+Collect as in section 11 (`runs_v2.tgz`, then terminate the machine); the results land in
+`runs/_matrix/thesis_v2`. `summary_by_spec.csv` has every row; the ladder is the group `ladder`, read top to
+bottom, and its last US step against `us_attention` is what the new search did. Run directories on the machine
+hold machine paths in the ledger: map them by basename, as before. Full factor weights on any date of a run:
+`python scripts/factor_replay.py runs/<run> --dates 2008-10-01`.

@@ -117,6 +117,21 @@ weaken a test to make code pass.
   after 2010, so "all of it before 2010" describes the re-booking only. Decided 2026-11-06: `us_no_receipts` is a
   robustness row of Table 11, read from that matrix on seeds 0-2 like the other rows (`scripts/thesis_tables.py`);
   `us_drop_receipts` stays a diagnostic. Never a headline value.
+- Model v2 (decided 2026-11-06): `configs/us_headline_v2.yaml`, `configs/europe_headline_v2.yaml`, the headline
+  with four changes, all config keys, so every earlier row still reproduces. (1) X is the 39 rank
+  characteristics: the 39 medians and rf are the same for every name on a date, so they cannot move a softmax
+  over names, whatever the paper's 79 features intend; `level_hidden` has nothing left to read and stays 0.
+  (2) `features.timing: asof` reads `features_asof.parquet` (stage 2c, `scripts/build_asof_tables.py`): monthly
+  and annual characteristics reach X on the first trading day of a month instead of the second, ranks are over
+  that day's universe and an entrant has real values. Same numbers as before on every other day. (3)
+  `policy.residual_window: fixed` with `data.returns_history`: a name trades from its first day in the universe
+  on returns from before it entered, residualised with the trade date's factor model, once it has 30 of them.
+  (4) The policy input is cumulative, not searched, in both markets (Europe's 2026-10 search had picked raw).
+  `configs/thesis_v2_matrix.yaml` reruns every attention row but the raw-input ones with new searches
+  (`configs/*_search_v2*.yaml`, same windows, budget and rule), plus a ladder of K = 30 rows on the old values,
+  one change at a time; results in `runs/_matrix/thesis_v2`. The fixed window was tested out of sample before
+  it was adopted (`runs/_matrix/exp_fixedwin_full`), and the thesis has to say so. The rows above stay the
+  headline until the results are in and a decision says otherwise.
 
 ## Trading costs: limits, not replication
 

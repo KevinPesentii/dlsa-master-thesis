@@ -1,0 +1,104 @@
+# The thesis matrix again for model v2 (decided 2026-11-06, configs/us_headline_v2.yaml): every attention
+# row of configs/thesis_matrix.yaml and configs/thesis_matrix_europe.yaml, with the spec names of those
+# files, so scripts/thesis_tables.py can read it. Fixed before any of it ran.
+#   python scripts/run_matrix.py --matrix configs/thesis_v2_matrix.yaml --dry-run
+#   python scripts/run_matrix.py --matrix configs/thesis_v2_matrix.yaml --smoke --jobs 8
+#   python scripts/run_matrix.py --matrix configs/thesis_v2_matrix.yaml --jobs 46 --threads 2
+#
+# Not here. The PCA rows: they use no characteristics, so none of the changes touches them
+# (runs/_matrix/thesis and thesis_eu stay their numbers). The raw-input rows: the input is
+# cumulative as given for now. Both are one spec away if that changes.
+#
+# Every return uses validated values. The four searches run first, each with all four changes held,
+# and every row but the ladder trades with a winner: US rows `hyper: us_v2`, Europe rows `hyper: eu_v2`
+# (decided 2026-10-12) with the US values as the comparison (eu_attention_usvalues). Each Europe search
+# carries its US winner into the finalists (`keep_from`), as in the 2026-10 Europe searches.
+#
+# The ladder answers what each change did: K = 30, five seeds, one change at a time, on the OLD validated
+# values, so that no step is also a new search. Step 0 is the old headline on this machine and this
+# commit, since one config has given K = 30 net 1.59 and 1.50 on two machines. The last step against
+# the headline row is what the new search did. In Europe the old values have a raw input (sobol-110),
+# so its ladder has one more step than the US's. Diagnostic rows, as in configs/gap_matrix.yaml.
+
+name: thesis_v2
+
+sets:
+  seeds5: [0, 1, 2, 3, 4]
+  seeds3: [0, 1, 2]
+  K_attention: [1, 3, 5, 8, 15, 30, 100]   # Table 2's attention rows
+  K30: [30]
+
+blocks:
+  lag1:
+    execution.lag: 1
+  diag:                          # the old configs do not have these keys
+    evaluation.save_models: true
+    evaluation.diagnostics: {top_n: 20}
+  eu_sobol110:                   # the winner of configs/europe_search_headline.yaml (runs/_matrix/thesis_eu)
+    objective.lambda_var: 1.09
+    policy.input_scale: 42.3
+    model.score_std_target: null
+    model.lambda_ridge: 0.00255
+    training.batch_days: 250
+    policy.input: raw
+    policy.input_normalise: none
+    model.level_hidden: 0
+  no_levels:
+    features.include_cross_sectional_median: false
+    features.include_risk_free: false
+  asof:
+    features.timing: asof
+  fixed_window:
+    policy.residual_window: fixed
+    data.returns_history: true
+
+prep: {}
+
+searches:                        # scripts/search_validation.py --stage select; 44 slots together
+  us_v2:      {config: configs/us_search_v2.yaml, workers: 12, mem_gb_per_worker: 2.5}
+  us_v2_lag1: {config: configs/us_search_v2_lag1.yaml, workers: 12, mem_gb_per_worker: 2.5}
+  eu_v2:      {config: configs/europe_search_v2.yaml, workers: 10, mem_gb_per_worker: 2, keep_from: us_v2}
+  eu_v2_lag1: {config: configs/europe_search_v2_lag1.yaml, workers: 10, mem_gb_per_worker: 2, keep_from: us_v2_lag1}
+
+specs:
+  # --- headline: Tables 4-6, Figures 3-5 -------------------------------------------------
+  - {name: us_attention, group: headline, runner: attention, config: configs/us_headline_v2.yaml, K: K_attention, seeds: seeds5, hyper: us_v2}
+  - {name: eu_attention, group: headline, runner: attention, config: configs/europe_headline_v2.yaml, K: K_attention, seeds: seeds5, hyper: eu_v2}
+  - {name: eu_attention_usvalues, group: headline, runner: attention, config: configs/europe_headline_v2.yaml, K: K_attention, seeds: seeds5, hyper: us_v2}
+
+  # --- ablation: Table 10 (the paper's Table 3), K = 30 -------------------------------------
+  - {name: us_drop_past_returns, group: ablation, runner: attention, config: configs/us_headline_v2.yaml, K: K30, seeds: seeds3, hyper: us_v2, set: {features.drop_groups: [past_returns]}}
+  - {name: us_drop_investment, group: ablation, runner: attention, config: configs/us_headline_v2.yaml, K: K30, seeds: seeds3, hyper: us_v2, set: {features.drop_groups: [investment]}}
+  - {name: us_drop_profitability, group: ablation, runner: attention, config: configs/us_headline_v2.yaml, K: K30, seeds: seeds3, hyper: us_v2, set: {features.drop_groups: [profitability]}}
+  - {name: us_drop_intangibles, group: ablation, runner: attention, config: configs/us_headline_v2.yaml, K: K30, seeds: seeds3, hyper: us_v2, set: {features.drop_groups: [intangibles]}}
+  - {name: us_drop_value, group: ablation, runner: attention, config: configs/us_headline_v2.yaml, K: K30, seeds: seeds3, hyper: us_v2, set: {features.drop_groups: [value]}}
+  - {name: us_drop_trading_frictions, group: ablation, runner: attention, config: configs/us_headline_v2.yaml, K: K30, seeds: seeds3, hyper: us_v2, set: {features.drop_groups: [trading_frictions]}}
+  - {name: eu_drop_past_returns, group: ablation, runner: attention, config: configs/europe_headline_v2.yaml, K: K30, seeds: seeds3, hyper: eu_v2, set: {features.drop_groups: [past_returns]}}
+  - {name: eu_drop_investment, group: ablation, runner: attention, config: configs/europe_headline_v2.yaml, K: K30, seeds: seeds3, hyper: eu_v2, set: {features.drop_groups: [investment]}}
+  - {name: eu_drop_profitability, group: ablation, runner: attention, config: configs/europe_headline_v2.yaml, K: K30, seeds: seeds3, hyper: eu_v2, set: {features.drop_groups: [profitability]}}
+  - {name: eu_drop_intangibles, group: ablation, runner: attention, config: configs/europe_headline_v2.yaml, K: K30, seeds: seeds3, hyper: eu_v2, set: {features.drop_groups: [intangibles]}}
+  - {name: eu_drop_value, group: ablation, runner: attention, config: configs/europe_headline_v2.yaml, K: K30, seeds: seeds3, hyper: eu_v2, set: {features.drop_groups: [value]}}
+  - {name: eu_drop_trading_frictions, group: ablation, runner: attention, config: configs/europe_headline_v2.yaml, K: K30, seeds: seeds3, hyper: eu_v2, set: {features.drop_groups: [trading_frictions]}}
+
+  # --- robustness: Table 11, K = 30 ---------------------------------------------------------
+  - {name: us_lag1, group: robustness, runner: attention, config: configs/us_headline_v2.yaml, K: K30, seeds: seeds3, use: [lag1], hyper: us_v2_lag1}
+  - {name: eu_lag1, group: robustness, runner: attention, config: configs/europe_headline_v2.yaml, K: K30, seeds: seeds3, use: [lag1], hyper: eu_v2_lag1}
+  - {name: eu_unfilled, group: robustness, runner: attention, config: configs/europe_headline_v2.yaml, K: K30, seeds: seeds3, hyper: eu_v2, set: {data.dir: data/europe17/shared}}
+  - {name: eu_europe12, group: robustness, runner: attention, config: configs/europe_headline_v2.yaml, K: K30, seeds: seeds3, hyper: eu_v2, set: {market: europe12, data.dir: data/europe12/holfill}}
+  - {name: us_top200, group: robustness, runner: attention, config: configs/us_headline_v2.yaml, K: K30, seeds: seeds3, hyper: us_v2, set: {sample.universe_size: 200}}
+  - {name: us_no_receipts, group: robustness, runner: attention, config: configs/us_headline_v2.yaml, K: K30, seeds: seeds3, hyper: us_v2, set: {data.dir: data/us/no_receipts}}
+
+  # --- extension: 2022-2025, never seen by any choice above ----------------------------------
+  - {name: us_attention_2022_2025, group: extension, runner: attention, config: configs/us_headline_v2.yaml, K: K30, seeds: seeds5, hyper: us_v2, set: {sample.start: 2022-01-01, sample.end: 2025-12-31}}
+  - {name: eu_attention_2022_2025, group: extension, runner: attention, config: configs/europe_headline_v2.yaml, K: K30, seeds: seeds5, hyper: eu_v2, set: {sample.start: 2022-01-01, sample.end: 2025-12-31}}
+
+  # --- ladder: one change at a time, on the old validated values ------------------------------
+  - {name: us_ladder0_old, group: ladder, runner: attention, config: configs/us_headline.yaml, K: K30, seeds: seeds5, use: [diag]}
+  - {name: us_ladder1_no_levels, group: ladder, runner: attention, config: configs/us_headline.yaml, K: K30, seeds: seeds5, use: [diag, no_levels]}
+  - {name: us_ladder2_asof, group: ladder, runner: attention, config: configs/us_headline.yaml, K: K30, seeds: seeds5, use: [diag, no_levels, asof]}
+  - {name: us_ladder3_fixed, group: ladder, runner: attention, config: configs/us_headline.yaml, K: K30, seeds: seeds5, use: [diag, no_levels, asof, fixed_window]}
+  - {name: eu_ladder0_old, group: ladder, runner: attention, config: configs/europe_headline.yaml, K: K30, seeds: seeds5, use: [diag, eu_sobol110]}
+  - {name: eu_ladder1_no_levels, group: ladder, runner: attention, config: configs/europe_headline.yaml, K: K30, seeds: seeds5, use: [diag, eu_sobol110, no_levels]}
+  - {name: eu_ladder2_asof, group: ladder, runner: attention, config: configs/europe_headline.yaml, K: K30, seeds: seeds5, use: [diag, eu_sobol110, no_levels, asof]}
+  - {name: eu_ladder3_fixed, group: ladder, runner: attention, config: configs/europe_headline.yaml, K: K30, seeds: seeds5, use: [diag, eu_sobol110, no_levels, asof, fixed_window]}
+  - {name: eu_ladder4_cumulative, group: ladder, runner: attention, config: configs/europe_headline.yaml, K: K30, seeds: seeds5, use: [diag, eu_sobol110, no_levels, asof, fixed_window], set: {policy.input: cumulative}}

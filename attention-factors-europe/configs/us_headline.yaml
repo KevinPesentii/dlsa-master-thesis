@@ -13,6 +13,7 @@ seed: 0
 
 data:
   dir: data/us/shared            # the three tables of docs/schemas.md; --data-dir overrides
+  returns_history: false         # stage 2c, read by the fixed window only
 
 sample:
   start: 1998-01-01              # first out-of-sample day; training reaches back window_years
@@ -22,6 +23,7 @@ sample:
 features:
   n_characteristics: 39          # see CONFIRM 2 in docs/schemas.md
   normalisation: rank_quantile   # see CONFIRM 1 in docs/schemas.md
+  timing: lagged                 # lagged: features.parquet shifted a day; asof: features_asof.parquet
   include_cross_sectional_median: true
   include_risk_free: true
 

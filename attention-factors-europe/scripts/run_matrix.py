@@ -17,6 +17,8 @@ it and runs with that search's winning values (its `fixed` block and the winner'
 overrides, applied after `use` and before `set`); its config is resolved when its first job
 starts and records the search, the candidate and the validation Sharpe under `matrix.hyper`.
 A search counts as `workers` jobs against --jobs. A restarted search resumes its trials.
+`keep_from: <search>` makes a search wait for that one and carry its winner into the finalists,
+by name, so the two spaces must be the same (Europe's searches and the US winner).
 
 Scheduling: longest jobs first (a rough cost per job), at most --jobs at a time and at
 most --mem-gb of estimated peak memory in flight. A spec may set `mem_gb` (its peak memory
@@ -144,13 +146,19 @@ def years_of(cfg: dict) -> list[int]:
 def search_job(name: str, s: dict, out: Path, threads: int, smoke: bool) -> Job:
     d = out / "searches" / name
     workers = 2 if smoke else int(s.get("workers", 12))
+    keep_from = s.get("keep_from")
 
     def make_cmd() -> list[str]:
         where = ["--resume", d.relative_to(ROOT).as_posix()] if (d / "manifest.json").exists() else \
                 ["--run-dir", d.relative_to(ROOT).as_posix()]
+        keep = []
+        if keep_from and not smoke:         # "base" is a finalist anyway
+            w = winner(out, keep_from)["candidate"]
+            keep = [] if w == "base" else ["--keep", w]
         return [sys.executable, "-u", "scripts/search_validation.py", "--config", s["config"], "--stage", "select",
-                "--jobs", str(workers), "--threads", str(threads)] + where + (["--smoke"] if smoke else [])
+                "--jobs", str(workers), "--threads", str(threads)] + where + keep + (["--smoke"] if smoke else [])
     after = [f"prep_{a}" for a in ([s["after"]] if isinstance(s.get("after"), str) else s.get("after", []))]
+    after += [f"search_{keep_from}"] if keep_from else []
     return Job(f"search_{name}", [], workers * float(s.get("mem_gb_per_worker", 2.5)), 1e6 + 100, after,
                done_file=d / "selected.yaml", slots=workers, make_cmd=make_cmd)
 
