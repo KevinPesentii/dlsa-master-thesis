@@ -132,6 +132,15 @@ weaken a test to make code pass.
   one change at a time; results in `runs/_matrix/thesis_v2`. The fixed window was tested out of sample before
   it was adopted (`runs/_matrix/exp_fixedwin_full`), and the thesis has to say so. The rows above stay the
   headline until the results are in and a decision says otherwise.
+- PCA rows under model v2 (2026-11-06): `configs/thesis_v2_pca_matrix.yaml`, six searches
+  (`configs/*_search_pca_v2*.yaml`, `*_search_ou_v2.yaml`) and every PCA row, with a ladder; results in
+  `runs/_matrix/thesis_v2_pca`. Two of the four changes reach PCA: `policy.residual_window: fixed`
+  (`trading.make_fixed_windows`) and cumulative input. PCA reads no characteristics, and a PCA name already has 252
+  days of returns, so as-of features and `returns_history` do nothing; stage one is unchanged. The PCA book
+  holds 486 of 498 names (Europe 186 of 199) against attention's 497 (198.5). Not the same experiment as attention's
+  fixed window: B_t is fitted on a span containing the window days, so the re-hedged path is in sample for the
+  hedge, and its sd falls 14% (US K = 30), 18% (Europe K = 30), 42% (US K = 100) against rolling. Read
+  the ladder before calling the two rows like for like. The rows of `runs/_matrix/thesis` stay until a decision.
 
 ## Trading costs: limits, not replication
 

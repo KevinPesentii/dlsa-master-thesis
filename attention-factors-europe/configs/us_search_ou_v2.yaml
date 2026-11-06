@@ -1,0 +1,22 @@
+# configs/us_search_ou.yaml for model v2 (configs/thesis_v2_pca_matrix.yaml): the same grid on 1996-1997, the rule fed
+# the fixed residual window. Deterministic: one seed. Written 2026-11-06, before this search ran.
+#   python scripts/search_validation.py --config configs/us_search_ou_v2.yaml --stage select
+
+runner: pca
+base_config: configs/us_pca_ou.yaml
+K: 30
+first_oos_year: 1998
+validation_years: 2
+
+search:
+  seed: 0
+  grid:
+    policy.c_thresh: [1.0, 1.25, 1.5]
+    policy.c_crit: [0.25, 0.5, 0.75]
+
+fixed:
+  policy.residual_window: fixed
+
+finalists:
+  top: 3
+  seeds: [0]

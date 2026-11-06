@@ -15,6 +15,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 import pytest
+import yaml
 
 from afe.model import pca_factors
 from afe.policy import trading
@@ -107,3 +108,16 @@ def test_stage1_on_a_built_panel():
     assert roll.windows[0, 0, -1].item() != pytest.approx(b.windows[0, 0, -1].item(), abs=1e-9)
     with pytest.raises(ValueError):
         s1.batch(t, t + 1, L, 1.0, False, "none", "both")
+
+
+def test_every_v2_search_holds_the_fixed_window_and_cumulative_input():
+    names = ["us_search_pca_v2", "us_search_pca_v2_lag1", "europe_search_pca_v2", "europe_search_pca_v2_lag1"]
+    for n in names:
+        s = yaml.safe_load((ROOT / "configs" / f"{n}.yaml").read_text())
+        assert s["fixed"]["policy.residual_window"] == "fixed" and s["fixed"]["policy.input"] == "cumulative", n
+        assert "policy.input" not in s["search"]["space"], n
+        assert s["search"]["n_points"] == 64 and s["K"] == 30 and s["validation_years"] == 2, n
+        assert ("execution.lag" in s["fixed"]) == n.endswith("lag1"), n
+    for n in ["us_search_ou_v2", "europe_search_ou_v2"]:
+        s = yaml.safe_load((ROOT / "configs" / f"{n}.yaml").read_text())
+        assert s["fixed"]["policy.residual_window"] == "fixed", n

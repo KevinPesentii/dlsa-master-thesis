@@ -607,7 +607,8 @@ old values that takes the old headline to v2 one change at a time. Four searches
 | extension | 2022-2025 x two, K = 30, seeds 0-4 | 10 |
 | ladder | four US steps, five Europe steps, K = 30, seeds 0-4 | 45 |
 
-The PCA rows use no characteristics, so `runs/_matrix/thesis` and `thesis_eu` keep their numbers.
+The PCA rows use no characteristics, so `runs/_matrix/thesis` and `thesis_eu` keep their numbers (with the fixed
+window: section 16).
 
 Size: about 167 laptop process-hours by the matrix's cost model; the thesis matrix was about 150 and took 5.2
 hours on the m7i.24xlarge at 46 jobs. Expect about **6 hours**, about **$35** on-demand, spot not advised: 6
@@ -651,3 +652,55 @@ Collect as in section 11 (`runs_v2.tgz`, then terminate the machine); the result
 bottom, and its last US step against `us_attention` is what the new search did. Run directories on the machine
 hold machine paths in the ledger: map them by basename, as before. Full factor weights on any date of a run:
 `python scripts/factor_replay.py runs/<run> --dates 2008-10-01`.
+
+## 16. The PCA rows under model v2 (2026-11-06)
+
+`configs/thesis_v2_pca_matrix.yaml`: every PCA row of the two thesis matrices with the fixed residual window and
+cumulative input, so that attention and its benchmarks trade on one set of mechanics (the file's header says why
+the other two changes of model v2 do not reach PCA). Same spec names, six new searches, a ladder. 167 runs + 6
+searches + 2 stage-one builds, 175 jobs:
+
+| group | rows | runs |
+|---|---|---|
+| headline | `us_pca_longconv`, `eu_pca_longconv`, `eu_pca_longconv_usvalues`: K 1-100, seeds 0-4 | 120 |
+| headline | `us_pca_ou`, `eu_pca_ou`: K 1-100, one deterministic run | 16 |
+| robustness | lag 1 x two, K = 30, seeds 0-2 | 6 |
+| ladder | two US steps, three Europe steps, K = 30, seeds 0-4 | 25 |
+
+Size: 41 laptop process-hours by the matrix's cost model, against 167 for the v2 matrix, which took 5.6 hours on the
+m7i.24xlarge at 46 jobs. Expect **2 to 3 hours**, about **$15** on-demand. The stage ones rebuild on the machine:
+6 GB each, 10 and 4 GB of memory. Memory: 3 GB per US run, 2 GB per Europe run. Storage: **40 GiB** gp3, encrypted.
+Results about 2 GB. No data of its own: the bundle of section 15 is enough, only `COMMIT` changes.
+
+On the laptop, from the branch, committed and pushed:
+
+```powershell
+cd C:\Users\henri\Desktop\SSE\masterThesis\Code\dlsa-model-v2\attention-factors-europe
+$PY = "C:\Users\henri\miniconda3\envs\afe\python.exe"
+& $PY scripts\run_matrix.py --matrix configs\thesis_v2_pca_matrix.yaml --dry-run | Select-Object -First 1   # 175 jobs
+& $PY scripts\make_bundle.py --markets us europe --out $env:TEMP\afe_bundle_v2_pca
+scp $env:TEMP\afe_bundle_v2_pca\afe_data.tar $env:TEMP\afe_bundle_v2_pca\SHA256SUMS $env:TEMP\afe_bundle_v2_pca\COMMIT "ubuntu@${IP}:~"
+```
+
+On the machine, after the clone, `sha256sum -c` and `cloud_setup.sh` of section 7, a smoke test (each search on
+2 points at 1 epoch, then every spec once):
+
+```bash
+cd ~/dlsa/attention-factors-europe; PY=~/afe-venv/bin/python
+$PY scripts/run_matrix.py --matrix configs/thesis_v2_pca_matrix.yaml --smoke --jobs 16   # "0 failed"
+```
+
+Then the run in tmux, one line, which also packs the results and stops the machine:
+
+```bash
+tmux new -s afe
+cd ~/dlsa/attention-factors-europe; PY=~/afe-venv/bin/python   # again inside tmux: PY does not carry over
+$PY scripts/run_matrix.py --matrix configs/thesis_v2_pca_matrix.yaml --jobs 46 --threads 2 2>&1 | tee runs/matrix_v2_pca_console.log; tar -czf ~/runs_v2_pca.tgz -C ~/dlsa/attention-factors-europe runs; sudo shutdown -h now
+```
+
+Look once after the first hour: the six winners are in `runs/_matrix/thesis_v2_pca/searches/*/metrics.json`. Collect
+as in section 11 (`runs_v2_pca.tgz`, then terminate the machine). The ladder is the group `ladder`, read top to
+bottom: step 0 against the October rows is the machine noise, step 1 is what the fixed window did, and the last
+step against the headline row is what the new search did. Read it before calling the rows like for like: B_t is fitted
+on a span containing the window, so PCA's fixed window is not the same experiment as attention's
+(docs/pca_longconv_benchmark.md).

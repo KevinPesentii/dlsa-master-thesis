@@ -1,0 +1,91 @@
+# The PCA rows of the thesis matrices under model v2, so that attention and its benchmarks trade on one set
+# of mechanics. Same spec names as configs/thesis_matrix.yaml and configs/thesis_matrix_europe.yaml, so
+# scripts/thesis_tables.py can read it. Fixed before any of it ran.
+#   python scripts/run_matrix.py --matrix configs/thesis_v2_pca_matrix.yaml --dry-run
+#   python scripts/run_matrix.py --matrix configs/thesis_v2_pca_matrix.yaml --smoke --jobs 8
+#   python scripts/run_matrix.py --matrix configs/thesis_v2_pca_matrix.yaml --jobs 46 --threads 2
+#
+# Which of the four changes of model v2 reach PCA (CLAUDE.md). Dropping the levels and the as-of table do not:
+# the PCA rows read no characteristics. The fixed residual window does, and cumulative input does: Europe's
+# PCA search had picked raw, as its attention search had. Pre-entry returns do not: a PCA name needs a full
+# 252-day history (pca_factors.full_history), so its 30-day window is complete anyway, and adding
+# returns_history to stage one would add 0.5 names a day. So stage one stays configs/*_pca_longconv.yaml's
+# data/*/pca_l252, and the PCA book holds 486 of 498 names (Europe 186 of 199), attention 497 (198.5).
+#
+# Not attention's experiment: rolling PCA already trades entrants, and B_t is fitted on a span containing the
+# window, so the re-hedged path is in sample for the hedge (docs/pca_longconv_benchmark.md, last section).
+#
+# Every return uses validated values: six searches run first, the same windows, budget and rule as the
+# 2026-10 PCA and OU searches, with the two changes held. US rows `hyper: us_*`, Europe rows `hyper: eu_*`,
+# with the US values as the comparison (eu_pca_longconv_usvalues). The ladder answers what each change did:
+# K = 30, five seeds, on the old validated values, so that no step is also a new search. Step 0 is the old row
+# on this machine and this commit. In Europe the old values have a raw input (sobol-019), so its ladder has
+# one more step than the US's. Diagnostic rows, as in configs/thesis_v2_matrix.yaml.
+#
+# Not here: 2022-2025. Stage one and the thesis benchmarks stop in 2021.
+
+name: thesis_v2_pca
+
+sets:
+  seeds5: [0, 1, 2, 3, 4]
+  seeds3: [0, 1, 2]
+  seed0: [0]
+  K_pca: [1, 3, 5, 8, 10, 15, 30, 100]     # Table 2's PCA rows
+  K30: [30]
+
+blocks:
+  lag1:
+    execution.lag: 1
+  fixed_window:
+    policy.residual_window: fixed
+  us_sobol056:                   # the winner of configs/us_search_pca.yaml (runs/_matrix/thesis)
+    policy.input_scale: 181.0
+    training.batch_days: 125
+    policy.input: cumulative
+    policy.input_normalise: none
+  eu_sobol019:                   # the winner of configs/europe_search_pca.yaml (runs/_matrix/thesis_eu)
+    policy.input_scale: 35.1
+    training.batch_days: 63
+    policy.input: raw
+    policy.input_normalise: none
+
+prep:                            # stage-one builds, as in configs/thesis_matrix.yaml; skipped when `done` exists
+  pca_us:
+    script: scripts/build_pca_residuals.py
+    config: configs/us_pca_longconv.yaml
+    done: data/us/shared/pca_l252/meta.json
+    mem_gb: 10
+    cost: 60
+  pca_europe17:
+    script: scripts/build_pca_residuals.py
+    config: configs/europe_pca_longconv.yaml
+    done: data/europe17/holfill/pca_l252/meta.json
+    mem_gb: 4
+    cost: 20
+
+searches:                        # scripts/search_validation.py --stage select; 46 slots together
+  us_pca_v2:      {config: configs/us_search_pca_v2.yaml, workers: 12, mem_gb_per_worker: 3, after: pca_us}
+  us_pca_v2_lag1: {config: configs/us_search_pca_v2_lag1.yaml, workers: 12, mem_gb_per_worker: 3, after: pca_us}
+  us_ou_v2:       {config: configs/us_search_ou_v2.yaml, workers: 3, mem_gb_per_worker: 3, after: pca_us}
+  eu_pca_v2:      {config: configs/europe_search_pca_v2.yaml, workers: 8, mem_gb_per_worker: 2, after: pca_europe17, keep_from: us_pca_v2}
+  eu_pca_v2_lag1: {config: configs/europe_search_pca_v2_lag1.yaml, workers: 8, mem_gb_per_worker: 2, after: pca_europe17, keep_from: us_pca_v2_lag1}
+  eu_ou_v2:       {config: configs/europe_search_ou_v2.yaml, workers: 3, mem_gb_per_worker: 2, after: pca_europe17}
+
+specs:
+  # --- headline: Table 2's benchmark rows -----------------------------------------------------
+  - {name: us_pca_longconv, group: headline, runner: pca, config: configs/us_pca_longconv.yaml, K: K_pca, seeds: seeds5, hyper: us_pca_v2, after: pca_us}
+  - {name: eu_pca_longconv, group: headline, runner: pca, config: configs/europe_pca_longconv.yaml, K: K_pca, seeds: seeds5, hyper: eu_pca_v2, after: pca_europe17}
+  - {name: eu_pca_longconv_usvalues, group: headline, runner: pca, config: configs/europe_pca_longconv.yaml, K: K_pca, seeds: seeds5, hyper: us_pca_v2, after: pca_europe17}
+  - {name: us_pca_ou, group: headline, runner: pca, config: configs/us_pca_ou.yaml, K: K_pca, seeds: seed0, hyper: us_ou_v2, after: pca_us}
+  - {name: eu_pca_ou, group: headline, runner: pca, config: configs/europe_pca_ou.yaml, K: K_pca, seeds: seed0, hyper: eu_ou_v2, after: pca_europe17}
+
+  # --- robustness: one close later, K = 30 -----------------------------------------------------
+  - {name: us_pca_longconv_lag1, group: robustness, runner: pca, config: configs/us_pca_longconv.yaml, K: K30, seeds: seeds3, use: [lag1], hyper: us_pca_v2_lag1, after: pca_us}
+  - {name: eu_pca_longconv_lag1, group: robustness, runner: pca, config: configs/europe_pca_longconv.yaml, K: K30, seeds: seeds3, use: [lag1], hyper: eu_pca_v2_lag1, after: pca_europe17}
+
+  # --- ladder: the old row to v2, one change at a time, K = 30 ---------------------------------
+  - {name: us_pca_ladder0_old, group: ladder, runner: pca, config: configs/us_pca_longconv.yaml, K: K30, seeds: seeds5, use: [us_sobol056], after: pca_us}
+  - {name: us_pca_ladder1_fixed, group: ladder, runner: pca, config: configs/us_pca_longconv.yaml, K: K30, seeds: seeds5, use: [us_sobol056, fixed_window], after: pca_us}
+  - {name: eu_pca_ladder0_old, group: ladder, runner: pca, config: configs/europe_pca_longconv.yaml, K: K30, seeds: seeds5, use: [eu_sobol019], after: pca_europe17}
+  - {name: eu_pca_ladder1_fixed, group: ladder, runner: pca, config: configs/europe_pca_longconv.yaml, K: K30, seeds: seeds5, use: [eu_sobol019, fixed_window], after: pca_europe17}
+  - {name: eu_pca_ladder2_cumulative, group: ladder, runner: pca, config: configs/europe_pca_longconv.yaml, K: K30, seeds: seeds5, use: [eu_sobol019, fixed_window], set: {policy.input: cumulative}, after: pca_europe17}
