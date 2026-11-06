@@ -77,6 +77,44 @@ same reduced set, and the count above changes for both markets.
 
 CONFIRM 3: whether `med_*` is the median over the universe or over all listed names.
 
+## features_asof.parquet (stage 2c, optional)
+
+Written next to `features.parquet` by `scripts/build_asof_tables.py`, from the inspection
+tables of stage 2. Read with `features.timing: asof`.
+
+| column     | dtype   | required | notes                                        |
+|------------|---------|----------|----------------------------------------------|
+| date       | date32  | yes      |                                              |
+| sec_id     | string  | yes      |                                              |
+| char_*     | float32 | yes      | 39 characteristics, rank-quantile normalised |
+| rf         | float32 | yes      | daily risk-free rate of `date`, for the objective, not a model input |
+
+Rows are the universe of `date`, as in `features.parquet`, but row (t, i) already holds what
+is known at the close of t-1, so the loader does NOT shift it:
+
+- daily characteristics as of the previous trading day;
+- monthly and annual characteristics as of the end of the month before t's month;
+- ranks over the members of t's month, whether or not they were members on t-1.
+
+`features.parquet` plus the loader's one-day shift gives the same numbers on every day but
+the first trading day of a month. There the shift shows the characteristics of the month
+end before last, ranks the daily ones in last month's universe and gives an entering name
+zeros. There are no `med_*` columns: a column that is the same for every name on a date
+cannot move a softmax over names.
+
+## returns_history.parquet (stage 2c, optional)
+
+| column | dtype   | required | notes                                         |
+|--------|---------|----------|-----------------------------------------------|
+| date   | date32  | yes      |                                               |
+| sec_id | string  | yes      |                                               |
+| ret    | float32 | yes      | as in `returns.parquet`, same currency        |
+
+Days on which a pool name has a return in the raw pull but no row in `returns.parquet`,
+which needs a prior-month cap: its first listing month, and months it was not eligible. No
+overlap with `returns.parquet`. Read with `data.returns_history: true`, only for the windows
+of `policy.residual_window: fixed`: never a universe decision, a traded return or a cost.
+
 ## residuals.parquet
 
 | column | dtype   | required | notes                                         |
