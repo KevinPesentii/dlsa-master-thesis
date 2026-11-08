@@ -60,7 +60,7 @@ def closed_mask(p: slots.SlotPanel, cfg: dict, c0: int, c1: int):
     """p.closed for the closes c0..c1-1 as a tensor, or None (all traded / not respected)."""
     if p.closed is None or not execution(cfg)[1]:
         return None
-    return torch.from_numpy(p.closed[c0:c1])
+    return slots.rows(p, "closed", c0, c1)
 
 
 def span(model, p: slots.SlotPanel, t0: int, t1: int, cfg: dict, w_prev=None):
@@ -74,7 +74,7 @@ def span(model, p: slots.SlotPanel, t0: int, t1: int, cfg: dict, w_prev=None):
     window = pc.get("residual_window", "rolling")
     pool = {}
     if window == "fixed":           # the window is re-hedged with every company's past returns
-        pool = {"R_pool": torch.from_numpy(p.R_win[s:t1]), "has_ret": torch.from_numpy(p.has_ret[s:t1])}
+        pool = {"R_pool": slots.rows(p, "R_win", s, t1), "has_ret": slots.rows(p, "has_ret", s, t1)}
     out = model.forward_span(p.X[s:t1], p.R[s:t1], p.in_universe[s:t1], p.idx[s:t1], p.n_pool,
                              cumulative=pc["input"] == "cumulative", scale=pc["input_scale"],
                              normalise=pc.get("input_normalise", "none"), residual_window=window,
@@ -84,7 +84,7 @@ def span(model, p: slots.SlotPanel, t0: int, t1: int, cfg: dict, w_prev=None):
     held = R_pool = None
     if lag or closed is not None:
         held = trading.execute(to_pool(out["w"], p.idx[t0:t1], p.n_pool), closed, lag)
-        R_pool = torch.from_numpy(p.R_pool[t0:t1])
+        R_pool = slots.rows(p, "R_pool", t0, t1)
     loss, parts = objective(out, b, ob["turnover_cost"], ob["short_cost"], ob["lambda_var"],
                             ob["subtract_rf"], w_prev, held, R_pool)
     return loss, parts, out

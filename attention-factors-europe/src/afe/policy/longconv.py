@@ -33,6 +33,14 @@ KERNEL_INITS = ("geom_decay", "random")
 CHUNK = 1024      # windows per piece of a deeper stack (fastest on CPU, 2026-11-08)
 KEEP = 2 ** 27    # hidden values (windows x L x d x extra layers) above which a training step recomputes
                   # each piece in backward instead of keeping it: ~4 GB kept at most, +35-50% time
+GPU_CHUNK = 8192   # on a GPU: tiny pieces leave it idle between kernel launches
+GPU_KEEP = 2 ** 26  # and half the CPU's memory kept, since several workers share one GPU (neither measured yet)
+
+
+def pieces(device: torch.device) -> tuple[int, int]:
+    """(windows per piece, hidden values kept) of a deeper stack on `device`. Neither changes a number:
+    the pieces are independent windows, and a recomputed piece replays its dropout masks."""
+    return (CHUNK, KEEP) if device.type == "cpu" else (GPU_CHUNK, GPU_KEEP)
 
 
 def geometric_decay_init(d: int, L: int) -> torch.Tensor:
@@ -76,7 +84,8 @@ class LongConvLayer(nn.Module):
         Channels first, the convolution is one batched matmul over channels and the GLU projection
         one matmul, with no layout copies."""
         d, L = u.shape[0], u.shape[-1]
-        lag = torch.arange(L)[None, :] - torch.arange(L)[:, None]             # [s, t] = t - s
+        steps = torch.arange(L, device=u.device)
+        lag = steps[None, :] - steps[:, None]                                 # [s, t] = t - s
         toeplitz = self.squashed_kernel()[:, lag.clamp(min=0)] * (lag >= 0)   # (d, L, L): [h, s, t]
         y = self.drop(F.gelu(torch.baddbmm(self.skip[:, None, None] * u, u, toeplitz)))
         z = torch.addmm(self.out.bias[:, None], self.out.weight, y.reshape(d, -1))   # (2d, B * L)
@@ -113,13 +122,14 @@ class LongConvPolicy(nn.Module):
         shape = windows.shape[:-1]
         x = windows.reshape(-1, self.lookback)
         a, c = self.encoder.weight[:, 0], self.encoder.bias
+        chunk, keep = pieces(x.device)
         if len(self.deeper) == 0:
             y = self.layer(x, a, c)
-        elif torch.is_grad_enabled() and x.numel() * a.shape[0] * len(self.deeper) > KEEP:
+        elif torch.is_grad_enabled() and x.numel() * a.shape[0] * len(self.deeper) > keep:
             # recomputed in backward: the same numbers and dropout masks (the RNG state is replayed)
-            y = torch.cat([checkpoint(self.stack, xc, a, c, use_reentrant=False) for xc in x.split(CHUNK)])
+            y = torch.cat([checkpoint(self.stack, xc, a, c, use_reentrant=False) for xc in x.split(chunk)])
         else:
-            y = torch.cat([self.stack(xc, a, c) for xc in x.split(CHUNK)])
+            y = torch.cat([self.stack(xc, a, c) for xc in x.split(chunk)])
         return self.decoder(y).reshape(shape)
 
     def stack(self, x: torch.Tensor, a: torch.Tensor, c: torch.Tensor) -> torch.Tensor:

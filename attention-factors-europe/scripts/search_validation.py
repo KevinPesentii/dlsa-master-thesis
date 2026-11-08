@@ -41,12 +41,23 @@ A trial with seed s starts from the draw (s, first out-of-sample year), as in
 run_attention_us_val.py, so candidates are compared on common random numbers. The scores
 along the learning curve come from the same training run (train_window's on_epoch hook).
 trials.jsonl keeps every trial; --resume <run dir> skips the ones already there.
+
+--device cuda trains on the GPUs (attention searches only): each worker keeps the panel and the
+model on one GPU, worker i on GPU i mod the number of GPUs, and scores on the CPU as before.
+The initial weights are drawn on the CPU, so they are those of a CPU trial; the dropout masks
+come from the GPU's generator and the float sums run in another order, so a GPU trial is
+not the CPU trial number for number (scripts/gpu_probe.py measures how far apart they are).
+--gpu-procs N, the processes sharing the machine's GPUs (scripts/run_matrix.py passes its
+--jobs), caps each process at its share of GPU memory; a trial that runs out of it is run
+again with every piece of a deeper LongConv recomputed in backward (same numbers, slower) and
+marked oom_retry. A trial on a GPU records its device.
 """
 
 from __future__ import annotations
 
 import argparse
 import copy
+import gc
 import hashlib
 import itertools
 import json
@@ -73,7 +84,7 @@ import run_pca_longconv as rp  # noqa: E402  (Stage1, train_one_window, execute)
 from afe import runs  # noqa: E402
 from afe.data import slots  # noqa: E402
 from afe.evaluation import metrics  # noqa: E402
-from afe.policy import ou_threshold, trading  # noqa: E402
+from afe.policy import longconv, ou_threshold, trading  # noqa: E402
 from afe.policy.longconv import LongConvPolicy  # noqa: E402
 
 WORKER: dict = {}  # per process: the panel, the base config and the split
@@ -122,9 +133,31 @@ def candidate(name: str, overrides: dict) -> dict:
     return {"name": name, "cid": cid, "overrides": overrides}
 
 
+def gpu_of_worker(n_gpus: int) -> int:
+    """This pool worker's GPU: workers 1, 2, 3, ... (a replacement worker gets a new number) go round
+    the GPUs; the main process takes GPU 0."""
+    ident = mp.current_process()._identity
+    return (ident[0] - 1) % n_gpus if ident else 0
+
+
+def gpu_device(gpu_procs: int = 0) -> torch.device:
+    """Set up this process's GPU: float32 matmuls (no TF32, as on the CPU) and, with gpu_procs
+    processes on the machine's GPUs, at most 0.85 / (processes per GPU) of its memory."""
+    n = torch.cuda.device_count()
+    dev = torch.device("cuda", gpu_of_worker(n))
+    torch.cuda.set_device(dev)
+    torch.backends.cuda.matmul.allow_tf32 = False
+    torch.backends.cudnn.allow_tf32 = False
+    if gpu_procs:
+        torch.cuda.set_per_process_memory_fraction(min(0.9, 0.85 / math.ceil(gpu_procs / n)), dev)
+    return dev
+
+
 def init_worker(cfg: dict, data_dir: str, first_oos: int, val_years: int, K: int,
-                eval_epochs: list[int], threads: int, runner: str = "attention") -> None:
+                eval_epochs: list[int], threads: int, runner: str = "attention", device: str = "cpu",
+                gpu_procs: int = 0) -> None:
     torch.set_num_threads(threads)
+    dev = gpu_device(gpu_procs) if device == "cuda" else torch.device("cpu")
     if runner == "pca":
         panel = rp.load_panel(cfg, str(cfg["sample"]["end"]))
         s1 = rp.Stage1(ROOT / cfg["factors"]["out_dir"], K, panel)
@@ -139,8 +172,8 @@ def init_worker(cfg: dict, data_dir: str, first_oos: int, val_years: int, K: int
     t = [p.dates.searchsorted(d) for d in (w0, pd.Timestamp(first_oos - val_years, 1, 1))]
     if p.dates[0].year > w0.year:
         raise SystemExit(f"the panel starts {p.dates[0]:%Y-%m-%d}, too late for a window from {w0:%Y-%m-%d}")
-    WORKER.update(p=p, cfg=cfg, K=K, first_oos=first_oos, eval_epochs=eval_epochs,
-                  split=(t[0], t[1], len(p.dates)))
+    WORKER.update(p=p if dev.type == "cpu" else slots.to_device(p, dev), cfg=cfg, K=K, first_oos=first_oos,
+                  eval_epochs=eval_epochs, split=(t[0], t[1], len(p.dates)), device=dev)
 
 
 def score(model, c: dict) -> dict:
@@ -150,7 +183,7 @@ def score(model, c: dict) -> dict:
     with torch.no_grad():
         _, parts, _ = base.span(model, p, t_va0, t_va1, c)
     ob = c["objective"]
-    net, to, sh = (parts[k].numpy().astype(float) for k in ("net", "turnover", "short"))
+    net, to, sh = (parts[k].cpu().numpy().astype(float) for k in ("net", "turnover", "short"))
     g = metrics.annualised(net + ob["turnover_cost"] * to + ob["short_cost"] * sh)
     return {"net_SR": float(metrics.annualised(net)["SR"]), "gross_SR": float(g["SR"]),
             "sigma_pct": float(g["sigma_pct"]), "turnover": float(to.mean()), "ev": float(parts["ev"]),
@@ -195,10 +228,30 @@ def evaluate_pca(job: dict) -> dict:
 def evaluate(job: dict) -> dict:
     if WORKER.get("runner") == "pca":
         return evaluate_pca(job)
+    dev = WORKER.get("device", torch.device("cpu"))
+    if dev.type == "cpu":
+        return evaluate_attention(job)
+    try:
+        return {**evaluate_attention(job), "device": str(dev)}
+    except torch.cuda.OutOfMemoryError:
+        pass
+    # outside the except block, so the failed trial's tensors are gone: the trial from the start, with
+    # every piece of a deeper LongConv recomputed in backward (the same numbers, more time)
+    gc.collect()
+    torch.cuda.empty_cache()
+    keep, longconv.GPU_KEEP = longconv.GPU_KEEP, 0
+    try:
+        return {**evaluate_attention(job), "device": str(dev), "oom_retry": True}
+    finally:
+        longconv.GPU_KEEP = keep
+
+
+def evaluate_attention(job: dict) -> dict:
     c = with_overrides(WORKER["cfg"], job["overrides"])
     t_tr0, t_va0, _ = WORKER["split"]
     init_seed = job["seed"] * 10007 + WORKER["first_oos"]
-    model = val.fresh_model(c, WORKER["K"], len(WORKER["p"].features), init_seed)
+    model = val.fresh_model(c, WORKER["K"], len(WORKER["p"].features), init_seed)   # drawn on the CPU
+    model = model.to(WORKER.get("device", torch.device("cpu")))
     E = c["training"]["epochs"]
     at = {e for e in WORKER["eval_epochs"] if e < E} | {E}
     curve = {}
@@ -281,6 +334,9 @@ def main():
     ap.add_argument("--K", type=int, help="search at this number of factors instead of the config's K")
     ap.add_argument("--run-dir", type=Path, help="write to this directory (must not exist) instead of runs/<stamp>_...")
     ap.add_argument("--smoke", action="store_true", help="2 points, 1 finalist, 1 seed, 1 epoch: does the config run")
+    ap.add_argument("--device", choices=["cpu", "cuda"], default="cpu", help="train on the GPUs (see above)")
+    ap.add_argument("--gpu-procs", type=int, default=0,
+                    help="processes sharing the GPUs, for each one's memory share (default: no cap)")
     args = ap.parse_args()
     if args.resume:                                  # a resumed run keeps its own configuration
         man = json.loads((Path(args.resume) / "manifest.json").read_text())["config"]
@@ -311,6 +367,12 @@ def main():
     rob, runner = S.get("robustness") or {"seeds": [], "knobs": {}}, S.get("runner", "attention")
     for key in [*sr.get("space", {}), *sr.get("grid", {}), *rob["knobs"]]:
         with_overrides(cfg, {key: None})
+    if args.device == "cuda":       # checked here: an error inside a pool worker's start makes the pool respawn it
+        if runner == "pca":
+            raise SystemExit("--device cuda trains the attention searches only")
+        if not torch.cuda.is_available():
+            raise SystemExit("--device cuda: torch sees no GPU (a CPU build of torch, or no driver)")
+        os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")   # for the workers
 
     log = lambda s: print(s, flush=True)  # noqa: E731
     V = S["validation_years"]
@@ -321,13 +383,16 @@ def main():
     trials = {(r["cid"], r["seed"]): r for r in runs.read_jsonl(path)}
     log(f"search run dir {run_dir}")
     fit = f"fit {base.window_start(cfg, first_oos).year}-{first_oos - V - 1}, " if "training" in cfg else ""
-    log(f"{runner}: {fit}validate {first_oos - V}-{first_oos - 1}, K={K}, {args.jobs} jobs x {args.threads} threads")
+    on = "" if args.device == "cpu" else \
+        f" on {torch.cuda.device_count()} x {torch.cuda.get_device_name(0)}, {args.gpu_procs or 'uncapped'} GPU processes"
+    log(f"{runner}: {fit}validate {first_oos - V}-{first_oos - 1}, K={K}, {args.jobs} jobs x {args.threads} threads{on}")
     for k in ("OMP_NUM_THREADS", "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS"):
         os.environ[k] = str(args.threads)
     summary_path = run_dir / "metrics.json"
     summary = json.loads(summary_path.read_text()) if summary_path.exists() else {}
     with mp.get_context("spawn").Pool(args.jobs, initializer=init_worker, initargs=(
-            cfg, str(data_dir), first_oos, V, K, S.get("eval_epochs", []), args.threads, runner)) as pool:
+            cfg, str(data_dir), first_oos, V, K, S.get("eval_epochs", []), args.threads, runner, args.device,
+            args.gpu_procs)) as pool:
         cost = lambda j: rough_cost(with_overrides(cfg, j["overrides"]))  # noqa: E731
         run = lambda jobs, label: run_jobs(pool, jobs, trials, path, log, label, cost)  # noqa: E731
         if args.stage in ("all", "select"):

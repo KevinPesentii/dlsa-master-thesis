@@ -77,10 +77,31 @@ class SlotPanel:
                                        # policy.residual_window fixed needs it
     R_win: np.ndarray | None = None    # (T, n_pool) float32, R_pool, plus returns_history with `history`;
                                        # the returns of the fixed residual window
+    dev: dict | None = None            # tensor copies of R_pool, R_win, has_ret and closed on the device
+                                       # of X (to_device); None = on the CPU, read through torch.from_numpy
 
     @property
     def n_pool(self) -> int:
         return len(self.sec_ids)
+
+
+ON_DEVICE = ("R_pool", "R_win", "has_ret", "closed")
+
+
+def to_device(p: SlotPanel, device) -> SlotPanel:
+    """The panel with its tensors on `device`, and tensor copies of the numpy arrays the training step
+    slices (ON_DEVICE), so a GPU step copies nothing from the host. The numpy arrays stay as they are,
+    for the evaluation on the CPU."""
+    dev = {k: torch.from_numpy(getattr(p, k)).to(device) for k in ON_DEVICE if getattr(p, k) is not None}
+    return replace(p, X=p.X.to(device), R=p.R.to(device), in_universe=p.in_universe.to(device),
+                   idx=p.idx.to(device), rf=p.rf.to(device), dev=dev)
+
+
+def rows(p: SlotPanel, name: str, a: int, b: int) -> torch.Tensor:
+    """Rows a..b-1 of the numpy array `name` (one of ON_DEVICE) as a tensor on the device of p.X."""
+    if p.dev is not None and name in p.dev:
+        return p.dev[name][a:b]
+    return torch.from_numpy(getattr(p, name)[a:b])
 
 
 def load_config(cfg: dict, data_dir: Path, start: str, end: str, max_rank: int | None = None) -> SlotPanel:
