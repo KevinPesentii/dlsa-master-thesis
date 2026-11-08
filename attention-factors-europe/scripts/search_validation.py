@@ -317,11 +317,8 @@ def main():
     run_dir = Path(args.resume) if args.resume else runs.create_run(
         f"search_K{K}_val{first_oos - V}-{first_oos - 1}", {"search": S, "base": cfg}, sr["seed"], root=ROOT / "runs",
         run_dir=args.run_dir)
-    path, trials = run_dir / "trials.jsonl", {}
-    if path.exists():
-        for line in path.read_text().splitlines():
-            r = json.loads(line)
-            trials[(r["cid"], r["seed"])] = r
+    path = run_dir / "trials.jsonl"
+    trials = {(r["cid"], r["seed"]): r for r in runs.read_jsonl(path)}
     log(f"search run dir {run_dir}")
     fit = f"fit {base.window_start(cfg, first_oos).year}-{first_oos - V - 1}, " if "training" in cfg else ""
     log(f"{runner}: {fit}validate {first_oos - V}-{first_oos - 1}, K={K}, {args.jobs} jobs x {args.threads} threads")

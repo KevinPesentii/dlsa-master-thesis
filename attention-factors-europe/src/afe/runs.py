@@ -83,3 +83,23 @@ def create_run(name: str, config: dict[str, Any], seed: int, root: Path = RUNS_R
 
 def write_metrics(run_dir: Path, metrics: dict[str, Any]) -> None:
     (run_dir / "metrics.json").write_text(json.dumps(metrics, indent=2, default=str))
+
+
+def read_jsonl(path: Path) -> list[dict[str, Any]]:
+    """The records of an append-only jsonl log (a matrix ledger, a search's trials). A last line cut
+    off by a hard stop (a Spot interruption) is dropped and the file rewritten without it, so the
+    next append starts on a fresh line; what that line recorded runs again. A bad line anywhere
+    else is an error."""
+    if not path.exists():
+        return []
+    lines = path.read_text().splitlines()
+    out = []
+    for i, line in enumerate(lines):
+        try:
+            out.append(json.loads(line))
+        except json.JSONDecodeError:
+            if i < len(lines) - 1:
+                raise
+            path.write_text("".join(ln + "\n" for ln in lines[:-1]))
+            print(f"{path}: last line cut off, dropped", flush=True)
+    return out

@@ -138,7 +138,8 @@ terminated it is billed, whether or not anything runs.
 ## If AWS takes the machine back
 
 Spot instances can be reclaimed with two minutes' notice, and everything on the disk
-goes with them, finished years included. Runs are short, so relaunch and start over. If
+goes with them, finished years included. Runs are short, so relaunch and start over.
+(For a long matrix see section 18: a persistent request that stops instead of terminating.) If
 it keeps happening, pick another instance type or availability zone, or tick nothing
 under Purchasing option (on-demand) for the 20 minutes. A single year that failed can be
 rerun alone (`--first Y --last Y`) and merged with the others:
@@ -781,8 +782,55 @@ cd ~/dlsa/attention-factors-europe; PY=~/afe-venv/bin/python   # again inside tm
 $PY scripts/run_matrix.py --matrix configs/search_t4_k30_matrix.yaml --jobs 46 --threads 2 2>&1 | tee runs/matrix_t4_console.log; tar -czf ~/runs_t4.tgz -C ~/dlsa/attention-factors-europe runs/_matrix/search_t4; sudo shutdown -h now
 ```
 
+On Spot, use section 18 instead of the tmux line: a one-time Spot machine loses the search with its disk.
+
 Progress from the laptop: `ssh "ubuntu@$IP" "tail -n 2 ~/dlsa/attention-factors-europe/runs/_matrix/search_t4/logs/search_us_t4_K30.log"`
 (one line per finished trial, `[search i/513]`). A restart of the same command resumes every search from its
 trials.jsonl. Collect as in section 11 (`runs_t4.tgz`, then terminate the machine). Read the finalists table at the
 end of each search log: the paired difference of the winner against `base` (Table 4) and against the v2 winner on
 the same three seeds is what searching Table 4 bought on validation.
+
+## 18. Spot for a long matrix: persistent request, resumed at every boot (2026-11-08)
+
+A one-time Spot instance is terminated on interruption and its disk goes with it, so a 7-hour search would start
+over. A **persistent** Spot request with interruption behaviour **Stop** keeps the disk instead: AWS stops the
+machine (two minutes' notice) and starts it again when capacity returns. `scripts/spot_resume.sh install` makes
+the matrix part of the boot: a systemd service starts `run_matrix.py` now and at every boot until the matrix has
+finished. A restarted matrix skips finished jobs and each search resumes from its `trials.jsonl`, so an
+interruption costs the trials in flight (the longest go first, so early on that can be up to ~3 hours of the deep
+trials) plus the time without capacity. A log line cut off by the stop is dropped and rerun (`runs.read_jsonl`).
+At the end the service packs `runs/_matrix/<name>` and the console log into `~/<name>.tgz`, leaves
+`~/<name>.done` and shuts the machine down; a later boot then does nothing.
+
+Launch as in section 2 with the instance type of the matrix (m7i.24xlarge for section 17; m6i.24xlarge or
+m7a.24xlarge also have the 384 GiB its memory budget assumes), and under Advanced details:
+
+| field | value |
+|---|---|
+| Purchasing option | **Spot instances** -> Customize |
+| Request type | **Persistent** |
+| Interruption behavior | **Stop** |
+| Request valid until | a few days ahead, so a forgotten request lapses |
+| Maximum price | leave empty (capped at the on-demand price) |
+| Shutdown behavior | Stop (the default) |
+
+Optional: EC2 -> Elastic IPs -> Allocate, then Associate with the instance, so the address survives a stop
+(about $0.005/h). Without it, read the new public IP in the console after each restart.
+Price and interruption frequency: EC2 -> Spot Requests -> Pricing history, and the Spot Instance Advisor.
+
+Send the bundle, clone, unpack and set up as in section 7, run the smoke test of the matrix, then on the machine,
+instead of the tmux line:
+
+```bash
+cd ~/dlsa/attention-factors-europe
+bash scripts/spot_resume.sh install configs/search_t4_k30_matrix.yaml --jobs 46 --threads 2
+bash scripts/spot_resume.sh status                     # "active (running)"
+tail -f runs/search_t4_console.log                     # one "=== ... start or resume" line per boot
+```
+
+When it is done the machine is stopped. To collect: EC2 -> Instance state -> Start (the service sees the `.done`
+file and does nothing), then on the laptop `scp "ubuntu@${IP}:~/search_t4.tgz" $env:TEMP\` and unpack as in
+section 11. Then **cancel the Spot request** (EC2 -> Spot Requests -> Actions -> Cancel request, tick "terminate
+instances") and check that no volume is left (EC2 -> Volumes). A stop from inside the machine counts as your own
+stop, so AWS does not restart it; the request still has to be cancelled, or a stopped instance keeps its disk
+(and its cost) until it lapses.

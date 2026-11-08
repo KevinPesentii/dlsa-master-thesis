@@ -227,12 +227,7 @@ def merge_cmd(out: Path, year_jobs: list[str]) -> list[str]:
 
 
 def ledger_state(path: Path) -> dict[str, dict]:
-    state: dict[str, dict] = {}
-    if path.exists():
-        for line in path.read_text().splitlines():
-            e = json.loads(line)
-            state[e["job"]] = e
-    return state
+    return {e["job"]: e for e in runs.read_jsonl(path)}
 
 
 def finished(e: dict | None) -> bool:
