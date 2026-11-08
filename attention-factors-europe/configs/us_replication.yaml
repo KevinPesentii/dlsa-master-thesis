@@ -35,7 +35,8 @@ model:
 
 policy:
   kind: longconv
-  layers: 1
+  layers: 1                      # LongConv layers (Table 4: 1)
+  kernel_init: geom_decay        # geom_decay (Table 4) | random: the kernel without the decay
   hidden: 32
   residual_lookback: 30
   dropout: 0.1

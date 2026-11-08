@@ -415,7 +415,8 @@ def factor_state(M: td.Matrix, m: str, K: int, day: str) -> tuple[pd.DataFrame, 
     t = p.dates.searchsorted(day)
     model = AttentionArb(n_features=len(p.features), n_factors=K, embedding_dim=mc["embedding_dim"],
                          lambda_ridge=mc["lambda_ridge"], level_hidden=mc.get("level_hidden", 0), hidden=pc["hidden"],
-                         lookback=pc["residual_lookback"], dropout=pc["dropout"], lambda_squash=pc["lambda_squash"])
+                         lookback=pc["residual_lookback"], dropout=pc["dropout"], lambda_squash=pc["lambda_squash"],
+                         layers=pc["layers"], kernel_init=pc.get("kernel_init", "geom_decay"))
     model.load_state_dict(torch.load(r.run / "models" / f"{p.dates[t].year}.pt"))
     model.eval()
     with torch.no_grad():

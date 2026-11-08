@@ -177,7 +177,8 @@ def run_K(K: int, cfg: dict, seed: int, panel: pca_factors.Panel, years: list[in
             log(f"  {year}: train {dates[t_tr0]:%Y-%m-%d}..{dates[t_te0 - 1]:%Y-%m-%d} "
                 f"({t_te0 - t_tr0} days, {int(train_b.tradable.sum(1).float().mean())} tradable/day), "
                 f"test {t_te1 - t_te0} days")
-            model = LongConvPolicy(pc["hidden"], L, pc["dropout"], pc["lambda_squash"], pc["layers"])
+            model = LongConvPolicy(pc["hidden"], L, pc["dropout"], pc["lambda_squash"], pc["layers"],
+                                   pc.get("kernel_init", "geom_decay"))
             train_one_window(model, train_b, cfg, rng, log)
             del train_b
             test_b = s1.batch(t_te0, t_te1, L, scale, cum, norm, window)

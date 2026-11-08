@@ -32,6 +32,7 @@ factors:
 policy:
   kind: longconv
   layers: 1
+  kernel_init: geom_decay        # Table 4 (policy.kernel_init: geom_decay | random)
   hidden: 32
   residual_lookback: 30
   residual_window: rolling       # each day keeps its own hedge; fixed: the trade date's (trading.make_fixed_windows)

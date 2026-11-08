@@ -162,7 +162,6 @@ def train_window(model, p: slots.SlotPanel, t_tr0: int, t_te0: int, cfg: dict,
 
 def run_K(K: int, cfg: dict, seed: int, p: slots.SlotPanel, years: list[int], log) -> dict:
     mc, pc, ob, ev = cfg["model"], cfg["policy"], cfg["objective"], cfg["evaluation"]
-    assert pc["layers"] == 1, "AttentionArb reads the LongConv layer at the last position; one layer only"
     run_dir = runs.create_run(f"attention_K{K}_s{seed}", {**cfg, "K": K, "years": years}, seed,
                               root=ROOT / "runs")
     log(f"K={K}: run dir {run_dir}")
@@ -185,7 +184,7 @@ def run_K(K: int, cfg: dict, seed: int, p: slots.SlotPanel, years: list[int], lo
             f"({t_te0 - t_tr0} days), test {t_te1 - t_te0} days")
         model = AttentionArb(n_features=len(p.features), n_factors=K, embedding_dim=mc["embedding_dim"],
                              lambda_ridge=mc["lambda_ridge"], level_hidden=mc.get("level_hidden", 0), hidden=pc["hidden"], lookback=L,
-                             dropout=pc["dropout"], lambda_squash=pc["lambda_squash"])
+                             dropout=pc["dropout"], lambda_squash=pc["lambda_squash"], layers=pc["layers"], kernel_init=pc.get("kernel_init", "geom_decay"))
         curve = []
         train_window(model, p, t_tr0, t_te0, cfg, rng, log, curve=curve)
         model.eval()

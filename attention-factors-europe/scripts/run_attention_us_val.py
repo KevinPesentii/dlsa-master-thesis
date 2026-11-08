@@ -81,7 +81,7 @@ def fresh_model(cfg: dict, K: int, n_features: int, init_seed: int) -> Attention
     return AttentionArb(n_features=n_features, n_factors=K, embedding_dim=mc["embedding_dim"],
                         lambda_ridge=mc["lambda_ridge"], level_hidden=mc.get("level_hidden", 0), hidden=pc["hidden"],
                         lookback=pc["residual_lookback"], dropout=pc["dropout"],
-                        lambda_squash=pc["lambda_squash"])
+                        lambda_squash=pc["lambda_squash"], layers=pc["layers"], kernel_init=pc.get("kernel_init", "geom_decay"))
 
 
 def select_lambda(K: int, cfg: dict, seed: int, p: slots.SlotPanel, year: int,
@@ -121,7 +121,6 @@ def run_K_val(K: int, cfg: dict, seed: int, p: slots.SlotPanel, years: list[int]
               grid: list[float], val_years: int, log, select: str = "once",
               select_year: int | None = None, tau_grid: list[float] | None = None) -> dict:
     pc, ob, ev = cfg["policy"], cfg["objective"], cfg["evaluation"]
-    assert pc["layers"] == 1
     W = cfg["training"]["window_years"]
     if not 0 < val_years < W:
         raise SystemExit(f"--val-years must be between 1 and {W - 1}")

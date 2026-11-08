@@ -74,7 +74,7 @@ def main():
     torch.manual_seed(cfg["seed"])
     model = AttentionArb(n_features=len(p.features), n_factors=K, embedding_dim=mc["embedding_dim"],
                          lambda_ridge=mc["lambda_ridge"], level_hidden=mc.get("level_hidden", 0), hidden=pc["hidden"], lookback=L,
-                         dropout=pc["dropout"], lambda_squash=pc["lambda_squash"])
+                         dropout=pc["dropout"], lambda_squash=pc["lambda_squash"], layers=pc["layers"], kernel_init=pc.get("kernel_init", "geom_decay"))
     t0 = time.time()
     base.train_window(model, p, t_tr0, t_te0, cfg, np.random.default_rng(cfg["seed"]),
                       lambda s: None)

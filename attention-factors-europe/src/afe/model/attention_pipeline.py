@@ -132,11 +132,12 @@ class AttentionArb(nn.Module):
 
     def __init__(self, n_features: int, n_factors: int = 30, embedding_dim: int = 32,
                  lambda_ridge: float = 1e-4, hidden: int = 32, lookback: int = 30,
-                 dropout: float = 0.1, lambda_squash: float = 1e-3, level_hidden: int = 0):
+                 dropout: float = 0.1, lambda_squash: float = 1e-3, level_hidden: int = 0,
+                 layers: int = 1, kernel_init: str = "geom_decay"):
         super().__init__()
         self.factors = AttentionFactors(n_features, n_factors, embedding_dim, lambda_ridge,
                                         level_hidden)
-        self.policy = LongConvPolicy(hidden, lookback, dropout, lambda_squash)
+        self.policy = LongConvPolicy(hidden, lookback, dropout, lambda_squash, layers, kernel_init)
         self.lookback = lookback
 
     def forward_span(self, X, R_slot, in_universe, idx, n_pool, cumulative=True, scale=1.0,
