@@ -1,0 +1,33 @@
+# configs/search_t4_allk_matrix.yaml on a GPU machine (docs/cloud_runs.md section 19): the same fourteen searches
+# under the same names and out dir, so the two K = 30 searches of the 2026-11-08 CPU run, unpacked into
+# runs/_matrix/search_t4 first, are skipped and the other twelve run. Only `workers` and the host memory differ:
+# 8 workers a search, so --jobs sets how many searches run at once (16 on 4 GPUs: two, 4 processes a GPU). A search
+# never starts more workers than --jobs (one GPU, --jobs 4: one search at a time, 4 workers). The deeper
+# LongConv's activations live on the GPU, so a worker needs less host memory than on the CPU.
+#   python scripts/run_matrix.py --matrix configs/search_t4_allk_gpu_matrix.yaml --dry-run --jobs 16
+#   python scripts/run_matrix.py --matrix configs/search_t4_allk_gpu_matrix.yaml --smoke --jobs 4 --device cuda
+#   python scripts/run_matrix.py --matrix configs/search_t4_allk_gpu_matrix.yaml --jobs 16 --threads 1 --device cuda
+
+name: search_t4
+
+sets: {}
+blocks: {}
+prep: {}
+
+searches:                        # US first, longest first; each Europe search after its US K
+  us_t4_K100: {config: configs/us_search_t4.yaml, K: 100, workers: 8, mem_gb_per_worker: 3}
+  us_t4_K30:  {config: configs/us_search_t4.yaml, K: 30, workers: 8, mem_gb_per_worker: 3}
+  us_t4_K15:  {config: configs/us_search_t4.yaml, K: 15, workers: 8, mem_gb_per_worker: 3}
+  us_t4_K8:   {config: configs/us_search_t4.yaml, K: 8, workers: 8, mem_gb_per_worker: 3}
+  us_t4_K5:   {config: configs/us_search_t4.yaml, K: 5, workers: 8, mem_gb_per_worker: 3}
+  us_t4_K3:   {config: configs/us_search_t4.yaml, K: 3, workers: 8, mem_gb_per_worker: 3}
+  us_t4_K1:   {config: configs/us_search_t4.yaml, K: 1, workers: 8, mem_gb_per_worker: 3}
+  eu_t4_K100: {config: configs/europe_search_t4.yaml, K: 100, workers: 8, mem_gb_per_worker: 2, keep_from: us_t4_K100}
+  eu_t4_K30:  {config: configs/europe_search_t4.yaml, K: 30, workers: 8, mem_gb_per_worker: 2, keep_from: us_t4_K30}
+  eu_t4_K15:  {config: configs/europe_search_t4.yaml, K: 15, workers: 8, mem_gb_per_worker: 2, keep_from: us_t4_K15}
+  eu_t4_K8:   {config: configs/europe_search_t4.yaml, K: 8, workers: 8, mem_gb_per_worker: 2, keep_from: us_t4_K8}
+  eu_t4_K5:   {config: configs/europe_search_t4.yaml, K: 5, workers: 8, mem_gb_per_worker: 2, keep_from: us_t4_K5}
+  eu_t4_K3:   {config: configs/europe_search_t4.yaml, K: 3, workers: 8, mem_gb_per_worker: 2, keep_from: us_t4_K3}
+  eu_t4_K1:   {config: configs/europe_search_t4.yaml, K: 1, workers: 8, mem_gb_per_worker: 2, keep_from: us_t4_K1}
+
+specs: []

@@ -149,7 +149,10 @@ weaken a test to make code pass.
   per K (same out dir `runs/_matrix/search_t4`). Two Table 4 knobs needed code: `policy.layers` > 1 (every window
   position through each layer but the last: 8.5x a one-layer epoch at hidden 32) and `policy.kernel_init: random`.
   One layer with `geom_decay` is the model of every earlier run, number for number. Searches only: no value
-  replaces a headline value until a decision says so.
+  replaces a headline value until a decision says so. The K = 30 searches ran on CPUs (2026-11-08); the other K
+  can run on GPUs (`configs/search_t4_allk_gpu_matrix.yaml`, `--device cuda`, docs/cloud_runs.md section 19): the
+  same searches, but a GPU trial is not the CPU trial number for number (other dropout draws and float sums), so
+  `scripts/gpu_probe.py` checks the ranking first, and the thesis has to say which K ran where.
 
 ## Trading costs: limits, not replication
 

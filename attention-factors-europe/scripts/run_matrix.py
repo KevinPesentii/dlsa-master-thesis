@@ -20,6 +20,9 @@ A search counts as `workers` jobs against --jobs. A restarted search resumes its
 `keep_from: <search>` makes a search wait for that one and carry its winner into the finalists,
 by name, so the two spaces must be the same (Europe's searches and the US winner).
 `K: <n>` runs the search at n factors instead of its config's K (one search per K).
+A search never starts more workers than --jobs. --device cuda trains the searches on the
+machine's GPUs (search_validation.py --device cuda --gpu-procs <--jobs>); runs stay on the
+CPU, so a matrix with runs to do refuses it.
 
 Scheduling: longest jobs first (a rough cost per job), at most --jobs at a time and at
 most --mem-gb of estimated peak memory in flight. A spec may set `mem_gb` (its peak memory
@@ -144,9 +147,12 @@ def years_of(cfg: dict) -> list[int]:
     return list(range(pd.Timestamp(cfg["sample"]["start"]).year, pd.Timestamp(cfg["sample"]["end"]).year + 1))
 
 
-def search_job(name: str, s: dict, out: Path, threads: int, smoke: bool) -> Job:
+def search_job(name: str, s: dict, out: Path, threads: int, smoke: bool, jobs: int | None = None,
+               device: str = "cpu") -> Job:
     d = out / "searches" / name
     workers = 2 if smoke else int(s.get("workers", 12))
+    workers = min(workers, jobs) if jobs else workers
+    gpu = ["--device", "cuda", "--gpu-procs", str(jobs or workers)] if device == "cuda" else []
     keep_from = s.get("keep_from")
 
     def make_cmd() -> list[str]:
@@ -158,7 +164,7 @@ def search_job(name: str, s: dict, out: Path, threads: int, smoke: bool) -> Job:
             keep = [] if w == "base" else ["--keep", w]
         K = ["--K", str(s["K"])] if s.get("K") else []
         return [sys.executable, "-u", "scripts/search_validation.py", "--config", s["config"], "--stage", "select",
-                "--jobs", str(workers), "--threads", str(threads)] + where + keep + K + (["--smoke"] if smoke else [])
+                "--jobs", str(workers), "--threads", str(threads)] + where + keep + K + gpu + (["--smoke"] if smoke else [])
     after = [f"prep_{a}" for a in ([s["after"]] if isinstance(s.get("after"), str) else s.get("after", []))]
     after += [f"search_{keep_from}"] if keep_from else []
     return Job(f"search_{name}", [], workers * float(s.get("mem_gb_per_worker", 2.5)), 1e6 + 100, after,
@@ -166,11 +172,12 @@ def search_job(name: str, s: dict, out: Path, threads: int, smoke: bool) -> Job:
 
 
 def expand(matrix: dict, groups: list[str] | None, out: Path, threads: int, smoke: bool,
-           split_years: bool = False) -> list[Job]:
+           split_years: bool = False, max_jobs: int | None = None, device: str = "cpu") -> list[Job]:
     sets = matrix["sets"]
     jobs = [Job(f"prep_{name}", [sys.executable, "-u", p["script"], "--config", p["config"]], p["mem_gb"],
                 p["cost"] + 1e6, done_file=ROOT / p["done"]) for name, p in matrix["prep"].items()]
-    jobs += [search_job(name, s, out, threads, smoke) for name, s in (matrix.get("searches") or {}).items()]
+    jobs += [search_job(name, s, out, threads, smoke, max_jobs, device)
+             for name, s in (matrix.get("searches") or {}).items()]
     (out / "configs").mkdir(parents=True, exist_ok=True)
     for spec in matrix["specs"]:
         if groups and spec["group"] not in groups:
@@ -294,11 +301,12 @@ def main():
     ap.add_argument("--allow-dirty", action="store_true")
     ap.add_argument("--split-years", action="store_true",
                     help="one job per out-of-sample year of each attention run, then a merge (see above)")
+    ap.add_argument("--device", choices=["cpu", "cuda"], default="cpu", help="train the searches on the GPUs")
     args = ap.parse_args()
     os.chdir(ROOT)
     matrix = yaml.safe_load(Path(args.matrix).read_text())
     out = ROOT / "runs" / "_matrix" / (matrix["name"] + ("_smoke" if args.smoke else ""))
-    jobs = expand(matrix, args.groups, out, args.threads, args.smoke, args.split_years)
+    jobs = expand(matrix, args.groups, out, args.threads, args.smoke, args.split_years, args.jobs, args.device)
     ledger = out / "ledger.jsonl"
     state = ledger_state(ledger)
     if args.summary:
@@ -307,6 +315,8 @@ def main():
     todo = [j for j in jobs if not (j.done_file and j.done_file.exists()) and not finished(state.get(j.id))
             and (args.retry_failed or state.get(j.id, {}).get("status") != "failed")]
     skipped = sum(1 for j in jobs if state.get(j.id, {}).get("status") == "failed") if not args.retry_failed else 0
+    if args.device == "cuda" and any(j.spec or j.id.startswith("prep_") for j in todo):
+        raise SystemExit("--device cuda trains searches only; this matrix has runs or prep jobs to do")
     budget = args.mem_gb or 0.85 * total_mem_gb()
     print(f"{len(jobs)} jobs in the matrix, {len(todo)} to run ({skipped} failed, not retried); "
           f"{args.jobs} at a time x {args.threads} threads, memory budget {budget:.0f} GB; "

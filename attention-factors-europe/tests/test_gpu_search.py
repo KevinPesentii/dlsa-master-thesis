@@ -1,7 +1,7 @@
 """search_validation.py --device cuda: the training step reads the panel's device copies and nothing else
-changes on the CPU; a trial that runs out of GPU memory is run again with the deeper pieces recomputed.
-The tests marked `cuda` compare a GPU step with the CPU step and run only where torch sees a GPU (the GPU
-machine)."""
+changes on the CPU; a trial that runs out of GPU memory is run again with the deeper pieces recomputed;
+run_matrix passes the device to the searches and never starts more workers than --jobs. The tests marked
+`cuda` compare a GPU step with the CPU step and run only where torch sees a GPU (the GPU machine)."""
 
 from __future__ import annotations
 
@@ -17,10 +17,12 @@ import yaml
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 
+import run_matrix as rm  # noqa: E402
 import search_validation as sv  # noqa: E402
 from afe.data import slots  # noqa: E402
 from afe.policy import longconv  # noqa: E402
 from afe.policy.longconv import LongConvPolicy  # noqa: E402
+from test_gap2_matrix import load  # noqa: E402
 
 cuda = pytest.mark.skipif(not torch.cuda.is_available(), reason="needs a GPU")
 
@@ -92,6 +94,29 @@ def test_out_of_memory_runs_the_trial_again_with_every_piece_recomputed(monkeypa
 def test_pieces_follow_the_device():
     assert longconv.pieces(torch.device("cpu")) == (longconv.CHUNK, longconv.KEEP)
     assert longconv.pieces(torch.device("cuda", 0)) == (longconv.GPU_CHUNK, longconv.GPU_KEEP)
+
+
+def test_gpu_matrix_is_the_all_k_matrix_with_fewer_workers(tmp_path):
+    allk, gpu = load("search_t4_allk_matrix"), load("search_t4_allk_gpu_matrix")
+    assert gpu["name"] == allk["name"] and not gpu["specs"] and gpu["searches"].keys() == allk["searches"].keys()
+    drop = ("workers", "mem_gb_per_worker")
+    for name, s in gpu["searches"].items():
+        assert {k: v for k, v in s.items() if k not in drop} == {k: v for k, v in allk["searches"][name].items()
+                                                                  if k not in drop}
+    old = rm.ROOT
+    rm.ROOT = tmp_path
+    try:
+        jobs = {j.id: j for j in rm.expand(gpu, None, tmp_path, 1, False, max_jobs=16, device="cuda")}
+        cmd = jobs["search_us_t4_K100"].make_cmd()
+        assert cmd[cmd.index("--jobs") + 1] == "8" and cmd[cmd.index("--device") + 1] == "cuda"
+        assert cmd[cmd.index("--gpu-procs") + 1] == "16"
+        one = {j.id: j for j in rm.expand(gpu, None, tmp_path, 1, False, max_jobs=4, device="cuda")}
+        cmd = one["search_us_t4_K100"].make_cmd()
+        assert cmd[cmd.index("--jobs") + 1] == "4" and one["search_us_t4_K100"].slots == 4
+        cpu = {j.id: j for j in rm.expand(allk, None, tmp_path, 2, False, max_jobs=46)}
+        assert "--device" not in cpu["search_us_t4_K100"].make_cmd()
+    finally:
+        rm.ROOT = old
 
 
 @cuda

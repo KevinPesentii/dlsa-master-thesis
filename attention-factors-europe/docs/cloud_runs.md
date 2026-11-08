@@ -783,6 +783,7 @@ $PY scripts/run_matrix.py --matrix configs/search_t4_k30_matrix.yaml --jobs 46 -
 ```
 
 On Spot, use section 18 instead of the tmux line: a one-time Spot machine loses the search with its disk.
+The other K on GPUs: section 19.
 
 Progress from the laptop: `ssh "ubuntu@$IP" "tail -n 2 ~/dlsa/attention-factors-europe/runs/_matrix/search_t4/logs/search_us_t4_K30.log"`
 (one line per finished trial, `[search i/513]`). A restart of the same command resumes every search from its
@@ -834,3 +835,89 @@ section 11. Then **cancel the Spot request** (EC2 -> Spot Requests -> Actions ->
 instances") and check that no volume is left (EC2 -> Volumes). A stop from inside the machine counts as your own
 stop, so AWS does not restart it; the request still has to be cancelled, or a stopped instance keeps its disk
 (and its cost) until it lapses.
+
+## 19. The Table 4 search at every K, on GPUs (2026-11-09)
+
+The all-K matrix of section 17 is about 40 more hours on the m7i.24xlarge after the K = 30 run, almost all of it
+in the 2-layer LongConv trials: large dense operations, which a GPU does far faster than a CPU. So the searches
+can train on GPUs: `scripts/search_validation.py --device cuda`, through `scripts/run_matrix.py --device cuda`
+(searches only; runs and PCA prep stay on the CPU and a matrix with any to do refuses the flag).
+`configs/search_t4_allk_gpu_matrix.yaml` is `search_t4_allk_matrix.yaml` with 8 workers a search and less host
+memory a worker: same fourteen searches, same names, same out dir. Unpack the K = 30 results of section 17 into
+the repo first and the two K = 30 searches are skipped: the twelve others run (US K = 100, 15, 8, 5, 3, 1, each
+Europe search after its US K).
+
+What runs on the GPU and what does not:
+- Each worker loads the 1990-1997 panel on the CPU and keeps a copy on one GPU (worker i on GPU i mod the number
+  of GPUs); the training steps and the validation spans run there, and the net, turnover and short series come
+  back to the CPU to be scored as before. Matmuls stay float32 (TF32 off).
+- The initial weights are drawn on the CPU, so they are those of the CPU trial. The dropout masks come from the
+  GPU's generator and the float sums run in another order, so a GPU trial is **not** the CPU trial number for
+  number. A CPU trial already moves by about 0.25 net Sharpe between the laptop and AWS (2026-11-08); what has to
+  hold is the ranking. `scripts/gpu_probe.py` checks both before the run.
+- A deeper LongConv runs in pieces of 8192 windows on a GPU (1024 on the CPU) and recomputes them in backward
+  above 2^26 hidden values (2^27 on the CPU), since several workers share a GPU. Each process gets at most
+  0.85 / (processes per GPU) of the GPU's memory (`--gpu-procs`, which run_matrix sets to `--jobs`); a trial that
+  runs out of it is run again from the start with every piece recomputed (same numbers, slower) and its line in
+  trials.jsonl says `"oom_retry": true`. Every GPU trial records its `device`.
+- The CPU path is unchanged: a CPU smoke search gives the same trials, digit for digit, as commit 9e780db.
+
+**Before anything else: GPU quota.** New accounts usually have none, and the request can take hours to days.
+Service Quotas -> Amazon EC2 -> **All G and VT Spot Instance Requests** (for Spot) or **Running On-Demand G and VT
+instances**: 48 vCPUs for a 4-GPU machine (4 for a 1-GPU one). G instances may not be offered in Stockholm: if
+the launch page does not list them, use Ireland (eu-west-1) or Frankfurt (eu-central-1), and import the
+`henrik-laptop` public key there (EC2 -> Key pairs -> Actions -> Import key pair).
+
+Machine: **g6.12xlarge** (4 x NVIDIA L4 24 GB, 48 vCPU, 192 GiB) or **g5.12xlarge** (4 x A10G 24 GB, same CPU and
+memory). AMI: **Deep Learning Base OSS Nvidia Driver GPU AMI (Ubuntu 24.04)**, which has the NVIDIA driver; torch
+comes from PyPI with its own CUDA libraries. Storage: the AMI's default size or at least 60 GiB gp3 (the CUDA
+build of torch is about 5 GB), encrypted. Spot as in section 18 (persistent, interruption behaviour Stop).
+For only a probe, a g6.xlarge (1 x L4, 4 vCPU, 16 GiB) is enough.
+
+None of the GPU speeds have been measured yet. The probe measures them on the machine, and its numbers give the
+time and the number of workers per GPU; until then, the guess of 2026-11-08 stands: a few hours on 4 GPUs.
+
+On the laptop, from the branch, committed and pushed (same data as section 17, plus the K = 30 results):
+
+```powershell
+cd C:\Users\henri\Desktop\SSE\masterThesis\Code\dlsa-table4\attention-factors-europe
+$PY = "C:\Users\henri\miniconda3\envs\afe\python.exe"
+& $PY scripts\run_matrix.py --matrix configs\search_t4_allk_gpu_matrix.yaml --dry-run --jobs 16   # 12 jobs
+& $PY scripts\make_bundle.py --markets us europe --out $env:TEMP\afe_bundle_t4gpu
+scp $env:TEMP\afe_bundle_t4gpu\afe_data.tar $env:TEMP\afe_bundle_t4gpu\SHA256SUMS $env:TEMP\afe_bundle_t4gpu\COMMIT "ubuntu@${IP}:~"
+scp runs\_incoming\search_t4.tgz "ubuntu@${IP}:~/search_t4_k30_cpu.tgz"
+```
+
+On the machine (clone and `sha256sum -c` as in section 7), then:
+
+```bash
+cd ~/dlsa/attention-factors-europe; PY=~/afe-venv/bin/python
+bash scripts/cloud_setup.sh --gpu                       # lists the GPUs, ends with "cuda 12... ['NVIDIA L4', ...]"
+tar -xzf ~/search_t4_k30_cpu.tgz                        # runs/_matrix/search_t4: the two K = 30 searches
+$PY -m pytest -q tests/test_gpu_search.py               # the CUDA tests run here: "8 passed", none skipped
+$PY scripts/gpu_probe.py --search runs/_matrix/search_t4/searches/eu_t4_K30 --stage step
+$PY scripts/gpu_probe.py --search runs/_matrix/search_t4/searches/us_t4_K30 --jobs 4
+```
+
+Read the probe (`runs/<stamp>_gpu_probe_*/metrics.json`):
+- **step**: every line `ok` (relative differences of float32 rounding, around 1e-5). `CHECK` means the GPU
+  computes something else: stop.
+- **time**: seconds an epoch and peak memory of the heaviest setting with its pieces kept and recomputed. Workers
+  per GPU: about 0.85 x GPU memory / (peak reserved + 0.5 GB of context), and no more than the vCPUs allow (one
+  core a worker); then `--jobs` = workers per GPU x GPUs.
+- **replay**: 16 trials of the K = 30 search plus its winner, on the GPU against the CPU's record. Spearman rho
+  near 1 and differences of the size of the machine noise (about 0.25), not a shift of the whole ranking.
+
+Then a smoke run of the matrix, and the run itself as in section 18, with `--device cuda`:
+
+```bash
+$PY scripts/run_matrix.py --matrix configs/search_t4_allk_gpu_matrix.yaml --smoke --jobs 4 --device cuda   # "0 failed"
+bash scripts/spot_resume.sh install configs/search_t4_allk_gpu_matrix.yaml --jobs 16 --threads 1 --device cuda
+bash scripts/spot_resume.sh status                      # "active (running)"
+nvidia-smi                                              # every GPU busy, --jobs processes in all
+```
+
+`--jobs 16` on 4 GPUs is two searches at a time with 8 workers each, 4 processes a GPU; set it from the probe.
+Progress as in section 17 (`runs/_matrix/search_t4/logs/search_us_t4_K100.log`, one line per trial). At the end
+the service packs `~/search_t4.tgz` (all fourteen searches, K = 30 included) and stops the machine; collect it and
+cancel the Spot request as in section 18.
