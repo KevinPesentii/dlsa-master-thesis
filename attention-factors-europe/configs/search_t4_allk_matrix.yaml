@@ -1,0 +1,32 @@
+# The Table 4 search at every K of Table 2's attention rows: configs/us_search_t4.yaml and
+# configs/europe_search_t4.yaml once per K (run_matrix passes --K), so each K gets its own validated
+# values instead of the K = 30 ones. Each Europe search carries the US winner of the same K. Searches
+# only (no runs). Same name and same K = 30 searches as configs/search_t4_k30_matrix.yaml: after that
+# one, this one runs the other twelve.
+#   python scripts/run_matrix.py --matrix configs/search_t4_allk_matrix.yaml --dry-run
+#   python scripts/run_matrix.py --matrix configs/search_t4_allk_matrix.yaml --smoke --jobs 8
+#   python scripts/run_matrix.py --matrix configs/search_t4_allk_matrix.yaml --jobs 46 --threads 2
+
+name: search_t4
+
+sets: {}
+blocks: {}
+prep: {}
+
+searches:                        # two at a time (23 workers each), longest first; Europe after its US K
+  us_t4_K100: {config: configs/us_search_t4.yaml, K: 100, workers: 23, mem_gb_per_worker: 6.5}
+  us_t4_K30:  {config: configs/us_search_t4.yaml, K: 30, workers: 23, mem_gb_per_worker: 6.5}
+  us_t4_K15:  {config: configs/us_search_t4.yaml, K: 15, workers: 23, mem_gb_per_worker: 6.5}
+  us_t4_K8:   {config: configs/us_search_t4.yaml, K: 8, workers: 23, mem_gb_per_worker: 6.5}
+  us_t4_K5:   {config: configs/us_search_t4.yaml, K: 5, workers: 23, mem_gb_per_worker: 6.5}
+  us_t4_K3:   {config: configs/us_search_t4.yaml, K: 3, workers: 23, mem_gb_per_worker: 6.5}
+  us_t4_K1:   {config: configs/us_search_t4.yaml, K: 1, workers: 23, mem_gb_per_worker: 6.5}
+  eu_t4_K100: {config: configs/europe_search_t4.yaml, K: 100, workers: 23, mem_gb_per_worker: 3, keep_from: us_t4_K100}
+  eu_t4_K30:  {config: configs/europe_search_t4.yaml, K: 30, workers: 23, mem_gb_per_worker: 3, keep_from: us_t4_K30}
+  eu_t4_K15:  {config: configs/europe_search_t4.yaml, K: 15, workers: 23, mem_gb_per_worker: 3, keep_from: us_t4_K15}
+  eu_t4_K8:   {config: configs/europe_search_t4.yaml, K: 8, workers: 23, mem_gb_per_worker: 3, keep_from: us_t4_K8}
+  eu_t4_K5:   {config: configs/europe_search_t4.yaml, K: 5, workers: 23, mem_gb_per_worker: 3, keep_from: us_t4_K5}
+  eu_t4_K3:   {config: configs/europe_search_t4.yaml, K: 3, workers: 23, mem_gb_per_worker: 3, keep_from: us_t4_K3}
+  eu_t4_K1:   {config: configs/europe_search_t4.yaml, K: 1, workers: 23, mem_gb_per_worker: 3, keep_from: us_t4_K1}
+
+specs: []

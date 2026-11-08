@@ -1,0 +1,70 @@
+# configs/us_search_v2.yaml with every tuning parameter of the paper's Table 4 searched too, not
+# held at the paper's values: hidden dim, dropout, attention dim, epochs, layers, lambda_VAR, LR,
+# weight decay, LongConv init and lambda_squash, next to the five settings the paper leaves open.
+# Same window (fit 1990-1995, net Sharpe on 1996-1997), same model v2, same rule; K = 30 unless
+# scripts/run_matrix.py passes --K (configs/search_t4_allk_matrix.yaml: one search per K).
+# Written 2026-11-08, before this search ran. Commit it first and do not edit it afterwards.
+#   python scripts/search_validation.py --config configs/us_search_t4.yaml --stage select
+
+base_config: configs/us_replication.yaml   # everything not listed below comes from here
+K: 30
+first_oos_year: 1998          # first training window = [first_oos_year - window_years, first_oos_year)
+validation_years: 2           # its last two years
+eval_epochs: [10, 20, 30, 45] # extra points on each learning curve; the final epoch is always scored
+
+# Stage 1. Sobol points. log: log-uniform on [lo, hi]; "off": probability of null (switched off);
+# choice: one of. Keep "off" quoted (bare off is the boolean false in YAML 1.1).
+# 15 dimensions instead of 6, so 512 points instead of 128 (power of 2: balanced Sobol points).
+# Table 4 ranges: about a decade either side of the paper's value for rates and penalties,
+# half and double for sizes, as the robustness stage of the earlier searches.
+search:
+  n_points: 512
+  sobol_seed: 0
+  seed: 0
+  space:
+    # what the paper leaves open, or where our units differ (the space of us_search_v2.yaml)
+    objective.lambda_var: {log: [0.1, 300]}            # Table 4: 100, but its loss units are not ours
+    policy.input_scale: {log: [0.3, 300]}              # not in the paper: decimal (1) to percent (100)
+    model.score_std_target: {log: [0.3, 3], "off": 0.25}  # not in the paper: score temperature
+    model.lambda_ridge: {log: [1.0e-5, 1.0e-2]}        # paper: "a ridge penalty for stability", no value
+    training.batch_days: {choice: [63, 125, 250]}      # paper: not stated
+    policy.input_normalise: {choice: [none, window_vol]}  # not in the paper: scale-free policy input
+    # Table 4, the paper's value in brackets
+    policy.hidden: {choice: [16, 32, 64]}              # hidden dim d (32)
+    policy.dropout: {choice: [0.0, 0.1, 0.2, 0.3]}     # dropout (0.1)
+    model.embedding_dim: {choice: [16, 32, 64]}        # attention dim d_x (32)
+    training.epochs: {choice: [10, 20, 30, 45, 60]}    # epochs (30)
+    policy.layers: {choice: [1, 2]}                    # LongConv layers (1): the paper and double, as d and d_x;
+                                                       # 3 would cost the whole search ~65% more (2026-11-08)
+    training.lr: {log: [3.0e-4, 3.0e-2]}               # learning rate (0.003)
+    training.weight_decay: {log: [5.0e-3, 0.5]}        # AdamW weight decay on the LongConv model (0.05)
+    policy.kernel_init: {choice: [geom_decay, random]} # LongConv kernel init (geometric decay)
+    policy.lambda_squash: {log: [1.0e-4, 1.0e-2]}      # LongConv squash (0.001)
+
+fixed:                        # held for every candidate (a key of the base config): model v2
+  policy.residual_window: fixed
+  policy.input: cumulative
+  model.level_hidden: 0
+  features.timing: asof
+  features.include_cross_sectional_median: false
+  features.include_risk_free: false
+  data.returns_history: true    # (data keys are never carried into a run; the run's config has it)
+  policy.residual_lookback: 30  # not in Table 4: the paper's 30 days, not searched
+
+# Stage 2. The best `top` points of stage 1, the base config (Table 4 and the open settings of
+# us_replication.yaml) and `extra` are rerun with these seeds; the winner is the best MEAN
+# validation net Sharpe. Top 10 instead of 5: four times the points, so more single-seed luck
+# to wash out. selected.yaml = base config + the winner's values.
+finalists:
+  top: 10
+  seeds: [0, 1, 2]
+  extra:                      # the values in use: model v2's US winner (runs/_matrix/thesis_v2, us_v2
+    us_v2_headline:           # sobol-076) with Table 4, so the search is compared with it on these seeds
+      objective.lambda_var: 8.06
+      policy.input_scale: 27.3
+      model.score_std_target: 1.03
+      model.lambda_ridge: 1.4e-05
+      training.batch_days: 125
+      policy.input_normalise: window_vol
+
+# No robustness stage: every Table 4 value is in the space.

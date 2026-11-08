@@ -19,6 +19,7 @@ starts and records the search, the candidate and the validation Sharpe under `ma
 A search counts as `workers` jobs against --jobs. A restarted search resumes its trials.
 `keep_from: <search>` makes a search wait for that one and carry its winner into the finalists,
 by name, so the two spaces must be the same (Europe's searches and the US winner).
+`K: <n>` runs the search at n factors instead of its config's K (one search per K).
 
 Scheduling: longest jobs first (a rough cost per job), at most --jobs at a time and at
 most --mem-gb of estimated peak memory in flight. A spec may set `mem_gb` (its peak memory
@@ -155,8 +156,9 @@ def search_job(name: str, s: dict, out: Path, threads: int, smoke: bool) -> Job:
         if keep_from and not smoke:         # "base" is a finalist anyway
             w = winner(out, keep_from)["candidate"]
             keep = [] if w == "base" else ["--keep", w]
+        K = ["--K", str(s["K"])] if s.get("K") else []
         return [sys.executable, "-u", "scripts/search_validation.py", "--config", s["config"], "--stage", "select",
-                "--jobs", str(workers), "--threads", str(threads)] + where + keep + (["--smoke"] if smoke else [])
+                "--jobs", str(workers), "--threads", str(threads)] + where + keep + K + (["--smoke"] if smoke else [])
     after = [f"prep_{a}" for a in ([s["after"]] if isinstance(s.get("after"), str) else s.get("after", []))]
     after += [f"search_{keep_from}"] if keep_from else []
     return Job(f"search_{name}", [], workers * float(s.get("mem_gb_per_worker", 2.5)), 1e6 + 100, after,
@@ -245,6 +247,10 @@ def run_dir_of(log: Path) -> str | None:
 
 
 def summary(jobs: list[Job], state: dict, out: Path) -> None:
+    picks = {d.name: winner(out, d.name) for d in sorted((out / "searches").glob("*")) if (d / "selected.yaml").exists()}
+    if picks:                          # first: a matrix of searches only has no runs to summarise
+        (out / "searches.json").write_text(json.dumps(picks, indent=2))
+        print(f"selected values of {len(picks)} searches -> {out / 'searches.json'}")
     rows = []
     for j in jobs:
         e = state.get(j.id)
@@ -270,10 +276,6 @@ def summary(jobs: list[Job], state: dict, out: Path) -> None:
     with pd.option_context("display.width", 200, "display.max_rows", 500):
         print(agg.round(2).to_string())
     print(f"{len(df)} finished runs -> {out / 'summary.csv'}, {out / 'summary_by_spec.csv'}")
-    picks = {d.name: winner(out, d.name) for d in sorted((out / "searches").glob("*")) if (d / "selected.yaml").exists()}
-    if picks:
-        (out / "searches.json").write_text(json.dumps(picks, indent=2))
-        print(f"selected values of {len(picks)} searches -> {out / 'searches.json'}")
 
 
 def total_mem_gb() -> float:

@@ -141,6 +141,15 @@ weaken a test to make code pass.
   fixed window: B_t is fitted on a span containing the window days, so the re-hedged path is in sample for the
   hedge, and its sd falls 14% (US K = 30), 18% (Europe K = 30), 42% (US K = 100) against rolling. Read
   the ladder before calling the two rows like for like. The rows of `runs/_matrix/thesis` stay until a decision.
+- Table 4 search (2026-11-08): `configs/us_search_t4.yaml`, `configs/europe_search_t4.yaml` search every tuning
+  parameter of the paper's Table 4 (hidden dim, dropout, attention dim, epochs, LongConv layers, lambda_VAR, LR,
+  weight decay, LongConv init, lambda_squash) next to the five open settings of the v2 searches, on the same window
+  with model v2: 512 Sobol points, top 10 on three seeds, the paper's Table 4 as `base` and the v2 winners as
+  named finalists. `configs/search_t4_k30_matrix.yaml` runs K = 30, `configs/search_t4_allk_matrix.yaml` one search
+  per K (same out dir `runs/_matrix/search_t4`). Two Table 4 knobs needed code: `policy.layers` > 1 (every window
+  position through each layer but the last: 8.5x a one-layer epoch at hidden 32) and `policy.kernel_init: random`.
+  One layer with `geom_decay` is the model of every earlier run, number for number. Searches only: no value
+  replaces a headline value until a decision says so.
 
 ## Trading costs: limits, not replication
 

@@ -1,0 +1,20 @@
+# The Table 4 search, K = 30 only: configs/us_search_t4.yaml and configs/europe_search_t4.yaml on the
+# first training window, model v2, nothing out of sample. A matrix of searches only (no runs): the
+# winners land in runs/_matrix/search_t4/searches/<name>/selected.yaml and searches.json.
+# configs/search_t4_allk_matrix.yaml has the same two searches under the same names plus the other K,
+# so running it afterwards in the same out dir skips these two.
+#   python scripts/run_matrix.py --matrix configs/search_t4_k30_matrix.yaml --dry-run
+#   python scripts/run_matrix.py --matrix configs/search_t4_k30_matrix.yaml --smoke --jobs 8
+#   python scripts/run_matrix.py --matrix configs/search_t4_k30_matrix.yaml --jobs 46 --threads 2
+
+name: search_t4
+
+sets: {}
+blocks: {}
+prep: {}
+
+searches:                        # one at a time on the whole machine: Europe waits for the US winner
+  us_t4_K30: {config: configs/us_search_t4.yaml, K: 30, workers: 46, mem_gb_per_worker: 6.5}
+  eu_t4_K30: {config: configs/europe_search_t4.yaml, K: 30, workers: 46, mem_gb_per_worker: 3, keep_from: us_t4_K30}
+
+specs: []

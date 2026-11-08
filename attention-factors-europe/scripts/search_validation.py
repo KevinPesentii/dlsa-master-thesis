@@ -14,6 +14,9 @@ configs/us_search.yaml fixes the space, the budget and the rule; commit it first
 out-of-sample period that is a check of how stable the choice is, not a replacement for it.
 --keep carries named candidates into the finalists (e.g. an earlier window's winner);
 `finalists.keep` in the search config does the same as part of the pre-registration.
+`finalists.extra` ({name: overrides}) adds named candidates from outside the space, e.g. the
+values in use, so the finalists compare them with the winner on the same seeds.
+--K searches at another number of factors than the config's `K` (one search per K).
 
 1. search: Sobol points over the knobs the paper leaves open, plus the base config, one seed.
 2. finalists: the best `top` points and the base config on more seeds; the winner has the
@@ -167,7 +170,8 @@ def evaluate_pca(job: dict) -> dict:
     if pc["kind"] == "longconv":
         init_seed = job["seed"] * 10007 + WORKER["first_oos"]
         torch.manual_seed(init_seed)
-        model = LongConvPolicy(pc["hidden"], L, pc["dropout"], pc["lambda_squash"], pc["layers"])
+        model = LongConvPolicy(pc["hidden"], L, pc["dropout"], pc["lambda_squash"], pc["layers"],
+                               pc.get("kernel_init", "geom_decay"))
         rp.train_one_window(model, s1.batch(t_tr0, t_va0, L, scale, cum, norm, window), c,
                             np.random.default_rng(init_seed), lambda s: None)
         w = rp.evaluate_window(model, val_b)
@@ -209,8 +213,20 @@ def evaluate(job: dict) -> dict:
     return {**job, **curve[E], "curve": curve, "seconds": round(time.time() - t0)}
 
 
-def run_jobs(pool, jobs: list[dict], trials: dict, path: Path, log, label: str) -> list[dict]:
+def rough_cost(c: dict) -> float:
+    """Relative seconds of a trial, to start the long ones first: epochs, and a deeper LongConv runs
+    every window position (an extra layer ~7x a one-layer epoch at hidden 32, ~22x at 64; 2026-11-08)."""
+    pc = c["policy"]
+    deep = (pc.get("layers", 1) - 1) * 7 * (pc.get("hidden", 32) / 32) ** 1.5
+    return c.get("training", {}).get("epochs", 1) * (1 + deep)
+
+
+def run_jobs(pool, jobs: list[dict], trials: dict, path: Path, log, label: str, cost=None) -> list[dict]:
+    """Every trial of `jobs` not in `trials` yet, longest first by `cost` (each trial draws its own
+    seed, so the order changes no number); returns the results in the order of `jobs`."""
     todo = [j for j in jobs if (j["cid"], j["seed"]) not in trials]
+    if cost:
+        todo.sort(key=lambda j: -cost(j))
     log(f"{label}: {len(jobs)} trials, {len(jobs) - len(todo)} already done")
     for i, r in enumerate(pool.imap_unordered(evaluate, todo), 1):
         trials[(r["cid"], r["seed"])] = r
@@ -262,6 +278,7 @@ def main():
     ap.add_argument("--first-oos-year", type=int,
                     help="validate on the last years of the window before this year instead of the config's")
     ap.add_argument("--keep", nargs="*", default=[], help="candidate names always carried into the finalists")
+    ap.add_argument("--K", type=int, help="search at this number of factors instead of the config's K")
     ap.add_argument("--run-dir", type=Path, help="write to this directory (must not exist) instead of runs/<stamp>_...")
     ap.add_argument("--smoke", action="store_true", help="2 points, 1 finalist, 1 seed, 1 epoch: does the config run")
     args = ap.parse_args()
@@ -275,6 +292,8 @@ def main():
         cfg = with_overrides(cfg, S.get("fixed") or {})   # held fixed for every candidate, part of the base
         if args.first_oos_year:
             S["first_oos_year"] = args.first_oos_year
+        if args.K:
+            S["K"] = args.K
         S["finalists"]["keep"] = args.keep or S["finalists"].get("keep", [])
         if args.smoke:
             S["search"]["n_points"] = 2
@@ -282,6 +301,8 @@ def main():
             S["robustness"] = {"seeds": [], "knobs": {}}
             if "training" in cfg:
                 cfg["training"]["epochs"] = 1
+            if "training.epochs" in S["search"].get("space", {}):   # a searched epoch count: 1 as well
+                S["search"]["space"]["training.epochs"] = {"choice": [1]}
     if args.data_dir:
         cfg["data"]["dir"] = args.data_dir
     data_dir = Path(cfg["data"]["dir"])
@@ -310,7 +331,8 @@ def main():
     summary = json.loads(summary_path.read_text()) if summary_path.exists() else {}
     with mp.get_context("spawn").Pool(args.jobs, initializer=init_worker, initargs=(
             cfg, str(data_dir), first_oos, V, K, S.get("eval_epochs", []), args.threads, runner)) as pool:
-        run = lambda jobs, label: run_jobs(pool, jobs, trials, path, log, label)  # noqa: E731
+        cost = lambda j: rough_cost(with_overrides(cfg, j["overrides"]))  # noqa: E731
+        run = lambda jobs, label: run_jobs(pool, jobs, trials, path, log, label, cost)  # noqa: E731
         if args.stage in ("all", "select"):
             base_c = candidate("base", {})
             if "grid" in sr:
@@ -322,9 +344,11 @@ def main():
             res = run([{**c, "seed": sr["seed"]} for c in [base_c, *pts]], "search")
             best = {r["cid"] for r in sorted(res, key=lambda r: -finite(r["net_SR"]))[:fin["top"]]}
             keep = set(fin.get("keep", []))
-            if keep - {c["name"] for c in pts}:
-                raise SystemExit(f"--keep: no candidates named {sorted(keep - {c['name'] for c in pts})}")
+            extra = [candidate(n, o) for n, o in (fin.get("extra") or {}).items()]   # named, outside the space
+            if keep - {c["name"] for c in [*pts, *extra]}:
+                raise SystemExit(f"--keep: no candidates named {sorted(keep - {c['name'] for c in [*pts, *extra]})}")
             finalists = [c for c in [base_c, *pts] if c["cid"] in best or c is base_c or c["name"] in keep]
+            finalists += [c for c in extra if c["cid"] not in {f["cid"] for f in finalists}]
             rows = table(finalists, run([{**c, "seed": s} for c in finalists for s in fin["seeds"]],
                                         "finalists"), base_c["cid"])
             log(f"finalists, mean over seeds {fin['seeds']} of the validation net Sharpe:")

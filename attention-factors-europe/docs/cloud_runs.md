@@ -704,3 +704,85 @@ bottom: step 0 against the October rows is the machine noise, step 1 is what the
 step against the headline row is what the new search did. Read it before calling the rows like for like: B_t is fitted
 on a span containing the window, so PCA's fixed window is not the same experiment as attention's
 (docs/pca_longconv_benchmark.md).
+
+## 17. The Table 4 search, searches only (2026-11-08)
+
+`configs/us_search_t4.yaml` and `configs/europe_search_t4.yaml`: the v2 searches (section 15) with every tuning
+parameter of the paper's Table 4 searched as well, instead of held at the paper's values. Same window (fit
+1990-1995 US, 1993-1995 Europe, net Sharpe on 1996-1997), model v2 held, nothing out of sample. 15 dimensions:
+
+| setting | range | paper |
+|---|---|---|
+| hidden dim d (`policy.hidden`) | 16, 32, 64 | 32 |
+| dropout | 0, 0.1, 0.2, 0.3 | 0.1 |
+| attention dim d_x (`model.embedding_dim`) | 16, 32, 64 | 32 |
+| epochs | 10, 20, 30, 45, 60 | 30 |
+| LongConv layers | 1, 2 | 1 |
+| lambda_VAR | 0.1-300, log | 100 |
+| learning rate | 0.0003-0.03, log | 0.003 |
+| weight decay (LongConv) | 0.005-0.5, log | 0.05 |
+| LongConv init | geometric decay, random | geometric decay |
+| lambda_squash | 0.0001-0.01, log | 0.001 |
+| input scale, score temperature, ridge, batch days, window_vol | as in section 15 | not in the paper |
+
+512 Sobol points on seed 0, then the best 10, the paper's Table 4 (`base`) and the v2 winners (`us_v2_headline`,
+`eu_v2_headline`, named finalists) on seeds 0-2; each Europe search also carries its US winner. Every winner lands
+in `runs/_matrix/search_t4/searches/<name>/selected.yaml` and `searches.json`. No run trades with them: that is a
+later matrix, after a decision.
+
+Two matrices, one out dir:
+
+- `configs/search_t4_k30_matrix.yaml`: K = 30, US then Europe, 46 workers each.
+- `configs/search_t4_allk_matrix.yaml`: one search per K of Table 2 (1, 3, 5, 8, 15, 30, 100) and market, two at a
+  time with 23 workers each. Same name and the same two K = 30 searches as the K = 30 matrix, so it can run after
+  it and skip them.
+
+Size, m7i.24xlarge on-demand ($5.14/h) at 46 workers: K = 30 only about **7.6 hours** (US 6.4, then Europe 1.2;
+1 in 10 draws of the finalists about 9), about **$40**; every K about **47 hours**, about **$240**, or about 40 more
+hours after a K = 30 run. The searches of different K are independent: on several machines the wall-clock falls,
+the cost does not. These are estimates: laptop timings of each setting on the US first window
+(`policy.layers`, hidden, attention dim, K; 2026-11-08), scaled by the 195 s (US) and 38 s (Europe) a v2 trial took on
+this machine (section 15); the deeper stack may lose more than that to a fully loaded machine, so allow a third
+more.
+
+The cost is the LongConv layers: a deeper stack runs every one of the 30 window positions through each layer but
+the last, where one layer reads only the last one, so a 2-layer epoch costs 8.5x a one-layer one at hidden 32 and
+16x at hidden 64. The mean US trial is about 25 minutes (v2: 3), the longest (2 layers, hidden 64, 60 epochs) about
+3 hours; trials start longest first, so those do not end a search. Three layers (not searched: the paper's value
+and double, as for d and d_x) would cost about 65% more; with one layer only the search would take 1.2 hours.
+
+Memory: 2.5 GB per worker plus up to 4.4 GB for a deeper stack (above that it recomputes its pieces in backward);
+the matrix budgets 6.5 GB per US worker and 3 GB per Europe worker.
+Storage: **30 GiB** gp3, encrypted. Results are small (trials.jsonl, under 50 MB).
+
+On the laptop, from the branch, committed and pushed (the data is the bundle of section 16, only `COMMIT` changes):
+
+```powershell
+cd C:\Users\henri\Desktop\SSE\masterThesis\Code\dlsa-table4\attention-factors-europe
+$PY = "C:\Users\henri\miniconda3\envs\afe\python.exe"
+& $PY scripts\run_matrix.py --matrix configs\search_t4_k30_matrix.yaml --dry-run    # 2 jobs (allk: 14)
+& $PY scripts\make_bundle.py --markets us europe --out $env:TEMP\afe_bundle_t4
+scp $env:TEMP\afe_bundle_t4\afe_data.tar $env:TEMP\afe_bundle_t4\SHA256SUMS $env:TEMP\afe_bundle_t4\COMMIT "ubuntu@${IP}:~"
+```
+
+On the machine, after the clone, `sha256sum -c` and `cloud_setup.sh` of section 7, a smoke test (each search on
+2 points, the base and the named finalists, 1 epoch):
+
+```bash
+cd ~/dlsa/attention-factors-europe; PY=~/afe-venv/bin/python
+$PY scripts/run_matrix.py --matrix configs/search_t4_k30_matrix.yaml --smoke --jobs 8   # "0 failed"
+```
+
+Then the run in tmux (`search_t4_allk_matrix.yaml` for every K), which also packs the results and stops the machine:
+
+```bash
+tmux new -s afe
+cd ~/dlsa/attention-factors-europe; PY=~/afe-venv/bin/python   # again inside tmux: PY does not carry over
+$PY scripts/run_matrix.py --matrix configs/search_t4_k30_matrix.yaml --jobs 46 --threads 2 2>&1 | tee runs/matrix_t4_console.log; tar -czf ~/runs_t4.tgz -C ~/dlsa/attention-factors-europe runs/_matrix/search_t4; sudo shutdown -h now
+```
+
+Progress from the laptop: `ssh "ubuntu@$IP" "tail -n 2 ~/dlsa/attention-factors-europe/runs/_matrix/search_t4/logs/search_us_t4_K30.log"`
+(one line per finished trial, `[search i/513]`). A restart of the same command resumes every search from its
+trials.jsonl. Collect as in section 11 (`runs_t4.tgz`, then terminate the machine). Read the finalists table at the
+end of each search log: the paired difference of the winner against `base` (Table 4) and against the v2 winner on
+the same three seeds is what searching Table 4 bought on validation.
