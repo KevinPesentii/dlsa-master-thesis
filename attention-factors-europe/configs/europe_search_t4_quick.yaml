@@ -1,0 +1,70 @@
+# configs/us_search_t4_quick.yaml on EUROPEAN data, run once per K (configs/search_t4q_eu_matrix.yaml):
+# fit 1993-1995, net Sharpe on 1996-1997, nothing dated after 1997 loaded. Space (one LongConv layer),
+# the first 256 points of the same Sobol draw, finalists and rule are the US quick search's, so the names
+# match, and each K's US quick winner is carried into that K's finalists (`keep_from` in the matrix), as in
+# every Europe search since 2026-10. The fixed block is configs/europe_search_t4.yaml's: only the data differ.
+# Asked 2026-11-09, after the US quick search and its out-of-sample rows (runs/_matrix/search_t4q) and the
+# Europe rows of runs/_matrix/thesis_v2 had been seen: the thesis has to say so.
+# Written 2026-11-09, before this search ran. Do not edit it after the run has started.
+#   python scripts/search_validation.py --config configs/europe_search_t4_quick.yaml --stage select --K 100
+
+base_config: configs/europe_replication.yaml   # everything not listed below comes from here
+K: 30                         # scripts/run_matrix.py passes --K
+first_oos_year: 1998          # first training window = [sample.data_start, first_oos_year): 1993-1997
+validation_years: 2           # its last two years
+eval_epochs: [10, 20, 30, 45] # extra points on each learning curve; the final epoch is always scored
+
+search:
+  n_points: 256
+  sobol_seed: 0
+  seed: 0
+  space:                      # configs/us_search_t4_quick.yaml, layers held at 1
+    objective.lambda_var: {log: [0.1, 300]}
+    policy.input_scale: {log: [0.3, 300]}
+    model.score_std_target: {log: [0.3, 3], "off": 0.25}
+    model.lambda_ridge: {log: [1.0e-5, 1.0e-2]}
+    training.batch_days: {choice: [63, 125, 250]}
+    policy.input_normalise: {choice: [none, window_vol]}
+    policy.hidden: {choice: [16, 32, 64]}
+    policy.dropout: {choice: [0.0, 0.1, 0.2, 0.3]}
+    model.embedding_dim: {choice: [16, 32, 64]}
+    training.epochs: {choice: [10, 20, 30, 45, 60]}
+    policy.layers: {choice: [1]}                       # one layer, as the US quick search
+    training.lr: {log: [3.0e-4, 3.0e-2]}
+    training.weight_decay: {log: [5.0e-3, 0.5]}
+    policy.kernel_init: {choice: [geom_decay, random]}
+    policy.lambda_squash: {log: [1.0e-4, 1.0e-2]}
+
+fixed:                        # held for every candidate: model v2, as configs/europe_search_t4.yaml
+  data.dir: data/europe17/holfill   # the headline European data (stage 2b); never carried into a run
+  policy.residual_window: fixed
+  policy.input: cumulative
+  model.level_hidden: 0
+  features.timing: asof
+  features.include_cross_sectional_median: false
+  features.include_risk_free: false
+  data.returns_history: true
+  policy.residual_lookback: 30
+
+# The best 10 points, the paper's Table 4 (`base`), the v2 values of both markets and that K's US quick
+# winner on seeds 0-2; the winner is the best MEAN validation net Sharpe. selected.yaml = base config +
+# the winner's values.
+finalists:
+  top: 10
+  seeds: [0, 1, 2]
+  # keep: that K's US quick winner, passed by scripts/run_matrix.py (`keep_from` in the matrix)
+  extra:                      # the values in use: model v2's Europe winner (eu_v2 sobol-086) with Table 4,
+    eu_v2_headline:           # and the US one, in case a US quick search keeps it (then --keep names it)
+      objective.lambda_var: 0.842
+      policy.input_scale: 74.4
+      model.score_std_target: null
+      model.lambda_ridge: 0.00392
+      training.batch_days: 125
+      policy.input_normalise: window_vol
+    us_v2_headline:
+      objective.lambda_var: 8.06
+      policy.input_scale: 27.3
+      model.score_std_target: 1.03
+      model.lambda_ridge: 1.4e-05
+      training.batch_days: 125
+      policy.input_normalise: window_vol

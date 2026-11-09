@@ -5,6 +5,7 @@
                                   [--markets us us_top800 us_rank301_800]   # configs/gap2_matrix.yaml
                                   [--markets us us_no_receipts us_drop_receipts]   # configs/exp_no_receipts_matrix.yaml
                                   [--markets us europe us_no_receipts us_no_receipts_asof]   # configs/thesis_v2_matrix.yaml
+                                  [--markets europe search_t4q]   # configs/search_t4q_eu_matrix.yaml
 
 The code comes from the public fork (git clone --depth 1 -b <branch>), so only the data
 travels. The tree must be clean and the branch pushed. Writes:
@@ -50,6 +51,9 @@ FILES = {
     "us_no_receipts": [f"data/us/no_receipts/{t}.parquet" for t in TABLES],  # receipts experiment only
     "us_no_receipts_asof": [f"data/us/no_receipts/{t}.parquet" for t in ASOF],  # its model v2 row
     "us_drop_receipts": [f"data/us/drop_receipts/{t}.parquet" for t in TABLES],  # likewise
+    # not data: the finished US quick searches whose winners configs/search_t4q_eu_matrix.yaml carries
+    "search_t4q": [f"runs/_matrix/search_t4q/searches/us_t4q_K{K}/{f}" for K in (1, 3, 5, 8, 15, 30, 100)
+                   for f in ("manifest.json", "metrics.json", "selected.yaml")],
 }
 DEFAULT_MARKETS = ["us", "europe"]
 

@@ -19,6 +19,9 @@ starts and records the search, the candidate and the validation Sharpe under `ma
 A search counts as `workers` jobs against --jobs. A restarted search resumes its trials.
 `keep_from: <search>` makes a search wait for that one and carry its winner into the finalists,
 by name, so the two spaces must be the same (Europe's searches and the US winner).
+`keep_from: <matrix>/<search>` carries the winner of a search another matrix already finished
+(runs/_matrix/<matrix>/searches/<search>, which must be there: the matrix refuses to start
+without it) and waits for nothing.
 `K: <n>` runs the search at n factors instead of its config's K (one search per K).
 A search never starts more workers than --jobs. --device cuda trains the searches on the
 machine's GPUs (search_validation.py --device cuda --gpu-procs <--jobs>); runs stay on the
@@ -154,19 +157,25 @@ def search_job(name: str, s: dict, out: Path, threads: int, smoke: bool, jobs: i
     workers = min(workers, jobs) if jobs else workers
     gpu = ["--device", "cuda", "--gpu-procs", str(jobs or workers)] if device == "cuda" else []
     keep_from = s.get("keep_from")
+    other = bool(keep_from and "/" in keep_from)         # "<matrix>/<search>": a finished search elsewhere
+    src_out, src = (ROOT / "runs" / "_matrix" / keep_from.split("/")[0], keep_from.split("/")[1]) if other \
+        else (out, keep_from)
+    if other and not smoke and not (src_out / "searches" / src / "selected.yaml").exists():
+        raise SystemExit(f"search {name}: keep_from {keep_from} has no finished search at "
+                         f"{src_out / 'searches' / src}; unpack it first")
 
     def make_cmd() -> list[str]:
         where = ["--resume", d.relative_to(ROOT).as_posix()] if (d / "manifest.json").exists() else \
                 ["--run-dir", d.relative_to(ROOT).as_posix()]
         keep = []
         if keep_from and not smoke:         # "base" is a finalist anyway
-            w = winner(out, keep_from)["candidate"]
+            w = winner(src_out, src)["candidate"]
             keep = [] if w == "base" else ["--keep", w]
         K = ["--K", str(s["K"])] if s.get("K") else []
         return [sys.executable, "-u", "scripts/search_validation.py", "--config", s["config"], "--stage", "select",
                 "--jobs", str(workers), "--threads", str(threads)] + where + keep + K + gpu + (["--smoke"] if smoke else [])
     after = [f"prep_{a}" for a in ([s["after"]] if isinstance(s.get("after"), str) else s.get("after", []))]
-    after += [f"search_{keep_from}"] if keep_from else []
+    after += [f"search_{keep_from}"] if keep_from and not other else []
     return Job(f"search_{name}", [], workers * float(s.get("mem_gb_per_worker", 2.5)), 1e6 + 100, after,
                done_file=d / "selected.yaml", slots=workers, make_cmd=make_cmd)
 

@@ -978,3 +978,59 @@ At the end the service packs `~/search_t4q.tgz` and stops the machine. Collect a
 section 18 (terminate, check EC2 -> Volumes, release any Elastic IP). Read the finalists table at the end of each
 `search_us_t4q_K*.log` (the winner's paired difference against `us_v2_headline` on seeds 0-2 is what a per-K
 search buys on validation), then `summary.csv` for the rows against thesis_v2.
+
+## 21. The quick per-K search on Europe, and the rows that trade with it (2026-11-09)
+
+`configs/search_t4q_eu_matrix.yaml` (out dir `runs/_matrix/search_t4q_eu`; `search_t4q`, `search_t4` and
+`thesis_v2` are untouched) is section 20 for Europe:
+
+- **Searches.** `configs/europe_search_t4_quick.yaml` once per K (1, 3, 5, 8, 15, 30, 100): the US quick search on
+  Europe's first window (fit 1993-1995, net Sharpe on 1996-1997), same space, the same 256 points (same names),
+  same finalists and rule; only the data differ. Finalists: the best 10, `base`, `eu_v2_headline`,
+  `us_v2_headline` and that K's US quick winner, which `keep_from: search_t4q/us_t4q_K<K>` reads from the finished
+  US matrix: `runs/_matrix/search_t4q/searches/` travels in the bundle, and run_matrix refuses to start without it
+  (nothing US reruns). Each US winner is the same point of the Europe draw (checked 2026-11-09).
+- **Rows** (group `diagnostic`, decided before any of this existed): `eu_attention_t4q_K<K>`, thesis_v2's
+  `eu_attention` row (`configs/europe_headline_v2.yaml`, 1998-2021, seeds 0-4, sequential) with the winner of
+  that K's own Europe search instead of the K = 30 Europe values, compared on the same seeds with
+  `runs/_matrix/thesis_v2` `eu_attention`. Never a headline value until a decision says so.
+
+Size: about **48 process-hours**: searches ~22 (the US quick trial times x 0.19, the Europe / US ratio of the
+262 one-layer K = 30 trials both Table 4 searches ran), rows ~26 (thesis_v2's `eu_attention` run times, 23 min a
+run at K = 1 to 92 at K = 100, x 1.09, the slow-down of the US per-K winners against the v2 values). A replay of
+the scheduler at 23 jobs gives about **2.3 hours** (2.7 if the Europe winners train 1.5x the v2 values, 3.4 if
+2x): the K = 100 search first on all 23 workers (~18 min), then two searches of 9 workers at a time (~15-22 min
+each), which leaves 5 slots for the five K = 100 runs, the critical path.
+
+Machine: **m7i.12xlarge** (48 vCPU, 192 GiB), Spot, persistent, interruption behaviour Stop (section 18), in
+eu-north-1. Half the size of section 20's: on 96 vCPU the K = 100 search and its runs would still take ~2 hours
+while the rest of the machine sits idle after the first hour. Same CPU as thesis_v2 and the Table 4 searches, so
+the one-layer points of the Europe K = 30 Table 4 search should come out again (same cid). A Europe job needs
+3 GB: 23 x 3 = 69 GB. Not AMD, not a GPU. Storage 30 GiB gp3, encrypted. Data: Europe tables only, no CRSP.
+
+On the laptop, from the branch, committed and pushed:
+
+```powershell
+cd C:\Users\henri\Desktop\SSE\masterThesis\Code\dlsa-table4\attention-factors-europe
+$PY = "C:\Users\henri\miniconda3\envs\afe\python.exe"
+& $PY scripts\run_matrix.py --matrix configs\search_t4q_eu_matrix.yaml --dry-run --jobs 23    # 42 jobs
+& $PY scripts\make_bundle.py --markets europe search_t4q --out $env:TEMP\afe_bundle_t4q_eu
+scp $env:TEMP\afe_bundle_t4q_eu\afe_data.tar $env:TEMP\afe_bundle_t4q_eu\SHA256SUMS $env:TEMP\afe_bundle_t4q_eu\COMMIT "ubuntu@${IP}:~"
+```
+
+On the machine, clone, unpack, `sha256sum -c` and `cloud_setup.sh` as in section 7 (the tar also unpacks
+`runs/_matrix/search_t4q/searches/us_t4q_K*/`), then:
+
+```bash
+cd ~/dlsa/attention-factors-europe; PY=~/afe-venv/bin/python
+$PY scripts/run_matrix.py --matrix configs/search_t4q_eu_matrix.yaml --dry-run --jobs 23   # 42 to run, no SystemExit
+$PY scripts/run_matrix.py --matrix configs/search_t4q_eu_matrix.yaml --smoke --jobs 16     # "0 failed"
+bash scripts/spot_resume.sh install configs/search_t4q_eu_matrix.yaml --jobs 23 --threads 2
+bash scripts/spot_resume.sh status                     # "active (running)"
+tail -n 2 runs/_matrix/search_t4q_eu/logs/search_eu_t4q_K100.log   # one line per trial, [search i/257]
+```
+
+At the end the service packs `~/search_t4q_eu.tgz` and stops the machine. Collect and cancel the Spot request as
+in section 18 (terminate, check EC2 -> Volumes, release any Elastic IP). Read the finalists table at the end of
+each `search_eu_t4q_K*.log` (the winner against `eu_v2_headline` and the carried US winner on seeds 0-2), then
+`summary.csv` for the rows against thesis_v2's `eu_attention`.

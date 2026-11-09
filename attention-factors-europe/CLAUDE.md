@@ -162,6 +162,14 @@ weaken a test to make code pass.
   `us_attention` (the K = 30 values at every K); never a headline value until a decision says so. Asked after
   the out-of-sample K = 100 rows of `runs/_matrix/thesis_v2` had been seen, and the thesis has to say so.
   Results in `runs/_matrix/search_t4q`.
+- Quick per-K search, Europe (2026-11-09): `configs/search_t4q_eu_matrix.yaml` runs
+  `configs/europe_search_t4_quick.yaml` (the US quick search on Europe's first window, only the data differ) once
+  per K, each carrying that K's US quick winner into its finalists (`keep_from: search_t4q/us_t4q_K<K>`, read from
+  the finished US matrix). Its rows `eu_attention_t4q_K<K>` trade 1998-2021 on seeds 0-4 with each K's own Europe
+  winner. Decided before any of it existed: DIAGNOSTIC rows, compared on the same seeds with thesis_v2's
+  `eu_attention`; never a headline value until a decision says so. Asked after the US quick search, its rows and
+  the Europe rows of `runs/_matrix/thesis_v2` had been seen, and the thesis has to say so. Results in
+  `runs/_matrix/search_t4q_eu`.
 
 ## Trading costs: limits, not replication
 

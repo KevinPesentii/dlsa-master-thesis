@@ -1,0 +1,51 @@
+# The quick Table 4 search at every K on EUROPEAN data (2026-11-09), and the out-of-sample rows that trade
+# with each K's own winner: configs/search_t4q_us_matrix.yaml for Europe.
+# Searches: configs/europe_search_t4_quick.yaml once per K (run_matrix passes --K), each carrying the
+# winner of that K's US quick search into its finalists (`keep_from: search_t4q/us_t4q_K<K>`, a search of
+# the finished US matrix: runs/_matrix/search_t4q/searches/ must be on the machine, nothing US reruns).
+# Rows (decided 2026-11-09, before any of them or of these searches existed): DIAGNOSTIC rows, what
+# choosing the values per K buys out of sample in Europe. Each K trades 1998-2021 on seeds 0-4 with the
+# winner of its own Europe search, as the thesis_v2 `eu_attention` row does with the K = 30 Europe values
+# (eu_v2) at every K; the two are compared on the same seeds, as the US rows with `us_attention`. Never a
+# headline value until a decision says so. Asked after the US quick search, its rows and the Europe rows
+# of runs/_matrix/thesis_v2 had been seen: the thesis has to say so.
+# Own out dir runs/_matrix/search_t4q_eu, so nothing of search_t4q, search_t4 or thesis_v2 is touched.
+#   python scripts/run_matrix.py --matrix configs/search_t4q_eu_matrix.yaml --dry-run --jobs 23
+#   python scripts/run_matrix.py --matrix configs/search_t4q_eu_matrix.yaml --smoke --jobs 8
+#   python scripts/run_matrix.py --matrix configs/search_t4q_eu_matrix.yaml --jobs 23 --threads 2
+
+name: search_t4q_eu
+
+sets:
+  seeds5: [0, 1, 2, 3, 4]
+  K1: [1]
+  K3: [3]
+  K5: [5]
+  K8: [8]
+  K15: [15]
+  K30: [30]
+  K100: [100]
+
+blocks: {}
+prep: {}
+
+# Scheduling at --jobs 23 (m7i.12xlarge): the K = 100 search first on the whole machine, then two searches
+# of 9 workers at a time, which leaves 5 slots: the five K = 100 runs (the longest jobs) start in them as
+# soon as their search is done. The other rows start as searches finish.
+searches:
+  eu_t4q_K100: {config: configs/europe_search_t4_quick.yaml, K: 100, workers: 23, mem_gb_per_worker: 3, keep_from: search_t4q/us_t4q_K100}
+  eu_t4q_K30:  {config: configs/europe_search_t4_quick.yaml, K: 30, workers: 9, mem_gb_per_worker: 3, keep_from: search_t4q/us_t4q_K30}
+  eu_t4q_K15:  {config: configs/europe_search_t4_quick.yaml, K: 15, workers: 9, mem_gb_per_worker: 3, keep_from: search_t4q/us_t4q_K15}
+  eu_t4q_K8:   {config: configs/europe_search_t4_quick.yaml, K: 8, workers: 9, mem_gb_per_worker: 3, keep_from: search_t4q/us_t4q_K8}
+  eu_t4q_K5:   {config: configs/europe_search_t4_quick.yaml, K: 5, workers: 9, mem_gb_per_worker: 3, keep_from: search_t4q/us_t4q_K5}
+  eu_t4q_K3:   {config: configs/europe_search_t4_quick.yaml, K: 3, workers: 9, mem_gb_per_worker: 3, keep_from: search_t4q/us_t4q_K3}
+  eu_t4q_K1:   {config: configs/europe_search_t4_quick.yaml, K: 1, workers: 9, mem_gb_per_worker: 3, keep_from: search_t4q/us_t4q_K1}
+
+specs:                           # thesis_v2's eu_attention row, one K each, with that K's own search
+  - {name: eu_attention_t4q_K100, group: diagnostic, runner: attention, config: configs/europe_headline_v2.yaml, K: K100, seeds: seeds5, hyper: eu_t4q_K100}
+  - {name: eu_attention_t4q_K30, group: diagnostic, runner: attention, config: configs/europe_headline_v2.yaml, K: K30, seeds: seeds5, hyper: eu_t4q_K30}
+  - {name: eu_attention_t4q_K15, group: diagnostic, runner: attention, config: configs/europe_headline_v2.yaml, K: K15, seeds: seeds5, hyper: eu_t4q_K15}
+  - {name: eu_attention_t4q_K8, group: diagnostic, runner: attention, config: configs/europe_headline_v2.yaml, K: K8, seeds: seeds5, hyper: eu_t4q_K8}
+  - {name: eu_attention_t4q_K5, group: diagnostic, runner: attention, config: configs/europe_headline_v2.yaml, K: K5, seeds: seeds5, hyper: eu_t4q_K5}
+  - {name: eu_attention_t4q_K3, group: diagnostic, runner: attention, config: configs/europe_headline_v2.yaml, K: K3, seeds: seeds5, hyper: eu_t4q_K3}
+  - {name: eu_attention_t4q_K1, group: diagnostic, runner: attention, config: configs/europe_headline_v2.yaml, K: K1, seeds: seeds5, hyper: eu_t4q_K1}
