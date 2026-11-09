@@ -1,0 +1,25 @@
+# The quick Table 4 search at every K of Table 2's attention rows, US only (2026-11-09):
+# configs/us_search_t4_quick.yaml once per K (run_matrix passes --K). One LongConv layer, the first
+# 256 Sobol points, finalists on seeds 0-1. Searches only (no runs). Own out dir runs/_matrix/search_t4q,
+# so nothing of runs/_matrix/search_t4 is touched. K = 30 is searched again here: the points that drew
+# one layer in the 2026-11-08 search are the same candidates, a reproduction check on the same CPU type.
+#   python scripts/run_matrix.py --matrix configs/search_t4q_us_matrix.yaml --dry-run
+#   python scripts/run_matrix.py --matrix configs/search_t4q_us_matrix.yaml --smoke --jobs 8
+#   python scripts/run_matrix.py --matrix configs/search_t4q_us_matrix.yaml --jobs 46 --threads 2
+
+name: search_t4q
+
+sets: {}
+blocks: {}
+prep: {}
+
+searches:                        # two at a time (23 workers each), longest first
+  us_t4q_K100: {config: configs/us_search_t4_quick.yaml, K: 100, workers: 23, mem_gb_per_worker: 3}
+  us_t4q_K30:  {config: configs/us_search_t4_quick.yaml, K: 30, workers: 23, mem_gb_per_worker: 3}
+  us_t4q_K15:  {config: configs/us_search_t4_quick.yaml, K: 15, workers: 23, mem_gb_per_worker: 3}
+  us_t4q_K8:   {config: configs/us_search_t4_quick.yaml, K: 8, workers: 23, mem_gb_per_worker: 3}
+  us_t4q_K5:   {config: configs/us_search_t4_quick.yaml, K: 5, workers: 23, mem_gb_per_worker: 3}
+  us_t4q_K3:   {config: configs/us_search_t4_quick.yaml, K: 3, workers: 23, mem_gb_per_worker: 3}
+  us_t4q_K1:   {config: configs/us_search_t4_quick.yaml, K: 1, workers: 23, mem_gb_per_worker: 3}
+
+specs: []

@@ -1,0 +1,82 @@
+# A quick version of configs/us_search_t4.yaml, run once per K (configs/search_t4q_us_matrix.yaml),
+# US only, so each K gets its own validated values. Asked 2026-11-09 after the K = 30 Table 4 search
+# (2026-11-08) and after the out-of-sample K = 100 rows of runs/_matrix/thesis_v2 had been seen: the
+# thesis has to say so. Same window (fit 1990-1995, net Sharpe on 1996-1997), model v2, same rule.
+# Three cuts, all decided before this search ran:
+#   1. One LongConv layer (the paper's value). The 2-layer trials were 92% of the K = 30 search's
+#      process time (202 of 219 h) and layers 1 and 2 had the same median and p90 validation net
+#      Sharpe over its 512 points (2026-11-08).
+#   2. The first 256 points of the same Sobol sequence (same space, same sobol_seed): the first 2^8
+#      points of a Sobol sequence are balanced on their own. Layers is held at 1 by a one-value
+#      choice, so the other 14 values are those of the K = 30 draw: each point that drew 1 layer
+#      there is the same candidate (same cid) here.
+#   3. Finalists on two seeds (0, 1) instead of three.
+# Written 2026-11-09, before this search ran. Commit it first and do not edit it afterwards.
+#   python scripts/search_validation.py --config configs/us_search_t4_quick.yaml --stage select --K 100
+
+base_config: configs/us_replication.yaml   # everything not listed below comes from here
+K: 30                         # scripts/run_matrix.py passes --K
+first_oos_year: 1998          # first training window = [first_oos_year - window_years, first_oos_year)
+validation_years: 2           # its last two years
+eval_epochs: [10, 20, 30, 45] # extra points on each learning curve; the final epoch is always scored
+
+search:
+  n_points: 256
+  sobol_seed: 0
+  seed: 0
+  space:                      # configs/us_search_t4.yaml, layers held at 1
+    objective.lambda_var: {log: [0.1, 300]}
+    policy.input_scale: {log: [0.3, 300]}
+    model.score_std_target: {log: [0.3, 3], "off": 0.25}
+    model.lambda_ridge: {log: [1.0e-5, 1.0e-2]}
+    training.batch_days: {choice: [63, 125, 250]}
+    policy.input_normalise: {choice: [none, window_vol]}
+    policy.hidden: {choice: [16, 32, 64]}
+    policy.dropout: {choice: [0.0, 0.1, 0.2, 0.3]}
+    model.embedding_dim: {choice: [16, 32, 64]}
+    training.epochs: {choice: [10, 20, 30, 45, 60]}
+    policy.layers: {choice: [1]}                       # one layer: cut 1 (keeps the 15-dimensional draw)
+    training.lr: {log: [3.0e-4, 3.0e-2]}
+    training.weight_decay: {log: [5.0e-3, 0.5]}
+    policy.kernel_init: {choice: [geom_decay, random]}
+    policy.lambda_squash: {log: [1.0e-4, 1.0e-2]}
+
+fixed:                        # held for every candidate: model v2, as configs/us_search_t4.yaml
+  policy.residual_window: fixed
+  policy.input: cumulative
+  model.level_hidden: 0
+  features.timing: asof
+  features.include_cross_sectional_median: false
+  features.include_risk_free: false
+  data.returns_history: true
+  policy.residual_lookback: 30
+
+# The best 10 points, the paper's Table 4 (`base`) and two named candidates on seeds 0 and 1; the
+# winner is the best MEAN validation net Sharpe. selected.yaml = base config + the winner's values.
+finalists:
+  top: 10
+  seeds: [0, 1]
+  extra:
+    us_v2_headline:           # the values in use: model v2's US winner (runs/_matrix/thesis_v2, us_v2 sobol-076)
+      objective.lambda_var: 8.06
+      policy.input_scale: 27.3
+      model.score_std_target: 1.03
+      model.lambda_ridge: 1.4e-05
+      training.batch_days: 125
+      policy.input_normalise: window_vol
+    t4_k30_winner:            # the K = 30 Table 4 winner (runs/_matrix/search_t4, us_t4_K30 sobol-300), 2 layers:
+      objective.lambda_var: 14.4   # outside this space, carried so each K shows what it does there
+      policy.input_scale: 152.0
+      model.score_std_target: null
+      model.lambda_ridge: 1.46e-05
+      training.batch_days: 63
+      policy.input_normalise: none
+      policy.hidden: 32
+      policy.dropout: 0.2
+      model.embedding_dim: 64
+      training.epochs: 20
+      policy.layers: 2
+      training.lr: 0.00527
+      training.weight_decay: 0.0272
+      policy.kernel_init: geom_decay
+      policy.lambda_squash: 0.000323

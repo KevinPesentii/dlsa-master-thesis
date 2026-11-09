@@ -153,6 +153,12 @@ weaken a test to make code pass.
   can run on GPUs (`configs/search_t4_allk_gpu_matrix.yaml`, `--device cuda`, docs/cloud_runs.md section 19): the
   same searches, but a GPU trial is not the CPU trial number for number (other dropout draws and float sums), so
   `scripts/gpu_probe.py` checks the ranking first, and the thesis has to say which K ran where.
+- Quick per-K search, US (2026-11-09): `configs/us_search_t4_quick.yaml` through
+  `configs/search_t4q_us_matrix.yaml`, one search per K: the Table 4 space with one LongConv layer, the first
+  256 points of the same Sobol draw, finalists on seeds 0-1, `us_v2_headline` and the K = 30 Table 4 winner as
+  named finalists. Asked after the out-of-sample K = 100 rows of `runs/_matrix/thesis_v2` had been seen, and
+  the thesis has to say so. Results in `runs/_matrix/search_t4q`; searches only, never a headline value until
+  a decision says so.
 
 ## Trading costs: limits, not replication
 

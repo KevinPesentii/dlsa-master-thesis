@@ -359,6 +359,9 @@ def main():
                 cfg["training"]["epochs"] = 1
             if "training.epochs" in S["search"].get("space", {}):   # a searched epoch count: 1 as well
                 S["search"]["space"]["training.epochs"] = {"choice": [1]}
+            for o in (S["finalists"].get("extra") or {}).values():  # and a named candidate's own
+                if "training.epochs" in o:
+                    o["training.epochs"] = 1
     if args.data_dir:
         cfg["data"]["dir"] = args.data_dir
     data_dir = Path(cfg["data"]["dir"])
