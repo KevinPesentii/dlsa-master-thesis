@@ -153,12 +153,15 @@ weaken a test to make code pass.
   can run on GPUs (`configs/search_t4_allk_gpu_matrix.yaml`, `--device cuda`, docs/cloud_runs.md section 19): the
   same searches, but a GPU trial is not the CPU trial number for number (other dropout draws and float sums), so
   `scripts/gpu_probe.py` checks the ranking first, and the thesis has to say which K ran where.
-- Quick per-K search, US (2026-11-09): `configs/us_search_t4_quick.yaml` through
-  `configs/search_t4q_us_matrix.yaml`, one search per K: the Table 4 space with one LongConv layer, the first
-  256 points of the same Sobol draw, finalists on seeds 0-1, `us_v2_headline` and the K = 30 Table 4 winner as
-  named finalists. Asked after the out-of-sample K = 100 rows of `runs/_matrix/thesis_v2` had been seen, and
-  the thesis has to say so. Results in `runs/_matrix/search_t4q`; searches only, never a headline value until
-  a decision says so.
+- Quick per-K search, US (2026-11-09): `configs/search_t4q_us_matrix.yaml` runs `configs/us_search_t4_quick.yaml`
+  once per K: the Table 4 space with one LongConv layer, the first 256 points of the same Sobol draw, finalists
+  on seeds 0-2, `us_v2_headline` as a named finalist (not the 2-layer K = 30 Table 4 winner, which waits for the
+  Table 4 decision). Its rows `us_attention_t4q_K<K>`
+  trade 1998-2021 on seeds 0-4 with each K's own winner. Decided before any of it existed: they are DIAGNOSTIC
+  rows, what choosing the values per K buys out of sample, compared on the same seeds with thesis_v2's
+  `us_attention` (the K = 30 values at every K); never a headline value until a decision says so. Asked after
+  the out-of-sample K = 100 rows of `runs/_matrix/thesis_v2` had been seen, and the thesis has to say so.
+  Results in `runs/_matrix/search_t4q`.
 
 ## Trading costs: limits, not replication
 

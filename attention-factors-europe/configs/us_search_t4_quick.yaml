@@ -2,7 +2,7 @@
 # US only, so each K gets its own validated values. Asked 2026-11-09 after the K = 30 Table 4 search
 # (2026-11-08) and after the out-of-sample K = 100 rows of runs/_matrix/thesis_v2 had been seen: the
 # thesis has to say so. Same window (fit 1990-1995, net Sharpe on 1996-1997), model v2, same rule.
-# Three cuts, all decided before this search ran:
+# Two cuts, both decided before this search ran:
 #   1. One LongConv layer (the paper's value). The 2-layer trials were 92% of the K = 30 search's
 #      process time (202 of 219 h) and layers 1 and 2 had the same median and p90 validation net
 #      Sharpe over its 512 points (2026-11-08).
@@ -10,8 +10,11 @@
 #      points of a Sobol sequence are balanced on their own. Layers is held at 1 by a one-value
 #      choice, so the other 14 values are those of the K = 30 draw: each point that drew 1 layer
 #      there is the same candidate (same cid) here.
-#   3. Finalists on two seeds (0, 1) instead of three.
-# Written 2026-11-09, before this search ran. Commit it first and do not edit it afterwards.
+# Finalists on seeds 0-2 as in the v2 and Table 4 searches (first committed with seeds 0-1 in 314fa76,
+# changed to 0-2 on 2026-11-09 before anything ran). The 2-layer K = 30 Table 4 winner (sobol-300) is not a
+# finalist (dropped the same day, before anything ran): one layer throughout, and no out-of-sample run of
+# sobol-300 before the Table 4 decision. Its K = 30 validation is in runs/_matrix/search_t4.
+# Written 2026-11-09, before this search ran. Do not edit it after the run has started.
 #   python scripts/search_validation.py --config configs/us_search_t4_quick.yaml --stage select --K 100
 
 base_config: configs/us_replication.yaml   # everything not listed below comes from here
@@ -51,11 +54,11 @@ fixed:                        # held for every candidate: model v2, as configs/u
   data.returns_history: true
   policy.residual_lookback: 30
 
-# The best 10 points, the paper's Table 4 (`base`) and two named candidates on seeds 0 and 1; the
+# The best 10 points, the paper's Table 4 (`base`) and the v2 values on seeds 0-2; the
 # winner is the best MEAN validation net Sharpe. selected.yaml = base config + the winner's values.
 finalists:
   top: 10
-  seeds: [0, 1]
+  seeds: [0, 1, 2]
   extra:
     us_v2_headline:           # the values in use: model v2's US winner (runs/_matrix/thesis_v2, us_v2 sobol-076)
       objective.lambda_var: 8.06
@@ -64,19 +67,3 @@ finalists:
       model.lambda_ridge: 1.4e-05
       training.batch_days: 125
       policy.input_normalise: window_vol
-    t4_k30_winner:            # the K = 30 Table 4 winner (runs/_matrix/search_t4, us_t4_K30 sobol-300), 2 layers:
-      objective.lambda_var: 14.4   # outside this space, carried so each K shows what it does there
-      policy.input_scale: 152.0
-      model.score_std_target: null
-      model.lambda_ridge: 1.46e-05
-      training.batch_days: 63
-      policy.input_normalise: none
-      policy.hidden: 32
-      policy.dropout: 0.2
-      model.embedding_dim: 64
-      training.epochs: 20
-      policy.layers: 2
-      training.lr: 0.00527
-      training.weight_decay: 0.0272
-      policy.kernel_init: geom_decay
-      policy.lambda_squash: 0.000323

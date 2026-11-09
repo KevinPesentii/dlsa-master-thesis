@@ -1,25 +1,49 @@
-# The quick Table 4 search at every K of Table 2's attention rows, US only (2026-11-09):
-# configs/us_search_t4_quick.yaml once per K (run_matrix passes --K). One LongConv layer, the first
-# 256 Sobol points, finalists on seeds 0-1. Searches only (no runs). Own out dir runs/_matrix/search_t4q,
-# so nothing of runs/_matrix/search_t4 is touched. K = 30 is searched again here: the points that drew
-# one layer in the 2026-11-08 search are the same candidates, a reproduction check on the same CPU type.
-#   python scripts/run_matrix.py --matrix configs/search_t4q_us_matrix.yaml --dry-run
-#   python scripts/run_matrix.py --matrix configs/search_t4q_us_matrix.yaml --smoke --jobs 8
+# The quick Table 4 search at every K of Table 2's attention rows, US only (2026-11-09), and the
+# out-of-sample rows that trade with each K's own winner.
+# Searches: configs/us_search_t4_quick.yaml once per K (run_matrix passes --K). One LongConv layer, the
+# first 256 Sobol points, finalists on seeds 0-2. K = 30 is searched again: the points that drew one
+# layer in the 2026-11-08 search are the same candidates, a reproduction check on the same CPU type.
+# Rows (decided 2026-11-09, before any of them or of these searches existed): DIAGNOSTIC rows, what
+# choosing the values per K buys out of sample. Each K trades 1998-2021 on seeds 0-4 with the winner
+# of its own search, as the thesis_v2 `us_attention` row does with the K = 30 values (us_v2) at
+# every K; the two are compared on the same seeds. Never a headline value until a decision says so.
+# Own out dir runs/_matrix/search_t4q, so nothing of runs/_matrix/search_t4 or thesis_v2 is touched.
+#   python scripts/run_matrix.py --matrix configs/search_t4q_us_matrix.yaml --dry-run --jobs 46
+#   python scripts/run_matrix.py --matrix configs/search_t4q_us_matrix.yaml --smoke --jobs 14
 #   python scripts/run_matrix.py --matrix configs/search_t4q_us_matrix.yaml --jobs 46 --threads 2
 
 name: search_t4q
 
-sets: {}
+sets:
+  seeds5: [0, 1, 2, 3, 4]
+  K1: [1]
+  K3: [3]
+  K5: [5]
+  K8: [8]
+  K15: [15]
+  K30: [30]
+  K100: [100]
+
 blocks: {}
 prep: {}
 
-searches:                        # two at a time (23 workers each), longest first
-  us_t4q_K100: {config: configs/us_search_t4_quick.yaml, K: 100, workers: 23, mem_gb_per_worker: 3}
-  us_t4q_K30:  {config: configs/us_search_t4_quick.yaml, K: 30, workers: 23, mem_gb_per_worker: 3}
-  us_t4q_K15:  {config: configs/us_search_t4_quick.yaml, K: 15, workers: 23, mem_gb_per_worker: 3}
-  us_t4q_K8:   {config: configs/us_search_t4_quick.yaml, K: 8, workers: 23, mem_gb_per_worker: 3}
-  us_t4q_K5:   {config: configs/us_search_t4_quick.yaml, K: 5, workers: 23, mem_gb_per_worker: 3}
-  us_t4q_K3:   {config: configs/us_search_t4_quick.yaml, K: 3, workers: 23, mem_gb_per_worker: 3}
-  us_t4q_K1:   {config: configs/us_search_t4_quick.yaml, K: 1, workers: 23, mem_gb_per_worker: 3}
+# Scheduling at --jobs 46: the K = 100 search first on the whole machine, then two searches of 20
+# workers at a time, which leaves 6 slots: the five K = 100 runs (about 4 hours each, the longest
+# jobs) start in them as soon as their search is done. The other rows start as searches finish.
+searches:
+  us_t4q_K100: {config: configs/us_search_t4_quick.yaml, K: 100, workers: 46, mem_gb_per_worker: 3}
+  us_t4q_K30:  {config: configs/us_search_t4_quick.yaml, K: 30, workers: 20, mem_gb_per_worker: 3}
+  us_t4q_K15:  {config: configs/us_search_t4_quick.yaml, K: 15, workers: 20, mem_gb_per_worker: 3}
+  us_t4q_K8:   {config: configs/us_search_t4_quick.yaml, K: 8, workers: 20, mem_gb_per_worker: 3}
+  us_t4q_K5:   {config: configs/us_search_t4_quick.yaml, K: 5, workers: 20, mem_gb_per_worker: 3}
+  us_t4q_K3:   {config: configs/us_search_t4_quick.yaml, K: 3, workers: 20, mem_gb_per_worker: 3}
+  us_t4q_K1:   {config: configs/us_search_t4_quick.yaml, K: 1, workers: 20, mem_gb_per_worker: 3}
 
-specs: []
+specs:                           # thesis_v2's us_attention row, one K each, with that K's own search
+  - {name: us_attention_t4q_K100, group: diagnostic, runner: attention, config: configs/us_headline_v2.yaml, K: K100, seeds: seeds5, hyper: us_t4q_K100}
+  - {name: us_attention_t4q_K30, group: diagnostic, runner: attention, config: configs/us_headline_v2.yaml, K: K30, seeds: seeds5, hyper: us_t4q_K30}
+  - {name: us_attention_t4q_K15, group: diagnostic, runner: attention, config: configs/us_headline_v2.yaml, K: K15, seeds: seeds5, hyper: us_t4q_K15}
+  - {name: us_attention_t4q_K8, group: diagnostic, runner: attention, config: configs/us_headline_v2.yaml, K: K8, seeds: seeds5, hyper: us_t4q_K8}
+  - {name: us_attention_t4q_K5, group: diagnostic, runner: attention, config: configs/us_headline_v2.yaml, K: K5, seeds: seeds5, hyper: us_t4q_K5}
+  - {name: us_attention_t4q_K3, group: diagnostic, runner: attention, config: configs/us_headline_v2.yaml, K: K3, seeds: seeds5, hyper: us_t4q_K3}
+  - {name: us_attention_t4q_K1, group: diagnostic, runner: attention, config: configs/us_headline_v2.yaml, K: K1, seeds: seeds5, hyper: us_t4q_K1}

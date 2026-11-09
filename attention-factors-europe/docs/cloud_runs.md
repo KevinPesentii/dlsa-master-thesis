@@ -922,34 +922,44 @@ Progress as in section 17 (`runs/_matrix/search_t4/logs/search_us_t4_K100.log`, 
 the service packs `~/search_t4.tgz` (all fourteen searches, K = 30 included) and stops the machine; collect it and
 cancel the Spot request as in section 18.
 
-## 20. A quick Table 4 search at every K, US only, on one CPU machine (2026-11-09)
+## 20. A quick Table 4 search at every K, US only, and the rows that trade with it (2026-11-09)
 
-`configs/us_search_t4_quick.yaml` through `configs/search_t4q_us_matrix.yaml`: the US Table 4 search of section 17
-once per K (1, 3, 5, 8, 15, 30, 100), cut to what one Spot afternoon buys. Three cuts, written into the config
-before the run: one LongConv layer (the 2-layer trials were 202 of the 219 process-hours of the K = 30 search, and
-layers 1 and 2 had the same median and p90 over its 512 points), the first 256 points of the same Sobol draw, and
-finalists on seeds 0 and 1. Finalists are the best 10, the paper's Table 4 (`base`), `us_v2_headline` and the
-K = 30 Table 4 winner (`t4_k30_winner`, 2 layers, outside the space). Out dir `runs/_matrix/search_t4q`, so
-`runs/_matrix/search_t4` is untouched. Searches only: no value replaces a headline value until a decision.
+`configs/search_t4q_us_matrix.yaml` (out dir `runs/_matrix/search_t4q`; `runs/_matrix/search_t4` and `thesis_v2`
+are untouched):
 
-Size (K = 30 trial times of section 17's run, scaled by K from the 2026-11-08 laptop re-score: K = 1 0.61x,
-K = 100 2.12x): about **120 process-hours**, about **3.5 hours** at 46 workers x 2 threads (two searches of 23
-at a time; the last hour is K = 100 and the tails of each search's finalists). Memory about 2.5 GB a worker
-(budget 3), so 140 GB in flight.
+- **Searches.** `configs/us_search_t4_quick.yaml` once per K (1, 3, 5, 8, 15, 30, 100): the US Table 4 search of
+  section 17 with two cuts written into the config before the run. One LongConv layer (the 2-layer trials were 202
+  of the 219 process-hours of the K = 30 search, and layers 1 and 2 had the same median and p90 over its 512
+  points), and the first 256 points of the same Sobol draw. Finalists on seeds 0-2 as in the v2 searches: the best
+  10, the paper's Table 4 (`base`) and `us_v2_headline`. The 2-layer K = 30 Table 4 winner (sobol-300) is not a
+  finalist: it would likely win K = 30, its rows would run about 4x longer, and it should not run out of sample
+  before the Table 4 decision.
+- **Rows** (group `diagnostic`, decided before any of this existed): `us_attention_t4q_K<K>`, thesis_v2's
+  `us_attention` row (`configs/us_headline_v2.yaml`, 1998-2021, seeds 0-4, each run year after year) with the
+  winner of that K's own search instead of the K = 30 values. They show what choosing the values per K buys out of
+  sample, compared on the same seeds with `runs/_matrix/thesis_v2` `us_attention`. Never a headline value until
+  a decision says so.
 
-Machine: **c7i.24xlarge** (96 vCPU, 192 GiB), Spot, persistent, interruption behaviour Stop (section 18), in
-eu-north-1; **m7i.24xlarge** if c7i's Spot price is higher on the day (EC2 -> Spot Requests -> Pricing history).
-Both are the same Intel generation as the 2026-11-08 machine: the 128 points that drew one layer there are the
-same candidates here (same cid), and on the same CPU type their seed-0 numbers should come out again, a free
-reproduction check. Not AMD (that check would read as noise), not a GPU (one-layer trials are dispatch-bound and
-the GPU path has never run). Storage 30 GiB gp3, encrypted. Data: US tables only.
+Size: about **190 process-hours** (searches ~130, from the K = 30 trial times of section 17 scaled by K from the
+2026-11-08 laptop re-score, K = 1 0.61x, K = 100 2.12x; rows ~64, from thesis_v2's run times on the m7i, 1.3 h a
+run at K = 1 to 3.8 h at K = 100). The K = 100 search runs first on all 46 workers (about 1.2 h), then two
+searches of 20 at a time, which leaves 6 slots for the five K = 100 runs, the longest jobs. A replay of the
+scheduler gives about **5.8 hours** if the winners train like the v2 values (at K = 30 the top one-layer
+finalists took 0.5-1.2x the v2 trial time), about 9 if the K = 100 winner trains twice as long.
+
+Machine: **m7i.24xlarge** (96 vCPU, 384 GiB), Spot, persistent, interruption behaviour Stop (section 18), in
+eu-north-1. Same machine type as thesis_v2 (whose run times the estimate uses) and as the 2026-11-08 search: the
+128 points that drew one layer there are the same candidates here (same cid), and their seed-0 numbers should
+come out again, a free reproduction check. A run needs 5.5 GB, so 192 GiB (c7i) would hold back the rows. Not AMD,
+not a GPU (one-layer trials are dispatch-bound; the GPU path has never run). Storage 30 GiB gp3, encrypted.
+Data: US tables only.
 
 On the laptop, from the branch, committed and pushed:
 
 ```powershell
 cd C:\Users\henri\Desktop\SSE\masterThesis\Code\dlsa-table4\attention-factors-europe
 $PY = "C:\Users\henri\miniconda3\envs\afe\python.exe"
-& $PY scripts\run_matrix.py --matrix configs\search_t4q_us_matrix.yaml --dry-run --jobs 46    # 7 jobs
+& $PY scripts\run_matrix.py --matrix configs\search_t4q_us_matrix.yaml --dry-run --jobs 46    # 42 jobs
 & $PY scripts\make_bundle.py --markets us --out $env:TEMP\afe_bundle_t4q
 scp $env:TEMP\afe_bundle_t4q\afe_data.tar $env:TEMP\afe_bundle_t4q\SHA256SUMS $env:TEMP\afe_bundle_t4q\COMMIT "ubuntu@${IP}:~"
 ```
@@ -958,7 +968,7 @@ On the machine, clone, `sha256sum -c` and `cloud_setup.sh` as in section 7, then
 
 ```bash
 cd ~/dlsa/attention-factors-europe; PY=~/afe-venv/bin/python
-$PY scripts/run_matrix.py --matrix configs/search_t4q_us_matrix.yaml --smoke --jobs 14   # "0 failed", a few minutes
+$PY scripts/run_matrix.py --matrix configs/search_t4q_us_matrix.yaml --smoke --jobs 14   # "0 failed", ~10 minutes
 bash scripts/spot_resume.sh install configs/search_t4q_us_matrix.yaml --jobs 46 --threads 2
 bash scripts/spot_resume.sh status                     # "active (running)"
 tail -n 2 runs/_matrix/search_t4q/logs/search_us_t4q_K100.log   # one line per trial, [search i/257]
@@ -966,5 +976,5 @@ tail -n 2 runs/_matrix/search_t4q/logs/search_us_t4q_K100.log   # one line per t
 
 At the end the service packs `~/search_t4q.tgz` and stops the machine. Collect and cancel the Spot request as in
 section 18 (terminate, check EC2 -> Volumes, release any Elastic IP). Read the finalists table at the end of each
-`search_us_t4q_K*.log`: the winner's paired difference against `us_v2_headline` and `t4_k30_winner` on the same
-two seeds is what a per-K search buys on validation at that K.
+`search_us_t4q_K*.log` (the winner's paired difference against `us_v2_headline` on seeds 0-2 is what a per-K
+search buys on validation), then `summary.csv` for the rows against thesis_v2.
