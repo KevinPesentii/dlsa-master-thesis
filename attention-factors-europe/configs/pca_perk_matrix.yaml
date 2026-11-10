@@ -1,0 +1,208 @@
+# The PCA benchmarks of Table 2 on the footing of the per-K attention headline (CLAUDE.md, "Per-K headline",
+# 2026-11-10): each K trades with the winner of its own validation search, in both markets, so that attention
+# against the two-step benchmarks is like for like. Asked 2026-11-10, after the out-of-sample rows of the attention
+# per-K searches (search_t4q, search_t4q_eu) and of the October PCA rows (thesis, thesis_eu) had been seen: the
+# thesis has to say this search was designed after those results. Written and committed before any trial ran; do
+# not edit it after the run has started.
+#
+# Mechanics (configs/thesis_v2_pca_matrix.yaml header): model v2 as it reaches PCA = fixed residual window and
+# cumulative input. With the fixed window B_t is fitted on a span containing the window days, so the re-hedged
+# path is in sample for the hedge; hence every search and row twice, fixed and rolling window, both reported.
+# Which window becomes the PCA headline is decided afterwards, not here.
+# Searches, once per K in {1, 3, 5, 8, 15, 30, 100}, market and window (run_matrix passes --K):
+#   LongConv  configs/{us,europe}_search_pca_perk.yaml (fixed) and *_pca_perk_rolling.yaml: the space, draw (256
+#             points), finalists (top 10 + base on seeds 0-2) and window of the attention quick search for every
+#             knob the PCA policy has, one layer; Europe keeps that K's US winner of the same window (keep_from).
+#   OU        the 3 x 3 grid (c_thresh x c_crit) of configs/{us,europe}_search_ou_v2.yaml (fixed window) and of
+#             the October configs/{us,europe}_search_ou.yaml (rolling), at each K instead of K = 30 only.
+# Rows (group `candidate`): 1998-2021 with each K's own winner. LongConv seeds 0-4, as the attention rows
+#   <market>_attention_t4q_K<K>; OU one run (the rule is deterministic, a seed changes nothing).
+#   Fixed window: <market>_pca_longconv_perk_K<K>, <market>_pca_ou_perk_K<K>; rolling window:
+#   <market>_pca_longconv_perk_rolling_K<K>, <market>_pca_ou_perk_rolling_K<K>. Candidates for the benchmark
+#   headline; they replace nothing (runs/_matrix/thesis, thesis_eu) until a decision says so.
+# Ladder (group `ladder`, configs/thesis_v2_pca_matrix.yaml's, which never ran): K = 30, seeds 0-4, the October
+#   values (no new search) with the rolling window (step 0, the October row on this machine and commit) and the
+#   fixed one; in Europe also the cumulative input. What the mechanics did, apart from per-K selection.
+# Own out dir runs/_matrix/pca_perk: nothing of thesis, thesis_eu, thesis_v2_pca, search_t4q* is touched.
+#   python scripts/run_matrix.py --matrix configs/pca_perk_matrix.yaml --dry-run --jobs 46
+#   python scripts/run_matrix.py --matrix configs/pca_perk_matrix.yaml --smoke --jobs 16
+#   python scripts/run_matrix.py --matrix configs/pca_perk_matrix.yaml --jobs 46 --threads 2
+
+name: pca_perk
+
+sets:
+  seeds5: [0, 1, 2, 3, 4]
+  seed0: [0]
+  K1: [1]
+  K3: [3]
+  K5: [5]
+  K8: [8]
+  K15: [15]
+  K30: [30]
+  K100: [100]
+
+blocks:                          # the ladder's, as configs/thesis_v2_pca_matrix.yaml
+  fixed_window:
+    policy.residual_window: fixed
+  us_sobol056:                   # the winner of configs/us_search_pca.yaml (runs/_matrix/thesis)
+    policy.input_scale: 181.0
+    training.batch_days: 125
+    policy.input: cumulative
+    policy.input_normalise: none
+  eu_sobol019:                   # the winner of configs/europe_search_pca.yaml (runs/_matrix/thesis_eu)
+    policy.input_scale: 35.1
+    training.batch_days: 63
+    policy.input: raw
+    policy.input_normalise: none
+
+prep:                            # stage-one builds, as in configs/thesis_v2_pca_matrix.yaml; skipped when `done` exists
+  pca_us:
+    script: scripts/build_pca_residuals.py
+    config: configs/us_pca_longconv.yaml
+    done: data/us/shared/pca_l252/meta.json
+    mem_gb: 10
+    cost: 60
+  pca_europe17:
+    script: scripts/build_pca_residuals.py
+    config: configs/europe_pca_longconv.yaml
+    done: data/europe17/holfill/pca_l252/meta.json
+    mem_gb: 4
+    cost: 20
+
+# Scheduling at --jobs 46 (m7i.24xlarge): searches start before any row (longest first), in this order; a US
+# LongConv search takes 11 workers (four at a time), a Europe one 6 and starts when that K's US search of the same
+# window is done; the OU grids take one worker each. Rows fill the free slots as their searches finish.
+searches:
+  # US LongConv, fixed window
+  us_pcaq_K100: {config: configs/us_search_pca_perk.yaml, K: 100, workers: 11, mem_gb_per_worker: 3, after: pca_us}
+  us_pcaq_K30: {config: configs/us_search_pca_perk.yaml, K: 30, workers: 11, mem_gb_per_worker: 3, after: pca_us}
+  us_pcaq_K15: {config: configs/us_search_pca_perk.yaml, K: 15, workers: 11, mem_gb_per_worker: 3, after: pca_us}
+  us_pcaq_K8: {config: configs/us_search_pca_perk.yaml, K: 8, workers: 11, mem_gb_per_worker: 3, after: pca_us}
+  us_pcaq_K5: {config: configs/us_search_pca_perk.yaml, K: 5, workers: 11, mem_gb_per_worker: 3, after: pca_us}
+  us_pcaq_K3: {config: configs/us_search_pca_perk.yaml, K: 3, workers: 11, mem_gb_per_worker: 3, after: pca_us}
+  us_pcaq_K1: {config: configs/us_search_pca_perk.yaml, K: 1, workers: 11, mem_gb_per_worker: 3, after: pca_us}
+  # US LongConv, rolling window
+  us_pcaq_roll_K100: {config: configs/us_search_pca_perk_rolling.yaml, K: 100, workers: 11, mem_gb_per_worker: 3, after: pca_us}
+  us_pcaq_roll_K30: {config: configs/us_search_pca_perk_rolling.yaml, K: 30, workers: 11, mem_gb_per_worker: 3, after: pca_us}
+  us_pcaq_roll_K15: {config: configs/us_search_pca_perk_rolling.yaml, K: 15, workers: 11, mem_gb_per_worker: 3, after: pca_us}
+  us_pcaq_roll_K8: {config: configs/us_search_pca_perk_rolling.yaml, K: 8, workers: 11, mem_gb_per_worker: 3, after: pca_us}
+  us_pcaq_roll_K5: {config: configs/us_search_pca_perk_rolling.yaml, K: 5, workers: 11, mem_gb_per_worker: 3, after: pca_us}
+  us_pcaq_roll_K3: {config: configs/us_search_pca_perk_rolling.yaml, K: 3, workers: 11, mem_gb_per_worker: 3, after: pca_us}
+  us_pcaq_roll_K1: {config: configs/us_search_pca_perk_rolling.yaml, K: 1, workers: 11, mem_gb_per_worker: 3, after: pca_us}
+  # Europe LongConv, fixed window
+  eu_pcaq_K100: {config: configs/europe_search_pca_perk.yaml, K: 100, workers: 6, mem_gb_per_worker: 2, after: pca_europe17, keep_from: us_pcaq_K100}
+  eu_pcaq_K30: {config: configs/europe_search_pca_perk.yaml, K: 30, workers: 6, mem_gb_per_worker: 2, after: pca_europe17, keep_from: us_pcaq_K30}
+  eu_pcaq_K15: {config: configs/europe_search_pca_perk.yaml, K: 15, workers: 6, mem_gb_per_worker: 2, after: pca_europe17, keep_from: us_pcaq_K15}
+  eu_pcaq_K8: {config: configs/europe_search_pca_perk.yaml, K: 8, workers: 6, mem_gb_per_worker: 2, after: pca_europe17, keep_from: us_pcaq_K8}
+  eu_pcaq_K5: {config: configs/europe_search_pca_perk.yaml, K: 5, workers: 6, mem_gb_per_worker: 2, after: pca_europe17, keep_from: us_pcaq_K5}
+  eu_pcaq_K3: {config: configs/europe_search_pca_perk.yaml, K: 3, workers: 6, mem_gb_per_worker: 2, after: pca_europe17, keep_from: us_pcaq_K3}
+  eu_pcaq_K1: {config: configs/europe_search_pca_perk.yaml, K: 1, workers: 6, mem_gb_per_worker: 2, after: pca_europe17, keep_from: us_pcaq_K1}
+  # Europe LongConv, rolling window
+  eu_pcaq_roll_K100: {config: configs/europe_search_pca_perk_rolling.yaml, K: 100, workers: 6, mem_gb_per_worker: 2, after: pca_europe17, keep_from: us_pcaq_roll_K100}
+  eu_pcaq_roll_K30: {config: configs/europe_search_pca_perk_rolling.yaml, K: 30, workers: 6, mem_gb_per_worker: 2, after: pca_europe17, keep_from: us_pcaq_roll_K30}
+  eu_pcaq_roll_K15: {config: configs/europe_search_pca_perk_rolling.yaml, K: 15, workers: 6, mem_gb_per_worker: 2, after: pca_europe17, keep_from: us_pcaq_roll_K15}
+  eu_pcaq_roll_K8: {config: configs/europe_search_pca_perk_rolling.yaml, K: 8, workers: 6, mem_gb_per_worker: 2, after: pca_europe17, keep_from: us_pcaq_roll_K8}
+  eu_pcaq_roll_K5: {config: configs/europe_search_pca_perk_rolling.yaml, K: 5, workers: 6, mem_gb_per_worker: 2, after: pca_europe17, keep_from: us_pcaq_roll_K5}
+  eu_pcaq_roll_K3: {config: configs/europe_search_pca_perk_rolling.yaml, K: 3, workers: 6, mem_gb_per_worker: 2, after: pca_europe17, keep_from: us_pcaq_roll_K3}
+  eu_pcaq_roll_K1: {config: configs/europe_search_pca_perk_rolling.yaml, K: 1, workers: 6, mem_gb_per_worker: 2, after: pca_europe17, keep_from: us_pcaq_roll_K1}
+  # US OU grid, fixed window
+  us_ouq_K100: {config: configs/us_search_ou_v2.yaml, K: 100, workers: 1, mem_gb_per_worker: 3, after: pca_us}
+  us_ouq_K30: {config: configs/us_search_ou_v2.yaml, K: 30, workers: 1, mem_gb_per_worker: 3, after: pca_us}
+  us_ouq_K15: {config: configs/us_search_ou_v2.yaml, K: 15, workers: 1, mem_gb_per_worker: 3, after: pca_us}
+  us_ouq_K8: {config: configs/us_search_ou_v2.yaml, K: 8, workers: 1, mem_gb_per_worker: 3, after: pca_us}
+  us_ouq_K5: {config: configs/us_search_ou_v2.yaml, K: 5, workers: 1, mem_gb_per_worker: 3, after: pca_us}
+  us_ouq_K3: {config: configs/us_search_ou_v2.yaml, K: 3, workers: 1, mem_gb_per_worker: 3, after: pca_us}
+  us_ouq_K1: {config: configs/us_search_ou_v2.yaml, K: 1, workers: 1, mem_gb_per_worker: 3, after: pca_us}
+  # US OU grid, rolling window
+  us_ouq_roll_K100: {config: configs/us_search_ou.yaml, K: 100, workers: 1, mem_gb_per_worker: 3, after: pca_us}
+  us_ouq_roll_K30: {config: configs/us_search_ou.yaml, K: 30, workers: 1, mem_gb_per_worker: 3, after: pca_us}
+  us_ouq_roll_K15: {config: configs/us_search_ou.yaml, K: 15, workers: 1, mem_gb_per_worker: 3, after: pca_us}
+  us_ouq_roll_K8: {config: configs/us_search_ou.yaml, K: 8, workers: 1, mem_gb_per_worker: 3, after: pca_us}
+  us_ouq_roll_K5: {config: configs/us_search_ou.yaml, K: 5, workers: 1, mem_gb_per_worker: 3, after: pca_us}
+  us_ouq_roll_K3: {config: configs/us_search_ou.yaml, K: 3, workers: 1, mem_gb_per_worker: 3, after: pca_us}
+  us_ouq_roll_K1: {config: configs/us_search_ou.yaml, K: 1, workers: 1, mem_gb_per_worker: 3, after: pca_us}
+  # Europe OU grid, fixed window
+  eu_ouq_K100: {config: configs/europe_search_ou_v2.yaml, K: 100, workers: 1, mem_gb_per_worker: 2, after: pca_europe17}
+  eu_ouq_K30: {config: configs/europe_search_ou_v2.yaml, K: 30, workers: 1, mem_gb_per_worker: 2, after: pca_europe17}
+  eu_ouq_K15: {config: configs/europe_search_ou_v2.yaml, K: 15, workers: 1, mem_gb_per_worker: 2, after: pca_europe17}
+  eu_ouq_K8: {config: configs/europe_search_ou_v2.yaml, K: 8, workers: 1, mem_gb_per_worker: 2, after: pca_europe17}
+  eu_ouq_K5: {config: configs/europe_search_ou_v2.yaml, K: 5, workers: 1, mem_gb_per_worker: 2, after: pca_europe17}
+  eu_ouq_K3: {config: configs/europe_search_ou_v2.yaml, K: 3, workers: 1, mem_gb_per_worker: 2, after: pca_europe17}
+  eu_ouq_K1: {config: configs/europe_search_ou_v2.yaml, K: 1, workers: 1, mem_gb_per_worker: 2, after: pca_europe17}
+  # Europe OU grid, rolling window
+  eu_ouq_roll_K100: {config: configs/europe_search_ou.yaml, K: 100, workers: 1, mem_gb_per_worker: 2, after: pca_europe17}
+  eu_ouq_roll_K30: {config: configs/europe_search_ou.yaml, K: 30, workers: 1, mem_gb_per_worker: 2, after: pca_europe17}
+  eu_ouq_roll_K15: {config: configs/europe_search_ou.yaml, K: 15, workers: 1, mem_gb_per_worker: 2, after: pca_europe17}
+  eu_ouq_roll_K8: {config: configs/europe_search_ou.yaml, K: 8, workers: 1, mem_gb_per_worker: 2, after: pca_europe17}
+  eu_ouq_roll_K5: {config: configs/europe_search_ou.yaml, K: 5, workers: 1, mem_gb_per_worker: 2, after: pca_europe17}
+  eu_ouq_roll_K3: {config: configs/europe_search_ou.yaml, K: 3, workers: 1, mem_gb_per_worker: 2, after: pca_europe17}
+  eu_ouq_roll_K1: {config: configs/europe_search_ou.yaml, K: 1, workers: 1, mem_gb_per_worker: 2, after: pca_europe17}
+
+specs:
+  # --- US, fixed window: LongConv seeds 0-4, OU one run ---
+  - {name: us_pca_longconv_perk_K100, group: candidate, runner: pca, config: configs/us_pca_longconv.yaml, K: K100, seeds: seeds5, hyper: us_pcaq_K100, after: pca_us}
+  - {name: us_pca_longconv_perk_K30, group: candidate, runner: pca, config: configs/us_pca_longconv.yaml, K: K30, seeds: seeds5, hyper: us_pcaq_K30, after: pca_us}
+  - {name: us_pca_longconv_perk_K15, group: candidate, runner: pca, config: configs/us_pca_longconv.yaml, K: K15, seeds: seeds5, hyper: us_pcaq_K15, after: pca_us}
+  - {name: us_pca_longconv_perk_K8, group: candidate, runner: pca, config: configs/us_pca_longconv.yaml, K: K8, seeds: seeds5, hyper: us_pcaq_K8, after: pca_us}
+  - {name: us_pca_longconv_perk_K5, group: candidate, runner: pca, config: configs/us_pca_longconv.yaml, K: K5, seeds: seeds5, hyper: us_pcaq_K5, after: pca_us}
+  - {name: us_pca_longconv_perk_K3, group: candidate, runner: pca, config: configs/us_pca_longconv.yaml, K: K3, seeds: seeds5, hyper: us_pcaq_K3, after: pca_us}
+  - {name: us_pca_longconv_perk_K1, group: candidate, runner: pca, config: configs/us_pca_longconv.yaml, K: K1, seeds: seeds5, hyper: us_pcaq_K1, after: pca_us}
+  - {name: us_pca_ou_perk_K100, group: candidate, runner: pca, config: configs/us_pca_ou.yaml, K: K100, seeds: seed0, hyper: us_ouq_K100, after: pca_us}
+  - {name: us_pca_ou_perk_K30, group: candidate, runner: pca, config: configs/us_pca_ou.yaml, K: K30, seeds: seed0, hyper: us_ouq_K30, after: pca_us}
+  - {name: us_pca_ou_perk_K15, group: candidate, runner: pca, config: configs/us_pca_ou.yaml, K: K15, seeds: seed0, hyper: us_ouq_K15, after: pca_us}
+  - {name: us_pca_ou_perk_K8, group: candidate, runner: pca, config: configs/us_pca_ou.yaml, K: K8, seeds: seed0, hyper: us_ouq_K8, after: pca_us}
+  - {name: us_pca_ou_perk_K5, group: candidate, runner: pca, config: configs/us_pca_ou.yaml, K: K5, seeds: seed0, hyper: us_ouq_K5, after: pca_us}
+  - {name: us_pca_ou_perk_K3, group: candidate, runner: pca, config: configs/us_pca_ou.yaml, K: K3, seeds: seed0, hyper: us_ouq_K3, after: pca_us}
+  - {name: us_pca_ou_perk_K1, group: candidate, runner: pca, config: configs/us_pca_ou.yaml, K: K1, seeds: seed0, hyper: us_ouq_K1, after: pca_us}
+  # --- US, rolling window: LongConv seeds 0-4, OU one run ---
+  - {name: us_pca_longconv_perk_rolling_K100, group: candidate, runner: pca, config: configs/us_pca_longconv.yaml, K: K100, seeds: seeds5, hyper: us_pcaq_roll_K100, after: pca_us}
+  - {name: us_pca_longconv_perk_rolling_K30, group: candidate, runner: pca, config: configs/us_pca_longconv.yaml, K: K30, seeds: seeds5, hyper: us_pcaq_roll_K30, after: pca_us}
+  - {name: us_pca_longconv_perk_rolling_K15, group: candidate, runner: pca, config: configs/us_pca_longconv.yaml, K: K15, seeds: seeds5, hyper: us_pcaq_roll_K15, after: pca_us}
+  - {name: us_pca_longconv_perk_rolling_K8, group: candidate, runner: pca, config: configs/us_pca_longconv.yaml, K: K8, seeds: seeds5, hyper: us_pcaq_roll_K8, after: pca_us}
+  - {name: us_pca_longconv_perk_rolling_K5, group: candidate, runner: pca, config: configs/us_pca_longconv.yaml, K: K5, seeds: seeds5, hyper: us_pcaq_roll_K5, after: pca_us}
+  - {name: us_pca_longconv_perk_rolling_K3, group: candidate, runner: pca, config: configs/us_pca_longconv.yaml, K: K3, seeds: seeds5, hyper: us_pcaq_roll_K3, after: pca_us}
+  - {name: us_pca_longconv_perk_rolling_K1, group: candidate, runner: pca, config: configs/us_pca_longconv.yaml, K: K1, seeds: seeds5, hyper: us_pcaq_roll_K1, after: pca_us}
+  - {name: us_pca_ou_perk_rolling_K100, group: candidate, runner: pca, config: configs/us_pca_ou.yaml, K: K100, seeds: seed0, hyper: us_ouq_roll_K100, after: pca_us}
+  - {name: us_pca_ou_perk_rolling_K30, group: candidate, runner: pca, config: configs/us_pca_ou.yaml, K: K30, seeds: seed0, hyper: us_ouq_roll_K30, after: pca_us}
+  - {name: us_pca_ou_perk_rolling_K15, group: candidate, runner: pca, config: configs/us_pca_ou.yaml, K: K15, seeds: seed0, hyper: us_ouq_roll_K15, after: pca_us}
+  - {name: us_pca_ou_perk_rolling_K8, group: candidate, runner: pca, config: configs/us_pca_ou.yaml, K: K8, seeds: seed0, hyper: us_ouq_roll_K8, after: pca_us}
+  - {name: us_pca_ou_perk_rolling_K5, group: candidate, runner: pca, config: configs/us_pca_ou.yaml, K: K5, seeds: seed0, hyper: us_ouq_roll_K5, after: pca_us}
+  - {name: us_pca_ou_perk_rolling_K3, group: candidate, runner: pca, config: configs/us_pca_ou.yaml, K: K3, seeds: seed0, hyper: us_ouq_roll_K3, after: pca_us}
+  - {name: us_pca_ou_perk_rolling_K1, group: candidate, runner: pca, config: configs/us_pca_ou.yaml, K: K1, seeds: seed0, hyper: us_ouq_roll_K1, after: pca_us}
+  # --- Europe, fixed window: LongConv seeds 0-4, OU one run ---
+  - {name: eu_pca_longconv_perk_K100, group: candidate, runner: pca, config: configs/europe_pca_longconv.yaml, K: K100, seeds: seeds5, hyper: eu_pcaq_K100, after: pca_europe17}
+  - {name: eu_pca_longconv_perk_K30, group: candidate, runner: pca, config: configs/europe_pca_longconv.yaml, K: K30, seeds: seeds5, hyper: eu_pcaq_K30, after: pca_europe17}
+  - {name: eu_pca_longconv_perk_K15, group: candidate, runner: pca, config: configs/europe_pca_longconv.yaml, K: K15, seeds: seeds5, hyper: eu_pcaq_K15, after: pca_europe17}
+  - {name: eu_pca_longconv_perk_K8, group: candidate, runner: pca, config: configs/europe_pca_longconv.yaml, K: K8, seeds: seeds5, hyper: eu_pcaq_K8, after: pca_europe17}
+  - {name: eu_pca_longconv_perk_K5, group: candidate, runner: pca, config: configs/europe_pca_longconv.yaml, K: K5, seeds: seeds5, hyper: eu_pcaq_K5, after: pca_europe17}
+  - {name: eu_pca_longconv_perk_K3, group: candidate, runner: pca, config: configs/europe_pca_longconv.yaml, K: K3, seeds: seeds5, hyper: eu_pcaq_K3, after: pca_europe17}
+  - {name: eu_pca_longconv_perk_K1, group: candidate, runner: pca, config: configs/europe_pca_longconv.yaml, K: K1, seeds: seeds5, hyper: eu_pcaq_K1, after: pca_europe17}
+  - {name: eu_pca_ou_perk_K100, group: candidate, runner: pca, config: configs/europe_pca_ou.yaml, K: K100, seeds: seed0, hyper: eu_ouq_K100, after: pca_europe17}
+  - {name: eu_pca_ou_perk_K30, group: candidate, runner: pca, config: configs/europe_pca_ou.yaml, K: K30, seeds: seed0, hyper: eu_ouq_K30, after: pca_europe17}
+  - {name: eu_pca_ou_perk_K15, group: candidate, runner: pca, config: configs/europe_pca_ou.yaml, K: K15, seeds: seed0, hyper: eu_ouq_K15, after: pca_europe17}
+  - {name: eu_pca_ou_perk_K8, group: candidate, runner: pca, config: configs/europe_pca_ou.yaml, K: K8, seeds: seed0, hyper: eu_ouq_K8, after: pca_europe17}
+  - {name: eu_pca_ou_perk_K5, group: candidate, runner: pca, config: configs/europe_pca_ou.yaml, K: K5, seeds: seed0, hyper: eu_ouq_K5, after: pca_europe17}
+  - {name: eu_pca_ou_perk_K3, group: candidate, runner: pca, config: configs/europe_pca_ou.yaml, K: K3, seeds: seed0, hyper: eu_ouq_K3, after: pca_europe17}
+  - {name: eu_pca_ou_perk_K1, group: candidate, runner: pca, config: configs/europe_pca_ou.yaml, K: K1, seeds: seed0, hyper: eu_ouq_K1, after: pca_europe17}
+  # --- Europe, rolling window: LongConv seeds 0-4, OU one run ---
+  - {name: eu_pca_longconv_perk_rolling_K100, group: candidate, runner: pca, config: configs/europe_pca_longconv.yaml, K: K100, seeds: seeds5, hyper: eu_pcaq_roll_K100, after: pca_europe17}
+  - {name: eu_pca_longconv_perk_rolling_K30, group: candidate, runner: pca, config: configs/europe_pca_longconv.yaml, K: K30, seeds: seeds5, hyper: eu_pcaq_roll_K30, after: pca_europe17}
+  - {name: eu_pca_longconv_perk_rolling_K15, group: candidate, runner: pca, config: configs/europe_pca_longconv.yaml, K: K15, seeds: seeds5, hyper: eu_pcaq_roll_K15, after: pca_europe17}
+  - {name: eu_pca_longconv_perk_rolling_K8, group: candidate, runner: pca, config: configs/europe_pca_longconv.yaml, K: K8, seeds: seeds5, hyper: eu_pcaq_roll_K8, after: pca_europe17}
+  - {name: eu_pca_longconv_perk_rolling_K5, group: candidate, runner: pca, config: configs/europe_pca_longconv.yaml, K: K5, seeds: seeds5, hyper: eu_pcaq_roll_K5, after: pca_europe17}
+  - {name: eu_pca_longconv_perk_rolling_K3, group: candidate, runner: pca, config: configs/europe_pca_longconv.yaml, K: K3, seeds: seeds5, hyper: eu_pcaq_roll_K3, after: pca_europe17}
+  - {name: eu_pca_longconv_perk_rolling_K1, group: candidate, runner: pca, config: configs/europe_pca_longconv.yaml, K: K1, seeds: seeds5, hyper: eu_pcaq_roll_K1, after: pca_europe17}
+  - {name: eu_pca_ou_perk_rolling_K100, group: candidate, runner: pca, config: configs/europe_pca_ou.yaml, K: K100, seeds: seed0, hyper: eu_ouq_roll_K100, after: pca_europe17}
+  - {name: eu_pca_ou_perk_rolling_K30, group: candidate, runner: pca, config: configs/europe_pca_ou.yaml, K: K30, seeds: seed0, hyper: eu_ouq_roll_K30, after: pca_europe17}
+  - {name: eu_pca_ou_perk_rolling_K15, group: candidate, runner: pca, config: configs/europe_pca_ou.yaml, K: K15, seeds: seed0, hyper: eu_ouq_roll_K15, after: pca_europe17}
+  - {name: eu_pca_ou_perk_rolling_K8, group: candidate, runner: pca, config: configs/europe_pca_ou.yaml, K: K8, seeds: seed0, hyper: eu_ouq_roll_K8, after: pca_europe17}
+  - {name: eu_pca_ou_perk_rolling_K5, group: candidate, runner: pca, config: configs/europe_pca_ou.yaml, K: K5, seeds: seed0, hyper: eu_ouq_roll_K5, after: pca_europe17}
+  - {name: eu_pca_ou_perk_rolling_K3, group: candidate, runner: pca, config: configs/europe_pca_ou.yaml, K: K3, seeds: seed0, hyper: eu_ouq_roll_K3, after: pca_europe17}
+  - {name: eu_pca_ou_perk_rolling_K1, group: candidate, runner: pca, config: configs/europe_pca_ou.yaml, K: K1, seeds: seed0, hyper: eu_ouq_roll_K1, after: pca_europe17}
+
+  # --- ladder: the October K = 30 values, rolling to fixed, one change at a time (no search) ---
+  - {name: us_pca_ladder0_old, group: ladder, runner: pca, config: configs/us_pca_longconv.yaml, K: K30, seeds: seeds5, use: [us_sobol056], after: pca_us}
+  - {name: us_pca_ladder1_fixed, group: ladder, runner: pca, config: configs/us_pca_longconv.yaml, K: K30, seeds: seeds5, use: [us_sobol056, fixed_window], after: pca_us}
+  - {name: eu_pca_ladder0_old, group: ladder, runner: pca, config: configs/europe_pca_longconv.yaml, K: K30, seeds: seeds5, use: [eu_sobol019], after: pca_europe17}
+  - {name: eu_pca_ladder1_fixed, group: ladder, runner: pca, config: configs/europe_pca_longconv.yaml, K: K30, seeds: seeds5, use: [eu_sobol019, fixed_window], after: pca_europe17}
+  - {name: eu_pca_ladder2_cumulative, group: ladder, runner: pca, config: configs/europe_pca_longconv.yaml, K: K30, seeds: seeds5, use: [eu_sobol019, fixed_window], set: {policy.input: cumulative}, after: pca_europe17}

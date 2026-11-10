@@ -113,7 +113,8 @@ def selected_values(search_dir: Path) -> tuple[dict, dict]:
     man = json.loads((search_dir / "manifest.json").read_text())["config"]
     S, base = man["search"], man["base"]
     w = json.loads((search_dir / "metrics.json").read_text())["winner"]
-    keys = [*(S.get("fixed") or {}), *S["search"].get("space", {}), *S["search"].get("grid", {})]
+    space = {k: v for k, v in S["search"].get("space", {}).items() if not v.get("unused")}   # no placeholders
+    keys = [*(S.get("fixed") or {}), *space, *S["search"].get("grid", {})]
     values = {}
     for k in keys:
         section, name = k.split(".")

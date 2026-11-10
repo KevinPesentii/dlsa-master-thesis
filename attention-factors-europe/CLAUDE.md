@@ -178,6 +178,19 @@ weaken a test to make code pass.
   to say so. Not done yet: the PCA + LongConv and OU benchmarks have no per-K searches (their rows are still those
   of `runs/_matrix/thesis`; `thesis_v2_pca` never ran), and every K = 30 exhibit of the write-up (periods,
   ensembles, ablations, diversity) is on the v2 values, which are not the per-K winner at K = 30 in the US.
+- Per-K PCA benchmarks (2026-11-10): `configs/pca_perk_matrix.yaml` gives PCA + LongConv and PCA + OU the per-K
+  treatment of the attention headline, both markets. LongConv: `configs/{us,europe}_search_pca_perk.yaml` once per
+  K (1, 3, 5, 8, 15, 30, 100) = the attention quick search's space for every knob the PCA policy has, one layer,
+  same 256 points of the same draw (the four attention-only knobs stay in the space as `{unused: true}`, drawn and
+  dropped, so PCA sobol-i has attention sobol-i's LongConv values), finalists top 10 + base (Table 4) + the October
+  K = 30 PCA winners on seeds 0-2, same window; Europe keeps that K's US winner. OU: the 3 x 3 grid at each K.
+  Mechanics: fixed residual window + cumulative input, AND every search and row again with the rolling window
+  (`*_pca_perk_rolling.yaml`, `us_search_ou.yaml`), because the fixed window's hedge is in sample (above); which
+  window is the PCA headline is decided after the results, plus the never-run K = 30 ladder of thesis_v2_pca. Rows
+  `<market>_pca_longconv_perk[_rolling]_K<K>` (seeds 0-4) and `<market>_pca_ou_perk[_rolling]_K<K>` (one run:
+  deterministic), 1998-2021. CANDIDATES for the benchmark headline; the rows of `runs/_matrix/thesis` and
+  `thesis_eu` stay until a decision. Designed after the out-of-sample attention per-K rows and the October PCA rows
+  had been seen, and the thesis has to say so. Results in `runs/_matrix/pca_perk`.
 
 ## Trading costs: limits, not replication
 

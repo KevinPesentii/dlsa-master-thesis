@@ -114,14 +114,22 @@ def draw(spec: dict, u: float):
 
 
 def sobol_points(space: dict, n: int, seed: int) -> list[dict]:
+    """A dimension {unused: true} is drawn and dropped: a space with another model's knobs in it as
+    placeholders keeps that model's draw in every other dimension (the PCA per-K searches)."""
     if n < 1 or n & (n - 1):
         raise SystemExit(f"n_points {n}: use a power of 2, Sobol points are balanced only then")
     for key, spec in space.items():
-        if not set(spec) <= {"log", "off", "choice"}:
+        if not set(spec) <= {"log", "off", "choice"} and spec != {"unused": True}:
             raise SystemExit(f"{key}: unknown keys {set(spec) - {'log', 'off', 'choice'}} "
                              "(in YAML, quote \"off\": bare off is the boolean false)")
     u = qmc.Sobol(d=len(space), scramble=True, seed=seed).random_base2(int(math.log2(n)))
-    return [{k: draw(spec, float(x)) for x, (k, spec) in zip(row, space.items())} for row in u]
+    return [{k: draw(spec, float(x)) for x, (k, spec) in zip(row, space.items()) if not spec.get("unused")}
+            for row in u]
+
+
+def used(space: dict) -> list[str]:
+    """The keys a candidate sets: the space without its {unused: true} placeholders."""
+    return [k for k, spec in space.items() if not spec.get("unused")]
 
 
 def grid_points(grid: dict) -> list[dict]:
@@ -368,7 +376,7 @@ def main():
     data_dir = data_dir if data_dir.is_absolute() else ROOT / data_dir
     K, first_oos, sr, fin = S["K"], S["first_oos_year"], S["search"], S["finalists"]
     rob, runner = S.get("robustness") or {"seeds": [], "knobs": {}}, S.get("runner", "attention")
-    for key in [*sr.get("space", {}), *sr.get("grid", {}), *rob["knobs"]]:
+    for key in [*used(sr.get("space", {})), *sr.get("grid", {}), *rob["knobs"]]:
         with_overrides(cfg, {key: None})
     if args.device == "cuda":       # checked here: an error inside a pool worker's start makes the pool respawn it
         if runner == "pca":

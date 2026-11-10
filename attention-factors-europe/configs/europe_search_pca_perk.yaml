@@ -1,0 +1,65 @@
+# configs/us_search_pca_perk.yaml on EUROPEAN data (configs/pca_perk_matrix.yaml): fit 1993-1995
+# (sample.data_start), net Sharpe on 1996-1997, the Europe protocol of 2026-10-12. Same space, draw, budget, rule and
+# validation years as the US search, so the names match, and each K carries that K's US winner into its finalists
+# (`keep_from` in the matrix), as configs/europe_search_t4_quick.yaml does for attention.
+# Asked 2026-11-10, after the out-of-sample rows of the attention per-K searches (runs/_matrix/search_t4q,
+# search_t4q_eu) and of the October PCA rows (runs/_matrix/thesis, thesis_eu) had been seen: the thesis has to say so.
+#
+# Space: configs/us_search_t4_quick.yaml dimension by dimension, in its order. The four attention-only knobs
+# (lambda_var, score temperature, ridge, attention dim) stay in the space as {unused: true}: drawn and dropped
+# (scripts/search_validation.sobol_points), so the other eleven columns are the attention draw itself and PCA
+# point sobol-i has the LongConv and training values of attention point sobol-i. A 10-dimensional space with the
+# same sobol_seed would be another draw. Same n_points (256), sobol_seed, finalists (top 10 + base on seeds 0-2).
+# Mechanics: model v2 as it reaches PCA (configs/thesis_v2_pca_matrix.yaml): fixed residual window, cumulative
+# input. configs/europe_search_pca_perk_rolling.yaml is this search with the rolling window.
+# Named finalists: `base` = the paper's Table 4 values (configs/europe_pca_longconv.yaml, input scale 100, batch 125,
+# no normalisation), the current K = 30 PCA winners of both markets (configs/europe_search_pca.yaml sobol-019, the
+# October Europe rows, here with cumulative input since the input is held; configs/us_search_pca.yaml sobol-056)
+# and, from the matrix, that K's US winner.
+# Written 2026-11-10, before this search ran. Commit it first and do not edit it afterwards.
+#   python scripts/search_validation.py --config configs/europe_search_pca_perk.yaml --stage select --K 100
+
+runner: pca
+base_config: configs/europe_pca_longconv.yaml   # everything not listed below comes from here
+K: 30                         # scripts/run_matrix.py passes --K
+first_oos_year: 1998          # fit 1993-1995 (sample.data_start) on the PCA residuals, score the net Sharpe on 1996-1997
+validation_years: 2
+
+search:
+  n_points: 256
+  sobol_seed: 0
+  seed: 0
+  space:                      # configs/us_search_t4_quick.yaml, same order; attention-only knobs drawn and dropped
+    objective.lambda_var: {unused: true}
+    policy.input_scale: {log: [0.3, 300]}
+    model.score_std_target: {unused: true}
+    model.lambda_ridge: {unused: true}
+    training.batch_days: {choice: [63, 125, 250]}
+    policy.input_normalise: {choice: [none, window_vol]}
+    policy.hidden: {choice: [16, 32, 64]}
+    policy.dropout: {choice: [0.0, 0.1, 0.2, 0.3]}
+    model.embedding_dim: {unused: true}
+    training.epochs: {choice: [10, 20, 30, 45, 60]}
+    policy.layers: {choice: [1]}                       # one LongConv layer, as the attention quick search
+    training.lr: {log: [3.0e-4, 3.0e-2]}
+    training.weight_decay: {log: [5.0e-3, 0.5]}
+    policy.kernel_init: {choice: [geom_decay, random]}
+    policy.lambda_squash: {log: [1.0e-4, 1.0e-2]}
+
+fixed:                        # held for every candidate: model v2 as it reaches PCA
+  policy.residual_window: fixed
+  policy.input: cumulative
+
+finalists:
+  top: 10
+  seeds: [0, 1, 2]
+  # keep: that K's US winner, passed by scripts/run_matrix.py (`keep_from` in the matrix)
+  extra:
+    eu_pca_oct_k30:           # the October Europe K = 30 winner (configs/europe_search_pca.yaml sobol-019; raw input there)
+      policy.input_scale: 35.1
+      training.batch_days: 63
+      policy.input_normalise: none
+    us_pca_oct_k30:           # the October K = 30 winner (configs/us_search_pca.yaml sobol-056), Table 4 otherwise
+      policy.input_scale: 181.0
+      training.batch_days: 125
+      policy.input_normalise: none
