@@ -106,6 +106,35 @@ def forward(model, b: trading.SlotBatch) -> torch.Tensor:
     return trading.compose(w_port, b)
 
 
+def ou_weights(b: trading.SlotBatch, pc: dict, state: np.ndarray) -> np.ndarray:
+    """Residual weights of the OU rule. policy.ou_rule threshold (GPZ, memoryless, the thesis
+    row) or bands (Avellaneda & Lee's open/close bands with memory, a diagnostic);
+    policy.ou_filter r2 (GPZ: R2 of the AR(1) > c_crit) or kappa (Avellaneda & Lee:
+    kappa = -252 log b > kappa_min). Defaults reproduce every earlier row."""
+    rule, filt = pc.get("ou_rule", "threshold"), pc.get("ou_filter", "r2")
+    X, tradable = b.windows.numpy(), b.tradable.numpy()
+    if rule == "threshold" and filt == "r2":
+        return ou_threshold.threshold_weights(X, tradable, pc["c_thresh"], pc["c_crit"])
+    s, r2, bb, ok = ou_threshold.ou_fit(X)
+    ok &= tradable
+    if filt == "r2":
+        passed = r2 > pc["c_crit"]
+    elif filt == "kappa":
+        passed = -252.0 * np.log(bb) > pc["kappa_min"]
+    else:
+        raise ValueError(f"unknown policy.ou_filter: {filt}")
+    if rule == "threshold":
+        on = ok & passed
+        w = np.zeros(s.shape, dtype=np.float32)
+        w[on & (s > pc["c_thresh"])] = -1.0
+        w[on & (s < -pc["c_thresh"])] = 1.0
+        return w
+    if rule == "bands":
+        return ou_threshold.band_weights(s, ok & passed, ok, b.idx.numpy(), state, pc["c_thresh"],
+                                         pc.get("c_close_short", 0.75), pc.get("c_close_long", 0.50))
+    raise ValueError(f"unknown policy.ou_rule: {rule}")
+
+
 def train_one_window(model, b: trading.SlotBatch, cfg: dict, rng: np.random.Generator, log) -> None:
     tr, ob = cfg["training"], cfg["objective"]
     tc, sc = ob["turnover_cost"], ob["short_cost"]
@@ -166,6 +195,7 @@ def run_K(K: int, cfg: dict, seed: int, panel: pca_factors.Panel, years: list[in
     torch.manual_seed(seed)
     rng = np.random.default_rng(seed)
     dates = s1.dates
+    ou_state = np.zeros(s1.n_pool + 1, dtype=np.float32)    # bands rule: positions carried across years
     w_pool_all, w_slot_all, date_all = [], [], []
     for year in years:
         t_te0 = dates.searchsorted(pd.Timestamp(year, 1, 1))
@@ -185,8 +215,7 @@ def run_K(K: int, cfg: dict, seed: int, panel: pca_factors.Panel, years: list[in
             w = evaluate_window(model, test_b)
         else:
             test_b = s1.batch(t_te0, t_te1, L, scale, cum, window=window)
-            w_port = torch.from_numpy(ou_threshold.threshold_weights(
-                test_b.windows.numpy(), test_b.tradable.numpy(), pc["c_thresh"], pc["c_crit"]))
+            w_port = torch.from_numpy(ou_weights(test_b, pc, ou_state))
             w = trading.compose(w_port, test_b)
             log(f"  {year}: {t_te1 - t_te0} days, {int(test_b.tradable.sum(1).float().mean())} "
                 f"tradable/day, {(w_port != 0).sum(1).float().mean():.0f} residuals traded/day")
@@ -208,7 +237,12 @@ def run_K(K: int, cfg: dict, seed: int, panel: pca_factors.Panel, years: list[in
               "residual_window": window,
               "execution_lag": int(e.get("lag", 0)),
               "stale_when_closed": bool(e.get("stale_when_closed", True)) and panel.closed is not None,
-              "factor_model": f"pca_cov{meta['cov_window']}_loadings{meta['loading_window'] or 'projection'}"})
+              "factor_model": f"pca_cov{meta['cov_window']}_loadings{meta['loading_window'] or 'projection'}"
+                              + ("_covariance" if meta.get("pca_on") == "covariance" else "")})
+    if kind == "ou_threshold":
+        m.update({k: pc.get(k, d) for k, d in [("ou_rule", "threshold"), ("ou_filter", "r2"), ("c_thresh", None),
+                                               ("c_crit", None), ("kappa_min", None), ("c_close_short", None),
+                                               ("c_close_long", None)]})
     runs.write_metrics(run_dir, m)
     daily.to_csv(run_dir / "oos_daily.csv", index=False)
     if ev.get("save_weights"):
