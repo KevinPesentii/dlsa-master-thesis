@@ -170,6 +170,14 @@ weaken a test to make code pass.
   `eu_attention`; never a headline value until a decision says so. Asked after the US quick search, its rows and
   the Europe rows of `runs/_matrix/thesis_v2` had been seen, and the thesis has to say so. Results in
   `runs/_matrix/search_t4q_eu`.
+- Per-K headline (decided 2026-11-10, Henrik): the per-K rows are now the HEADLINE in both markets,
+  `us_attention_t4q_K<K>` (`runs/_matrix/search_t4q`) and `eu_attention_t4q_K<K>` (`runs/_matrix/search_t4q_eu`),
+  each K trading with the winner of its own search. Reason: choosing the values per K is the more sensible approach
+  than carrying the K = 30 values to every K. thesis_v2's `us_attention` and `eu_attention` (the K = 30 values at
+  every K) become the comparison. Decided after both sets of out-of-sample rows had been seen, and the thesis has
+  to say so. Not done yet: the PCA + LongConv and OU benchmarks have no per-K searches (their rows are still those
+  of `runs/_matrix/thesis`; `thesis_v2_pca` never ran), and every K = 30 exhibit of the write-up (periods,
+  ensembles, ablations, diversity) is on the v2 values, which are not the per-K winner at K = 30 in the US.
 
 ## Trading costs: limits, not replication
 
