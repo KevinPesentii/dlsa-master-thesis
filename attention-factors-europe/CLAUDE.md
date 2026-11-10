@@ -191,6 +191,13 @@ weaken a test to make code pass.
   deterministic), 1998-2021. CANDIDATES for the benchmark headline; the rows of `runs/_matrix/thesis` and
   `thesis_eu` stay until a decision. Designed after the out-of-sample attention per-K rows and the October PCA rows
   had been seen, and the thesis has to say so. Results in `runs/_matrix/pca_perk`.
+- Per-K benchmark headline (decided 2026-11-10, Henrik, after the pca_perk results): the FIXED-window per-K rows
+  are the benchmark headline in both markets, `<market>_pca_longconv_perk_K<K>` and `<market>_pca_ou_perk_K<K>`
+  (`runs/_matrix/pca_perk`, run 2026-11-10, commit 35b8d63). Reason: the attention headline also uses the fixed
+  window (model v2), so attention against PCA is like for like. The thesis has to say that the fixed window's hedge
+  is in sample. The rolling twins (`*_perk_rolling_K<K>`) and the October rows of `runs/_matrix/thesis` and
+  `thesis_eu` become the comparison. Decided after the out-of-sample rows had been seen, and the thesis has to say
+  so. Report: `Thesis/diagnostics/2026-11-10_pca_perk` (private, outside the repo).
 
 ## Trading costs: limits, not replication
 
