@@ -170,6 +170,11 @@ weaken a test to make code pass.
   `eu_attention`; never a headline value until a decision says so. Asked after the US quick search, its rows and
   the Europe rows of `runs/_matrix/thesis_v2` had been seen, and the thesis has to say so. Results in
   `runs/_matrix/search_t4q_eu`.
+- K = 30 exhibits on the per-K values (decided 2026-11-10, after the out-of-sample results had been seen):
+  `configs/table4_k30_rerun_matrix.yaml` reruns the drivers table (the six theme ablations, `features.drop_groups`)
+  and the US top-200 row on the per-K K = 30 values (the winner of `search_t4q/us_t4q_K30`, sobol-076) instead of
+  the v2 values, seeds 0-4, 1998-2021, with `us_attention_t4q_K30_base` as a reproduction check of search_t4q's
+  K = 30 row. Results in `runs/_matrix/table4_k30_rerun`; the thesis has to say when this was decided.
 
 ## Trading costs: limits, not replication
 
