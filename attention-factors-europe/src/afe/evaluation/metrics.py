@@ -3,7 +3,8 @@
 SR, mu, sigma are annualised from daily returns: mu = 252 mean (in %), sigma = sqrt(252)
 sd (in %), SR = mu / sigma.  Table 2's own rows satisfy SR = mu / sigma to the printed
 precision (market: 8.61 / 20.37 = 0.42), so the reported SR does NOT subtract the
-risk-free rate; only the training objective does.  Net numbers are after the paper's
+risk-free rate, and since 2026-11-17 neither does the training objective
+(objective.subtract_rf: false, runs before that subtracted it).  Net numbers are after the paper's
 5bp turnover and 1bp shorting cost.  Beta is the OLS slope on the daily equal-weighted
 universe return.
 """

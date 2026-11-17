@@ -95,8 +95,11 @@ def pool_net_returns(held: torch.Tensor, R_pool: torch.Tensor, tc: float, sc: fl
 
 
 def sharpe_loss(net: torch.Tensor, rf: torch.Tensor, valid: torch.Tensor, subtract_rf: bool) -> torch.Tensor:
-    """-(mean(net - rf) / sd(net)) over valid dates: the paper's objective without the
-    explained-variance term, which is constant once the factors are fixed."""
+    """-(mean(net) / sd(net)) over valid dates, the Sharpe half of the objective (the
+    explained-variance term is constant once the factors are fixed). `subtract_rf` gives the
+    paper's numerator mean(net - rf); every config sets it false since 2026-11-17, because the
+    book is roughly self-financing (long and short legs offset), so its net return is already
+    an excess return and the evaluation SR (evaluation.metrics) subtracts no rf either."""
     r = net[valid]
     excess = (r - rf[valid]) if subtract_rf else r
     return -(excess.mean() / (r.std() + 1e-12))

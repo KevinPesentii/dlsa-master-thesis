@@ -57,7 +57,7 @@ objective:
   lambda_var: 17.6
   turnover_cost: 0.0005          # ||w_t - w_{t-1}||_1
   short_cost: 0.0001             # ||max(-w_t, 0)||_1
-  subtract_rf: true              # paper: (Rbar_net - R_f) / sd in the objective
+  subtract_rf: false             # 2026-11-17: mean(net) / sd(net), no R_f (self-financing book); true = paper
 
 execution:
   lag: 0                         # closes between the close whose information sets the weights and the

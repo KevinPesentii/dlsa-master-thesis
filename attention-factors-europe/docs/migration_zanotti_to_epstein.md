@@ -135,6 +135,10 @@ the factor rotation is unpinned. Replaces `train_test.py:173-180` entirely.
 **B2. Subtract the risk-free rate in the Sharpe numerator.**
 The clone uses raw `mean_ret/std` (`train_test.py:171-174`). Epstein's numerator is
 `Rbar_net - R_f`. Small in the US, not negligible for a 1998-2021 European sample.
+*Reverted 2026-11-17 (Henrik):* `objective.subtract_rf: false` in every config, so the
+objective is again `mean(net) / sd(net)`. The book is roughly self-financing, its net return
+is already an excess return, and the reported and validation Sharpe ratios never subtracted
+R_f. Runs before that date trained with R_f subtracted.
 
 **B3. Turn costs on by default.**
 `configs/cnntransformer-full.yaml:49-51` ships `trans_cost: 0`, `hold_cost: 0`. In Epstein

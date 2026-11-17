@@ -203,6 +203,11 @@ weaken a test to make code pass.
   and the US top-200 row on the per-K K = 30 values (the winner of `search_t4q/us_t4q_K30`, sobol-076) instead of
   the v2 values, seeds 0-4, 1998-2021, with `us_attention_t4q_K30_base` as a reproduction check of search_t4q's
   K = 30 row. Results in `runs/_matrix/table4_k30_rerun`; the thesis has to say when this was decided.
+- Objective without R_f (decided 2026-11-17, Henrik): `objective.subtract_rf: false` in all ten base configs, so
+  training maximises mean(net) / sd(net), the same Sharpe the validation search scores and the tables report.
+  Reason: the book is roughly self-financing, so its net return is already an excess return. Every run and search
+  before this date trained with the paper's (Rbar_net - R_f) / sd; their saved configs still say true and
+  reproduce. rf stays a model input. Nothing has been rerun under the new objective yet.
 
 ## Trading costs: limits, not replication
 

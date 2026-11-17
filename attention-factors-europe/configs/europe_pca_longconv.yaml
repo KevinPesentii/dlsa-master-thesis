@@ -45,7 +45,7 @@ policy:
 objective:
   turnover_cost: 0.0005
   short_cost: 0.0001
-  subtract_rf: true
+  subtract_rf: false             # 2026-11-17: mean(net) / sd(net), no R_f (self-financing book); true = paper
 
 execution:
   lag: 0
