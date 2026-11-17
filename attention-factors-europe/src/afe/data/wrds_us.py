@@ -100,6 +100,22 @@ def fetch_crsp_daily_year(db, year: int, where: str = CRSP_COMMON) -> pd.DataFra
     return _compact(df)
 
 
+def fetch_crsp_low(db, permnos: list[int], start_year: int, end_year: int, chunk: int = 400) -> pd.DataFrame:
+    """Daily low (dlylow) of crsp.dsf_v2 for the given permnos: the one price the daily
+    pull lacks, needed for the Corwin-Schultz spread (characteristics Spread, 2026-11-17).
+    Every row of those permnos, whatever its flags; stage 2 joins it on (permno, date)."""
+    out = []
+    for i in range(0, len(permnos), chunk):
+        keys = ",".join(str(int(p)) for p in permnos[i:i + chunk])
+        out.append(db.raw_sql(
+            f"""select permno, dlycaldt as date, dlylow::float8 as low
+                from crsp.dsf_v2
+                where permno in ({keys}) and dlycaldt between '{start_year}-01-01' and '{end_year}-12-31'""",
+            date_cols=["date"]))
+        print(f"  low: {min(i + chunk, len(permnos)):,}/{len(permnos):,} permnos, {sum(map(len, out)):,} rows", flush=True)
+    return _compact(pd.concat(out, ignore_index=True))
+
+
 def fetch_crsp_delisting(db, start_year: int, end_year: int) -> pd.DataFrame:
     """Delisting-day rows of crsp.dsf_v2 (dlydelflg = 'Y'), every security, same
     columns as the daily file plus the flag and the previous trading date. ~24k rows

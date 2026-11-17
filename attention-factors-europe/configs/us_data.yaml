@@ -44,6 +44,22 @@ universe:
   # (us_panel.receipt_caps, rule 3)
   receipt_home_tol: 1.5
   receipt_home_max_ratio: 100      # further apart, the home cap is the broken one: kept as is
+  receipt_carry_links: true        # a receipt whose CCM link has ended keeps it (AmBev 1998-2013; Kevin's data check)
+  # Audit of 2026-11-17 (Thesis/diagnostics/2026-11-17_input_data_audit). Lines never ranked: receipts
+  # whose CRSP / secm share count makes a micro cap a top-500 company and that no home-market cap checks (A8)
+  exclude_permnos:
+    - {permno: 17379, note: "OneSmart International Education ADR: CRSP cap $16-63bn 2018-20, total assets $0.35bn"}
+    - {permno: 90899, note: "Genetic Technologies ADR: CRSP cap $31bn 2021-08, total assets $11-17m"}
+    - {permno: 88513, note: "Crosswave Communications ADR: secm cap $12-22bn 2002-03, CRSP's receipt cap $10-16m"}
+  # a receipt is ranked only if its line traded on at least this share of the days of the last
+  # receipt_activity_months months: dormant 1990s programmes (Daiei, Kubota, Mitsui) price at quote midpoints (B1)
+  receipt_min_traded_share: 0.9
+  receipt_activity_months: 6
+  # a line is ranked only with a CRSP monthly row this many months before: not on its first month's price (B7)
+  min_history_months: 1
+  # a line is ranked only if still listed at the end of the ranking month: its last daily return at most this
+  # many days before the month end and no delisting on or before it (Kevin's data check, 2026-11-17)
+  listed_within_days: 10
 
 # Which permnos get characteristics. 'universe' = ever a member in the sample (a few
 # thousand names, minutes to build). 'all' = every eligible stock (needed only if the
@@ -58,6 +74,33 @@ fundamentals:
   lag_months: 6
   max_age_months: 30         # drop a record older than this instead of carrying it on
   fill_zero: [txditc, txdb, pstk, mib, ivao, xrd, xad, txp, dlc]   # not pstkrv/pstkl: they are a fallback chain
+  # December ME of a record is used only while the company's cap stays within this factor of it, grown
+  # by the company's return since that December (us_panel.validate_dec_me; audit B2, 2026-11-17)
+  me_dec_max_ratio: 8
+
+corrections:
+  # delisting-day rows (crsp_delisting.parquet) that are not a holder's return (audit A7)
+  drop_delisting:
+    - {permno: 88953, date: 2023-05-23, note: "ABB ADR -94.6% when the ADR programme ended; holders kept ABB shares"}
+
+returns:
+  # a no-trade day whose closing quote is wider than this share of its midpoint keeps the previous close,
+  # and its CRSP return moves to the next day (us_panel.fold_broken_quotes; ABN AMRO ADR 2007-10-04; A6)
+  broken_quote_spread: 0.10
+
+volume:
+  # Nasdaq volume divided by 2.0 / 1.8 / 1.6 before 2001-02 / 2002 / 2004 (Gao and Ritter 2010; audit B4)
+  nasdaq_divisor: gao_ritter
+
+risk_free:
+  # ff_monthly: daily rf from FF's monthly T-bill (the daily file has rf in whole basis points); also written to
+  # output.dir/rf_daily.parquet, which the PCA runner can read (data.rf_file). Kevin's data check, 2026-11-17
+  source: ff_monthly
+
+spread:
+  # corwin_schultz: the daily high-low estimate of hl_spread (needs raw crsp_daily_low/, fetch_us_raw.py --low),
+  # as in Europe; quotes: CRSP closing bid/ask, several times too wide on the NYSE until 2003 (audit B3)
+  source: corwin_schultz
 
 windows:                     # in trading days unless stated
   momentum_min_obs: {r12_2: 8, r12_7: 4, r36_13: 16}   # of 11, 6, 24 months

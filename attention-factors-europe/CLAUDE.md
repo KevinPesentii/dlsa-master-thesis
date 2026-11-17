@@ -225,6 +225,25 @@ quote and venue data and a calibrated impact model, none of which we are simulat
   in ECU/EUR with USD as robustness. (The proposal's 500 was replaced on 2026-10-10:
   EU rank ~125-193 has the cap of the US 500th.)
 
+- Input audit (2026-11-17, Henrik: the clear fixes plus the recommended options, then rebuild;
+  `Thesis/diagnostics/2026-11-17_input_data_audit`, private). Every build since reads: Europe
+  COGS/XSGA zeros of cost-by-nature filers and zero-asset records as missing, ECU accounts at 1,
+  twelve bad FX quotes dropped, RELX NV+PLC and Royal Dutch+Shell T&T as one company each (group
+  accounts), Arcelor's old gvkey out after its merger; US broken-quote no-trade days folded into the
+  next return, ABB's 2023 delisting return dropped, three oversized receipts excluded, receipts
+  ranked only if they traded on 90% of the last six months' days, a line ranked only after a month
+  of listing, the 20,000x receipt guard only without a home-market cap, Nasdaq volume Gao-Ritter
+  adjusted; both markets Spread = Corwin-Schultz (split-adjusted), Vol = value traded, December ME
+  used only while the company cap stays within 8x of it grown by its return. Config keys in
+  `configs/us_data*.yaml` and `configs/europe1{7,2}_data.yaml`; docs/us_characteristics.md and
+  docs/europe_build.md say what each does. Every run before it used the old data, backed up in
+  `data/<market>/private/prev_20261117_audit`. Same day, from Kevin's data check (Henrik: "fix and
+  rebuild"): a line is ranked only if still listed at the end of the ranking month (both markets);
+  Europe hands a company to its other line when its carrying line is delisted mid-month, keeps the last
+  traded close on non-traded rows, and sets INVT 0 on bank and insurer records; US receipts keep an
+  ended CCM link (AmBev 1998-2013) and the US rf comes from the monthly T-bill. PCA residuals
+  (`pca_l252`) are not shipped: the matrices' `prep` step builds them on the run machine.
+
 OPEN, to settle before the feature builder is written: JKP's European characteristics do
 not map one to one onto the 39 US Chen-Pelger-Zhu definitions. Current plan is the
 INTERSECTION so both markets share one feature definition, at the cost of dropping

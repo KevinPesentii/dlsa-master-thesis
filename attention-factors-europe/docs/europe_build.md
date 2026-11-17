@@ -80,6 +80,26 @@ before 2010. Identical to the 2026-10-07 experiment copy
    2012-19), the old top 200's total cap was 14-18% too large in 2012-18 and 10% in
    2023-25; 825 -> 795 companies ever in the as-of ranking. Previous outputs:
    data/europe1{7,2}/private/prev_20261007_cap_fixes.
+   **Audit fixes (2026-11-17)**, `Thesis/diagnostics/2026-11-17_input_data_audit` (private):
+   two groups that Compustat files under TWO gvkeys are one company, like Unilever
+   (`corrections.merge_companies`, `compustat_global.merge_companies`: the second half's cap
+   is added to the first, which keeps its pricing line; the second is not eligible): RELX
+   PLC + NV to 2018-09, Royal Dutch Petroleum + Shell Transport and Trading to the 2005
+   unification, with the group's accounts that Compustat files under Shell plc in place of
+   Royal Dutch's holding accounts (`corrections.accounts_from`). Holding companies of another
+   member (Heineken Holding, Christian Dior, Dordtsche Petroleum) stay separate companies.
+   From Kevin's data check the same day: a listing prices and sizes a company at a month end only if
+   its month-end row is at most 10 days old and the line is not delisted by then (`filters.
+   listed_within_days`, g_security.dldtei): a company that stopped trading mid-month is no longer
+   ranked for the next month (103 member-months), and a company whose line stopped is priced by the
+   line that still trades. Inside a month, a carrying line delisted on day t hands the company to its
+   most active other line from t (`europe_panel.company_daily`), and returns.parquet is built from that
+   company series. A non-traded row (prcstd != 10, Compustat's holiday rows) keeps the last traded
+   close (`returns.carry_untraded_price`; UK May Day 1997 carried a close two days old). Banks' and
+   insurers' INVT is 0 when missing (`fundamentals.fill_zero_fs`): FS records report it as 0 to FY2010
+   and leave it empty after, which set DPI2A to the median for a quarter of the members from 2014.
+   Excluded lines: Arcelor's old gvkey after its 2007-11-13 merger into ArcelorMittal, and
+   Royal Dutch from its last trading day, 2005-07-19. Previous outputs: data/europe1{7,2}/private/prev_20261117_audit.
 2. **Numeraire.** ECU to 1998-12-31 = the official basket (three compositions, 1979, 1984,
    1989) valued at Compustat's GBP cross rates; EUR from 1999-01-01 = Compustat's quote;
    one to one at the switch (Reg. 1103/97). Pseudo currency `XEU` in the FX table, so the
@@ -87,13 +107,19 @@ before 2010. Identical to the 2026-10-07 experiment copy
    reproduces the 1998 conversion rates within 1.5 bp, jumps < 2 bp at the revisions, and
    tracks Eurostat's official daily ECU within 0.07% a year. Compustat's own `XEU` (off by
    1.1-1.3% in 1995-96) and its pre-1999 synthetic EUR (off by up to 4.2% in 1991) are not
-   used. Returns carry the FX move (price converted day by day, then the ratio).
+   used. Returns carry the FX move (price converted day by day, then the ratio). Twelve
+   Compustat quotes that jump 3% against the other currencies and revert the next
+   business day are dropped with their carried copies (`corrections.fx_quotes`,
+   `europe_fx.drop_bad_quotes`; NOK 1993-07-23 had moved a Norwegian member -8% and +9%).
 3. **Characteristics** = the 39 of the US build through characteristics.py, fed with
    company-level series (`europe_panel.py`): the company's line in month M = the line that
    priced its cap at the end of M-1. Substitutes for what Global lacks, documented in
    `europe_panel.py` and `europe_accounts.py` (fundamentals, JKP): Spread = Corwin-Schultz
-   high-low (local prices, overnight adjustment,
-   >= 10 days); market, SMB and HML = Ken French's Europe three factors (value-weighted,
+   high-low (local prices over ajexdi, so a split between the two days is not a range
+   (since 2026-11-17); overnight adjustment, >= 10 days; `hl_spread.py`, shared with the US
+   build since 2026-11-17); Vol = value traded in the numeraire (shares x close; home line
+   only, so venue fragmentation after MiFID lowers UK turnover from 2008, accepted and
+   documented); market, SMB and HML = Ken French's Europe three factors (value-weighted,
    all sizes; 16 countries = europe17's less Luxembourg), every column of which is in USD:
    the market's USD total return (Mkt-RF + RF) converted to the numeraire, SMB and HML
    (dollar long-short spreads) times the day's change of the numeraire per dollar, the
@@ -103,6 +129,15 @@ before 2010. Identical to the 2026-10-07 experiment copy
    its window have all three factors; ni = nicon else ib + xido; mib else mibt;
    sale = revt for FS (banks, insurers); pstkrv/pstkl absent; xad zero. Fundamentals in
    the numeraire at the fiscal year end, usable from June of the next year (US rule).
+   Zeros that mean "not reported" are missing (2026-11-17): COGS or XSGA of 0 next to
+   positive XOPR unless the other item alone is XOPR (within 1%): firms reporting costs by
+   nature, about a fifth of the industrial records before 2006, which had put OL at 0 and
+   PCM at 1 for a quarter of the members; and every balance-sheet item of a record with
+   total assets 0 (Unilever and RELX 1995, Compass 2000). Accounts in ECU (curcd XEU)
+   convert at 1. December ME is used in month m only while the company cap of m stays
+   within 8x of it grown by the company's return since that December
+   (`fundamentals.me_dec_max_ratio`, `us_panel.validate_dec_me`): GDF's 2004 accounts had
+   met the cap of a pre-IPO line 100 times too small.
 4. **JKP.** `contrib.global_factor`, all columns, every line of the ever-members, eom
    1985-2025, pulled in 7-year chunks (each query scans the table, ~4 min). The table of a
    version = members' rows as of the end of M-1 (home line, else JKP's primary

@@ -1,7 +1,7 @@
 """Stage 1: pull the raw US tables from WRDS once.
 
     python scripts/fetch_us_raw.py [--config configs/us_data.yaml] [--years 2025 2024 ...] [--delisting]
-                                   [--extra] [--global-home] [--ff5]
+                                   [--extra] [--global-home] [--ff5] [--low PERMNO_CSV]
 
 Resumable: yearly CRSP daily files that already exist are skipped, so a dropped
 connection costs one year, not the whole pull. --years pulls only the listed daily years
@@ -12,8 +12,11 @@ of the range in parallel. --delisting pulls only crsp_delisting.parquet (seconds
 see wrds_us.pull_extra) to an existing raw directory, with manifest_extra.json.
 --global-home adds the receipt issuers' Compustat Global month-end rows (global_home/, see
 wrds_us.pull_global_home; needs --extra's files). --ff5 adds ff5_daily / ff5_monthly.parquet
-(Fama-French five factors + momentum, for the evaluation regressions). Output goes to
-raw.dir from the config, with a manifest.json.
+(Fama-French five factors + momentum, for the evaluation regressions). --low PERMNO_CSV adds
+the daily low of the listed permnos (column `permno`) as crsp_daily_low/<year>.parquet, for the
+Corwin-Schultz spread (2026-11-17: every line ever in the top 1,000 by CRSP cap since 1989, every
+receipt and every permno of the existing builds). Output goes to raw.dir from the config, with a
+manifest.json.
 """
 
 from __future__ import annotations
@@ -38,13 +41,24 @@ def main():
     ap.add_argument("--extra", action="store_true", help="pull the paper-style universe additions")
     ap.add_argument("--global-home", action="store_true", help="pull the receipt issuers' home-market rows")
     ap.add_argument("--ff5", action="store_true", help="pull only the Fama-French five factors + momentum")
+    ap.add_argument("--low", type=Path, help="CSV of permnos: pull their daily low into crsp_daily_low/<year>")
+    ap.add_argument("--low-start", type=int, default=1989)
     args = ap.parse_args()
     cfg = yaml.safe_load(Path(args.config).read_text())
     raw_dir = ROOT / cfg["raw"]["dir"]
 
     db = compustat_us.connect(ROOT)  # same .env / pgpass login as the universe build
     try:
-        if args.ff5:
+        if args.low:
+            import pandas as pd
+            permnos = sorted(pd.read_csv(args.low)["permno"].astype(int).unique())
+            df = wrds_us.fetch_crsp_low(db, permnos, args.low_start, cfg["raw"]["end_year"])
+            out = raw_dir / "crsp_daily_low"
+            out.mkdir(parents=True, exist_ok=True)
+            for year, part in df.groupby(df["date"].dt.year):
+                part.sort_values(["permno", "date"]).to_parquet(out / f"{year}.parquet", index=False)
+            print(f"crsp_daily_low: {len(df):,} rows, {df['permno'].nunique():,} permnos -> {out}", flush=True)
+        elif args.ff5:
             for name, df in zip(("ff5_daily", "ff5_monthly"), wrds_us.fetch_ff5_factors(db)):
                 df.to_parquet(raw_dir / f"{name}.parquet", index=False)
                 print(f"{name}: {len(df):,} rows, {df['date'].min().date()} .. {df['date'].max().date()}", flush=True)

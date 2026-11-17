@@ -161,6 +161,8 @@ def main():
     out.mkdir(parents=True, exist_ok=True)
 
     secd, security, company, fx = load_extract(ROOT / cfg["extract"]["dir"], countries)
+    corr = cfg.get("corrections", {})
+    fx = efx.drop_bad_quotes(fx, corr.get("fx_quotes"))
     fxn = efx.with_numeraire(fx, int(f["fx_max_stale_days"]))
     print(f"{cfg['market']}: extract {len(secd):,} rows, {secd['gvkey'].nunique():,} gvkeys on {len(countries)} "
           f"exchange countries", flush=True)
@@ -172,7 +174,9 @@ def main():
                                        share_corrections=cfg.get("corrections", {}).get("share_count"),
                                        dup_tol=float(f.get("dup_tol", 0.02)),
                                        exclude_lines=cfg.get("corrections", {}).get("exclude_lines"),
-                                       dual_listed=cfg.get("corrections", {}).get("dual_listed"))
+                                       dual_listed=cfg.get("corrections", {}).get("dual_listed"),
+                                       listed_within_days=f.get("listed_within_days"))
+    mcap_all = cg.merge_companies(mcap_all, corr.get("merge_companies"))
     mcap_all.to_parquet(out / "company_month_mktcap.parquet", index=False)
     print(f"cap table: {len(mcap_all):,} company-months, {int(mcap_all['eligible'].sum()):,} eligible", flush=True)
 

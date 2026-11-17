@@ -28,13 +28,51 @@ from afe.data import us_panel as up
 
 AMOUNTS_EXCLUDED = ("cshoi", "cshpria", "ajexi", "emp")   # shares, factors, headcount: not currency
 
+# Balance-sheet items: all missing on a record whose total assets are 0 (a placeholder with
+# only the income statement filled: Unilever and RELX 1995, Compass 2000; audit A2).
+BALANCE_SHEET = ["at", "lt", "seq", "teq", "ceq", "pstk", "txditc", "txdb", "che", "ivao", "act", "lct",
+                 "dlc", "dltt", "mib", "mibt", "mibn", "txp", "wcap", "ppegt", "ppent", "invt", "rect", "ap",
+                 "intan", "gdwl", "ch", "ivst"]
+
+
+def accounts_from(funda: pd.DataFrame, entries: list[dict] | None) -> pd.DataFrame:
+    """`funda` with the records of `gvkey` dated start..end replaced by those of `source`
+    (config `corrections.accounts_from`): a company whose own records are not the business
+    its cap prices. Royal Dutch Petroleum's are holding accounts of its 60% of the group;
+    once Shell T&T's cap is added to it (`merge_companies`), the group accounts that
+    Compustat files under Shell plc are the matching ones (audit B6)."""
+    if not entries:
+        return funda
+    f = funda
+    for e in entries:
+        g, src = str(e["gvkey"]), str(e["source"])
+        lo, hi = pd.Timestamp(e["start"]), pd.Timestamp(e["end"])
+        span = lambda k: (f["gvkey"].astype(str) == k) & f["datadate"].between(lo, hi)  # noqa: E731
+        f = pd.concat([f[~span(g)], f[span(src)].assign(gvkey=g)], ignore_index=True)
+    return f
+
 
 def funda_numeraire(funda: pd.DataFrame, fxtab: pd.DataFrame) -> pd.DataFrame:
     """g_funda in the numeraire at the fiscal year end, one row per (gvkey, datadate)
-    (INDL preferred where both formats exist), with Global's item substitutes."""
+    (INDL preferred where both formats exist), with Global's item substitutes.
+
+    Two kinds of zero that mean "not reported" (2026-11-17 audit, A1 and A2): a record with
+    total assets 0 has no balance sheet (BALANCE_SHEET set missing); and COGS / XSGA of 0
+    next to positive total operating expenses (XOPR) is a firm that reports costs by nature,
+    whose split Global fills with zeros (about a fifth of the industrial records before
+    2006). Such a zero is missing unless the other item alone accounts for XOPR (within 1%),
+    i.e. the split is complete and the zero is a real zero."""
     f = funda.copy()
     f["_fs"] = f["indfmt"] == "FS"
     f = f.sort_values(["gvkey", "datadate", "_fs"]).drop_duplicates(["gvkey", "datadate"], keep="first")
+    no_bs = f["at"].notna() & (f["at"].astype("float64") <= 0)
+    f.loc[no_bs, [c for c in BALANCE_SHEET if c in f]] = np.nan
+    if "xopr" in f:
+        xopr = f["xopr"].astype("float64")
+        for item, other in (("cogs", "xsga"), ("xsga", "cogs")):
+            v, o = f[item].astype("float64"), f[other].astype("float64")
+            complete = (o - xopr).abs() <= 0.01 * xopr
+            f.loc[(v == 0) & (xopr > 0) & ~complete.fillna(False), item] = np.nan
     amounts = [c for c in f.columns if c not in ("gvkey", "datadate", "fyear", "fyr", "curcd", "indfmt", "_fs")
                and c not in AMOUNTS_EXCLUDED]
     f[amounts] = f[amounts].astype("float64")
@@ -61,6 +99,11 @@ def annual_frame(f: pd.DataFrame, mktcap: pd.DataFrame, cfg: dict) -> pd.DataFra
     f = f.sort_values(["gvkey", "datadate"]).drop_duplicates(["gvkey", "datadate"], keep="last").copy()
     for c in fc["fill_zero"]:
         f[c] = f[c].fillna(0.0)
+    # Bank and insurer (FS) records report INVT as 0 to FY2010 and leave it empty from FY2011, which
+    # put DPI2A at the median for a quarter of the members from 2014 (Kevin's data check, 2026-11-17)
+    if "_fs" in f:
+        for c in fc.get("fill_zero_fs", []):
+            f.loc[f["_fs"] & f[c].isna(), c] = 0.0
     f["be"] = ch.book_equity(f)
     f["noa_level"] = ch.net_operating_assets(f)
     f["nwc"] = ch.noncash_working_capital(f)

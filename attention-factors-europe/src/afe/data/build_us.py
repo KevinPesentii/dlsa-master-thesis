@@ -70,16 +70,24 @@ def daily_characteristics(D: ch.DailyInputs, chars: list[ch.Characteristic], car
 
 
 def annual_characteristics(raw: up.RawUS, co: pd.DataFrame, pool, months: pd.PeriodIndex,
-                           chars: list[ch.Characteristic], cfg: dict, last_observed: bool = False) -> pd.DataFrame:
+                           chars: list[ch.Characteristic], cfg: dict, last_observed: bool = False,
+                           me_check: tuple[pd.DataFrame, pd.DataFrame] | None = None) -> pd.DataFrame:
     """Long table (month, permno) x annual characteristics, each month carrying the
     fiscal year usable at that month end (per characteristic, the latest fiscal year that
-    has it, with last_observed)."""
+    has it, with last_observed). With `me_check` = (company cap, monthly return), month x
+    permno, and config fundamentals.me_dec_max_ratio, the December-ME characteristics are
+    checked against the company's later cap (us_panel.validate_dec_me)."""
     annual = up.annual_frame(raw.funda, raw.ccm, co, cfg)
     for c in chars:
         annual[c.name] = c.fn(annual)
     mapping = up.permno_gvkey(raw.ccm, pool, months)
     names = [c.name for c in chars]
-    aligned = up.align_annual(annual, mapping, names, int(cfg["fundamentals"]["max_age_months"]), last_observed)
+    max_ratio = cfg["fundamentals"].get("me_dec_max_ratio")
+    me_chars = [c for c in ch.USES_DEC_ME if c in names] if (max_ratio and me_check is not None) else []
+    aligned = up.align_annual(annual, mapping, names, int(cfg["fundamentals"]["max_age_months"]), last_observed,
+                              carry_for=me_chars)
+    if me_chars:
+        aligned = up.validate_dec_me(aligned, me_chars, me_check[0], me_check[1], float(max_ratio))
     return aligned.set_index(["month", "permno"])[names]
 
 
@@ -159,6 +167,27 @@ def returns_table(daily: pd.DataFrame, co: pd.DataFrame, start: pd.Period, end: 
     return out
 
 
+def rf_from_monthly(ff_daily: pd.DataFrame, ff_monthly: pd.DataFrame) -> pd.DataFrame:
+    """`ff_daily` (date index) with rf rebuilt from the monthly 1-month T-bill and mktrf
+    moved by the same amount, so the market's total return is unchanged. The daily file states
+    rf in whole basis points a day (four values since 1990: 0, 1, 2, 3 bp). Trading day t earns
+    the month's rate for the calendar days since the previous trading day, (1 + rf_m) **
+    (days / days in the month) - 1: a month compounds to about rf_m, and the value at t uses
+    no later date (prefix invariance). A month the monthly file lacks keeps the daily rf.
+    (Kevin's data check, 2026-11-17.)"""
+    f = ff_daily.copy()
+    month = f.index.to_period("M")
+    rfm = pd.Series(ff_monthly["rf"].to_numpy(dtype="float64"), index=pd.to_datetime(ff_monthly["date"]).dt.to_period("M"))
+    rfm = rfm[~rfm.index.duplicated(keep="last")]
+    gap = pd.Series(f.index, index=f.index).diff().dt.days.fillna(1.0).to_numpy()
+    new = (1.0 + month.map(rfm).to_numpy(dtype="float64")) ** (gap / f.index.days_in_month.to_numpy()) - 1.0
+    old = f["rf"].to_numpy(dtype="float64")
+    new = np.where(np.isfinite(new), new, old)
+    f["mktrf"] = f["mktrf"].to_numpy(dtype="float64") + old - new
+    f["rf"] = new
+    return f
+
+
 # ------------------------------------------------------------------ driver
 
 
@@ -175,12 +204,23 @@ def build(cfg: dict, raw: up.RawUS, out_dir: Path, cutoff: pd.Timestamp | None =
     names = characteristic_names(cfg)
     groups = ch.by_frequency(names)
 
+    if (cfg.get("risk_free") or {}).get("source") == "ff_monthly":
+        raw.ff_daily = rf_from_monthly(raw.ff_daily, raw.ff_monthly)
+        log("  daily rf from FF's monthly T-bill (risk_free.source: ff_monthly)")
     log("eligibility and companies")
+    drop_dl = (cfg.get("corrections") or {}).get("drop_delisting") or []
+    if drop_dl and len(raw.delisting):
+        bad = pd.DataFrame({"permno": [int(x["permno"]) for x in drop_dl],
+                            "date": [pd.Timestamp(x["date"]) for x in drop_dl], "_bad": True})
+        hit = raw.delisting.merge(bad, on=["permno", "date"], how="left")["_bad"].notna().to_numpy()
+        raw.delisting = raw.delisting[~hit]
+        log(f"  delisting rows dropped (corrections.drop_delisting): {int(hit.sum())}")
     elig = up.eligible_monthly(raw.monthly, cfg)
     home = up.home_caps(raw.global_home)
     elig = up.receipt_caps(elig, raw.secm, raw.ccm, raw.funda, home=home,
                            home_tol=float(cfg.get("universe", {}).get("receipt_home_tol", 1.5)),
-                           home_max_ratio=float(cfg.get("universe", {}).get("receipt_home_max_ratio", 100.0)))
+                           home_max_ratio=float(cfg.get("universe", {}).get("receipt_home_max_ratio", 100.0)),
+                           carry_links=bool(cfg.get("universe", {}).get("receipt_carry_links", False)))
     if home is not None:
         log(f"  receipts sized by their home market: {int((elig['cap_source'] == 'home').sum()):,} of "
             f"{int((elig['sharetype'] == 'AD').sum()):,} receipt-months")
@@ -189,8 +229,21 @@ def build(cfg: dict, raw: up.RawUS, out_dir: Path, cutoff: pd.Timestamp | None =
     calendar = raw.ff_daily.index
     out = cfg.get("universe", {}).get("drop_after_ranking")     # share types: ranked, then left out
     dropped = {m: set(g["permno"]) for m, g in elig[elig["sharetype"].isin(out)].groupby("month")} if out else None
-    uni, asof = up.build_universe(co if lines is None else lines,
-                                  {**cfg, "sample": {**cfg["sample"], "end": str(end)}}, calendar, dropped)
+    u = cfg.get("universe", {})
+    activity = None
+    if u.get("receipt_min_traded_share"):
+        ad = elig.loc[elig["sharetype"] == "AD", "permno"].unique()
+        activity = up.receipt_activity(raw.daily_extra_dir, ad, range(int(cfg["raw"]["start_year"]), end.year + 1),
+                                       int(u.get("receipt_activity_months", 6)), cutoff)
+    listed = None
+    if u.get("listed_within_days") is not None:
+        ddirs = [raw.daily_dir] + ([raw.daily_extra_dir] if raw.daily_extra_dir is not None else [])
+        listed = up.listed_at_month_end(ddirs, range(int(cfg["raw"]["start_year"]), end.year + 1), raw.delisting,
+                                        int(u["listed_within_days"]), cutoff)
+    candidates = up.rankable(co if lines is None else lines, elig, raw.monthly, cfg, activity, listed)
+    log(f"  ranking candidates: {len(candidates):,} of {len(co if lines is None else lines):,} rows "
+        f"(listed at the month end, receipt activity and listing-history screens)")
+    uni, asof = up.build_universe(candidates, {**cfg, "sample": {**cfg["sample"], "end": str(end)}}, calendar, dropped)
     uni_members = {M: sorted(g["primary_permno"].astype(int).tolist()) for M, g in asof.groupby("month")}
     pool = sorted({p for ms in uni_members.values() for p in ms}) if cfg["pool"] == "universe" \
         else sorted(elig["permno"].unique().tolist())
@@ -199,9 +252,15 @@ def build(cfg: dict, raw: up.RawUS, out_dir: Path, cutoff: pd.Timestamp | None =
     log("daily data")
     years = range(int(cfg["raw"]["start_year"]), end.year + 1)
     dirs = [raw.daily_dir] + ([raw.daily_extra_dir] if raw.daily_extra_dir is not None else [])
-    daily, stats = up.load_daily(dirs, pool, years, raw.ff_daily, cutoff=cutoff, delisting=raw.delisting)
+    fixes = {"broken_quote_spread": (cfg.get("returns") or {}).get("broken_quote_spread"),
+             "nasdaq_volume": (cfg.get("volume") or {}).get("nasdaq_divisor"),
+             "spread": (cfg.get("spread") or {}).get("source", "quotes")}
+    daily, stats = up.load_daily(dirs, pool, years, raw.ff_daily, cutoff=cutoff, delisting=raw.delisting,
+                                 low_dir=raw.daily_low_dir, fixes=fixes)
+    if "broken_quote" in daily:
+        log(f"  no-trade days priced off a broken quote, neutralised: {int(daily['broken_quote'].sum())}")
     D = up.daily_inputs(daily, raw.ff_daily, windows)
-    M = up.monthly_inputs(raw.monthly, co, pool, stats, D, windows)
+    M = up.monthly_inputs(raw.monthly, co, pool, stats, D, windows, nasdaq_volume=fixes["nasdaq_volume"])
     n_del = int(raw.delisting["permno"].isin(pool).sum()) if len(raw.delisting) else 0
     log(f"  {len(daily):,} daily rows, {D.ret.shape[0]} days x {D.ret.shape[1]} stocks, "
         f"{n_del} delisting-day rows merged")
@@ -212,7 +271,8 @@ def build(cfg: dict, raw: up.RawUS, out_dir: Path, cutoff: pd.Timestamp | None =
     carry = cfg["normalisation"]["carry_max"] if missing == "last_observed" else {"daily": 0, "monthly": 0}
     log(f"characteristics (missing: {missing}, carry {carry})")
     mc = monthly_characteristics(M, groups["monthly"], int(carry["monthly"]))
-    ac = annual_characteristics(raw, co, pool, M.ret.index, groups["annual"], cfg, missing == "last_observed")
+    ac = annual_characteristics(raw, co, pool, M.ret.index, groups["annual"], cfg, missing == "last_observed",
+                                me_check=(M.cap_co, M.ret))
     mc = mc.join(ac, how="left")[[n for n in names if n in mc.columns or n in ac.columns]]
     dc = daily_characteristics(D, groups["daily"], int(carry["daily"]))
     mc.reset_index().to_parquet(inspect_dir / "characteristics_monthly.parquet", index=False)
@@ -234,6 +294,7 @@ def build(cfg: dict, raw: up.RawUS, out_dir: Path, cutoff: pd.Timestamp | None =
     log("returns and universe")
     ret = returns_table(daily, co, start, end, lines)
     ret.to_parquet(out_dir / "returns.parquet", index=False)
+    raw.ff_daily[["rf"]].rename_axis("date").reset_index().to_parquet(out_dir / "rf_daily.parquet", index=False)
     uni.to_parquet(out_dir / "universe.parquet", index=False)
     flags = elig[["permno", "month", "sharetype", "usincflg", "issuertype", "cap_source", "cap_crsp"]].rename(
         columns={"permno": "primary_permno", "month": "rank_month"})
