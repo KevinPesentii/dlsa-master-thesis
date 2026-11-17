@@ -1,0 +1,140 @@
+# Statutory transaction taxes on share purchases, for the implementation-robustness table
+# (src/afe/evaluation/robustness.tax_rates, scripts/robustness_stored_weights.py). Read 2026-11-17.
+#
+# One row per tax and rate period. A row charges rate_bp x max(dw, 0) (a purchase: buying a long or
+# covering a short) on the companies whose country of INCORPORATION (Compustat company.fic) is `country`,
+# for trades at closes in [start, end), when the company's prior-month market cap (returns.mktcap_lag,
+# EUR millions) is at least min_mktcap_eur_m. Our trader is assumed to trade on the exchange (Italy's
+# on-market rate) and to bear the tax itself (no intermediary relief, no exempt status).
+# side: buy = purchases only; both = purchases and sales (Swiss turnover tax, optional).
+# verified: primary = checked against the statute or the tax administration's own text on the date above;
+# secondary = only practitioner or market-operator text found; see `flag`.
+#
+# Known simplifications (all in notes, none modelled):
+# - Thresholds: the statutes fix them once a year (France, Spain: cap on 1 December of the year before;
+#   Italy: average cap in November of the year before; official lists). Prior-month cap stands in for them.
+# - UK: shares of foreign companies kept on a UK register are also chargeable; companies incorporated
+#   elsewhere (Jersey: WPP, Experian, Glencore) are not charged here. Depositary-receipt and clearance
+#   service (1.5%) charges are ignored. Short positions are often held through swaps/CFDs, which avoid
+#   stamp duty; we charge the cover purchase anyway (an upper bound).
+# - Not in the calendar: Belgian stock-exchange tax (TOB; due by the Belgian intermediary, whoever the issuer),
+#   Greek sales tax (charged on SALES of listed shares), Finnish transfer tax (exchange trades exempt),
+#   Hungarian/Polish taxes (outside europe17).
+
+taxes:
+  - name: uk_stamp_duty_sdrt
+    country: GB
+    start: 1986-10-27
+    end: null
+    rate_bp: 50
+    min_mktcap_eur_m: null
+    side: buy
+    source: >-
+      Finance Act 1986 s.87(6) (SDRT "charged at the rate of 0.5 per cent", wording as amended by FA 1996
+      s.194), https://www.legislation.gov.uk/ukpga/1986/41/section/87 ; stamp duty on transfers 0.5%
+      (Finance Act 1999 Sch. 13 para 3). Rate 0.5% since the 1986 reduction, so constant over 1998-2021.
+    verified: primary
+
+  - name: ie_stamp_duty
+    country: IE
+    start: 1998-01-01
+    end: null
+    rate_bp: 100
+    min_mktcap_eur_m: null
+    side: buy
+    source: >-
+      Stamp Duties Consolidation Act 1999, Schedule 1, head "CONVEYANCE or TRANSFER on sale of any stocks or
+      marketable securities", 1% of the consideration (Revenue Stamp Duty Manual, Schedule 1, section 4,
+      https://revenue.ie/en/tax-professionals/tdm/stamp-duty/stamp-duty-manual/schedules/schedule1-to-SDCA-1999.pdf).
+      Budget 2026 exempts Irish companies below EUR 1bn cap: after the sample.
+    verified: primary
+    flag: >-
+      1998-1999 (before the 1999 consolidation) rests on a secondary source (Mondaq, Oct 1998: 1% of the
+      consideration); the Revenue manual's historic-rate appendix covers property only.
+
+  - name: fr_ftt
+    country: FR
+    start: 2012-08-01
+    end: 2017-01-01
+    rate_bp: 20
+    min_mktcap_eur_m: 1000
+    side: buy
+    source: >-
+      CGI art. 235 ter ZD, created by Loi n. 2012-354 du 14 mars 2012 art. 5 (rate 0.1%), doubled to 0.2% by
+      Loi n. 2012-958 du 16 aout 2012 art. 6 before entry into force; first taxed acquisitions: transactions from
+      1 August 2012 (BOFiP BOI-TCA-FIN-10-30-20120912). Scope: equity admitted to a regulated market, issuer's
+      registered office in France, cap above EUR 1bn on 1 December of the year before.
+    verified: primary
+
+  - name: fr_ftt
+    country: FR
+    start: 2017-01-01
+    end: null
+    rate_bp: 30
+    min_mktcap_eur_m: 1000
+    side: buy
+    source: >-
+      CGI art. 235 ter ZD V as amended by Loi n. 2016-1917 du 29 decembre 2016 art. 36 ("Le taux de la taxe est
+      fixe a 0,3 %"), Legifrance version 2019-01-01 to 2025-04-01,
+      https://www.legifrance.gouv.fr/codes/article_lc/LEGIARTI000037989952/2019-01-01 . 0.4% from 1 April 2025
+      (Loi n. 2025-127): after the sample.
+    verified: primary
+
+  - name: it_ftt
+    country: IT
+    start: 2013-03-01
+    end: 2014-01-01
+    rate_bp: 12
+    min_mktcap_eur_m: 500
+    side: buy
+    source: >-
+      Legge 24 dicembre 2012 n. 228, art. 1 c. 491 (0.2% of the value of the transaction, halved for transfers
+      on regulated markets and MTFs; value = net balance of the day's transactions in the same instrument by the
+      same party; exempt: companies with average cap in November of the year before below EUR 500m; shares of
+      companies resident in Italy) and c. 500 (from 1 March 2013 for shares; for 2013 0.22% / 0.12%). Text:
+      https://bnl.it/rsc/SupportingFiles/decreto_228_24122012_commi_491_500.pdf
+    verified: primary
+
+  - name: it_ftt
+    country: IT
+    start: 2014-01-01
+    end: null
+    rate_bp: 10
+    min_mktcap_eur_m: 500
+    side: buy
+    source: >-
+      Legge 228/2012 art. 1 c. 491 (0.2%, halved on regulated markets/MTFs), as above. The 2026 budget law
+      doubles the rates, after the sample.
+    verified: primary
+
+  - name: es_ftt
+    country: ES
+    start: 2021-01-16
+    end: null
+    rate_bp: 20
+    min_mktcap_eur_m: 1000
+    side: buy
+    source: >-
+      Ley 5/2020, de 15 de octubre, del Impuesto sobre las Transacciones Financieras (BOE num. 274, 16 Oct 2020,
+      BOE-A-2020-12356): 0.2% on acquisitions of shares of Spanish companies with cap above EUR 1bn on 1 December
+      of the year before; in force three months after publication, 16 January 2021.
+    verified: secondary
+    flag: >-
+      Rate, threshold and date read from the BOE reference and law-firm/AEAT summaries; the consolidated BOE PDF
+      itself was not opened. First-year threshold date differs (cap one month before entry into force).
+
+  - name: ch_turnover_tax
+    country: CH
+    start: 1998-01-01
+    end: null
+    rate_bp: 7.5
+    min_mktcap_eur_m: null
+    side: both
+    optional: true
+    source: >-
+      Bundesgesetz ueber die Stempelabgaben (StG, SR 641.10) Art. 16 Abs. 1 lit. a (1.5 per mille on domestic
+      securities) and Art. 17 Abs. 2 (the securities dealer owes half for each party that is not itself a dealer or
+      exempt investor): 0.75 per mille = 7.5bp per side, on purchases and sales. Due only when a Swiss securities
+      dealer is party or intermediary; whether ours is depends on the broker, hence optional.
+    verified: secondary
+    flag: Rates read from ESTV and commentary summaries of Art. 16/17 StG; Fedlex text not rendered in our fetch.
