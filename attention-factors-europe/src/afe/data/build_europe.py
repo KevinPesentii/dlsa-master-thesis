@@ -36,6 +36,8 @@ from afe.data import europe_fx as efx
 from afe.data import europe_panel as xp
 from afe.data import us_panel as up
 
+ID = xp.ID
+
 
 def build(cfg: dict, root: Path, out_dir: Path, inspect_dir: Path, cutoff: pd.Timestamp | None = None,
           log=print, jkp: bool = True) -> dict:
@@ -58,11 +60,11 @@ def build(cfg: dict, root: Path, out_dir: Path, inspect_dir: Path, cutoff: pd.Ti
     daily = ep.load_daily(raw.daily_dir, raw.lines, years, cutoff)
     daily = cg.apply_share_corrections(daily, cfg.get("corrections", {}).get("share_count"))
     calendar = ep.trading_calendar(daily, int(cfg["returns"]["calendar_min_lines"]))
-    dret = ep.daily_returns(daily, fxtab)
+    dret = ep.daily_returns(daily, fxtab, carry_untraded=bool(cfg["returns"].get("carry_untraded_price", False)))
     del daily
     for c in ("gvkey", "iid", "curcdd"):
         dret[c] = dret[c].astype(str)
-    dret["cs"] = xp.corwin_schultz(dret[["gvkey", "iid", "prchd", "prcld", "prccd", "prcstd"]])
+    dret["cs"] = xp.corwin_schultz(dret[["gvkey", "iid", "prchd", "prcld", "prccd", "prcstd", "ajexdi"]])
     dret["high_eur"] = dret["prc_eur"] * dret["prchd"] / dret["prccd"]
     dret.to_parquet(inspect_dir / "returns_detail_daily.parquet", index=False)
     log(f"  {len(dret):,} listing-days, calendar {len(calendar):,} days {calendar.min().date()} .. {calendar.max().date()}")
@@ -72,9 +74,10 @@ def build(cfg: dict, root: Path, out_dir: Path, inspect_dir: Path, cutoff: pd.Ti
     uni, detail = ep.universe_lagged(ranking, calendar, str(start), str(end), n)
     uni.to_parquet(out_dir / "universe.parquet", index=False)
     detail.to_parquet(inspect_dir / "universe_asof.parquet", index=False)
-    ret = ep.returns_table(dret, raw.mktcap, str(start), str(end), cfg["returns"]["delisting_return"], calendar)
+    cd = xp.company_daily(dret, raw.mktcap, calendar, raw.delisted)
+    ret = ep.returns_table(cd, raw.mktcap, str(start), str(end), cfg["returns"]["delisting_return"], calendar,
+                           by_line=False)
     ret.to_parquet(out_dir / "returns.parquet", index=False)
-    cd = xp.company_daily(dret, raw.mktcap, calendar)
     cd.to_parquet(inspect_dir / "company_daily.parquet", index=False)
     pool = sorted(raw.lines["gvkey"].unique())
     log(f"  universe {uni['month'].nunique()} months x {n}, returns {len(ret):,} rows, pool {len(pool):,} companies")
@@ -101,8 +104,15 @@ def build(cfg: dict, root: Path, out_dir: Path, inspect_dir: Path, cutoff: pd.Ti
     mapping["gvkey"] = mapping["permno"]
     a_names = [c.name for c in groups["annual"]]
     missing = cfg["normalisation"].get("missing", "median")
+    me_chars = [c for c in ch.USES_DEC_ME if c in a_names]
     aligned = up.align_annual(annual, mapping, a_names, int(cfg["fundamentals"]["max_age_months"]),
-                              missing == "last_observed")
+                              missing == "last_observed", carry_for=me_chars)
+    mf = xp.monthly_frame(cd, raw.mktcap)
+    wide = lambda col: (mf.pivot(index="month", columns="gvkey", values=col)  # noqa: E731
+                        .reindex(columns=pool).rename_axis(columns=ID).astype("float64"))
+    max_ratio = cfg["fundamentals"].get("me_dec_max_ratio")
+    aligned = (up.validate_dec_me(aligned, me_chars, wide("cap_co"), wide("ret"), float(max_ratio))
+               if max_ratio else aligned.drop(columns=[x for x in aligned.columns if x.startswith(("_dd_", "_me_"))]))
     beme = aligned[["month", "permno", "BEME"]].rename(columns={"permno": "gvkey"})
     fac = xp.smb_hml(cd, members, beme, int(fc["min_per_portfolio"])).reindex(calendar)
     own = pd.DataFrame({"mkt": mkt["mkt_vw"], "smb": fac["smb"], "hml": fac["hml"]}, index=calendar)
@@ -122,7 +132,6 @@ def build(cfg: dict, root: Path, out_dir: Path, inspect_dir: Path, cutoff: pd.Ti
     carry = cfg["normalisation"]["carry_max"] if missing == "last_observed" else {"daily": 0, "monthly": 0}
     stats = xp.monthly_daily_stats(cd, ff)
     D = xp.daily_inputs(cd, ff, windows, calendar)
-    mf = xp.monthly_frame(cd, raw.mktcap)
     M = xp.monthly_inputs(mf, pool, stats, D, windows)
     monthly = [resid_var_where_factors(c, ff, int(windows["variance_months"])) if c.name == "Resid_Var" else c
                for c in groups["monthly"]]

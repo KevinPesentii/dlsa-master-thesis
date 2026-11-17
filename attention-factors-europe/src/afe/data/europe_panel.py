@@ -39,6 +39,9 @@ import numpy as np
 import pandas as pd
 
 from afe.data import characteristics as ch
+from afe.data import europe_accounts as xa
+from afe.data import europe_fx as efx
+from afe.data import hl_spread
 from afe.data import us_panel as up
 
 ID = "permno"   # company id level name expected by characteristics.py / build_us (values: gvkey)
@@ -56,12 +59,13 @@ class RawEurope:
     fx: pd.DataFrame            # comp.g_exrt_dly rows (extract + raw pull), units per GBP
     daily_dir: Path             # union secd_daily/<year>.parquet
     jkp_dir: Path               # union jkp/<year>.parquet
+    delisted: pd.DataFrame | None = None   # (gvkey, iid, dldtei): a line's delisting date (g_security)
 
     def truncate(self, cutoff: pd.Timestamp) -> "RawEurope":
         c = pd.Timestamp(cutoff)
         return RawEurope(self.mktcap[self.mktcap["datadate"] <= c], self.ranking[self.ranking["datadate"] <= c],
                          self.lines, self.funda[self.funda["datadate"] <= c], self.fx[self.fx["datadate"] <= c],
-                         self.daily_dir, self.jkp_dir)
+                         self.daily_dir, self.jkp_dir, self.delisted)
 
 
 def load_raw(root: Path, cfg: dict) -> RawEurope:
@@ -85,7 +89,13 @@ def load_raw(root: Path, cfg: dict) -> RawEurope:
     fx["tocurd"] = fx["tocurd"].astype(object)
     fx["exratd"] = fx["exratd"].astype("float64")
     fx = fx.drop_duplicates(["datadate", "tocurd"]).sort_values(["tocurd", "datadate"], ignore_index=True)
-    return RawEurope(mk, rk, lines, funda, fx, raw / "secd_daily", raw / "jkp")
+    fx = efx.drop_bad_quotes(fx, cfg.get("corrections", {}).get("fx_quotes")).reset_index(drop=True)
+    funda = xa.accounts_from(funda, cfg.get("corrections", {}).get("accounts_from"))
+    sec = pd.read_parquet(root / cfg["extract"]["dir"] / "security_header.parquet", columns=["gvkey", "iid", "dldtei"])
+    sec = sec.assign(gvkey=sec["gvkey"].astype(str).astype(object), iid=sec["iid"].astype(str).astype(object),
+                     dldtei=pd.to_datetime(sec["dldtei"]).astype("datetime64[ns]"))
+    sec = sec[sec["dldtei"].notna()].drop_duplicates(["gvkey", "iid"])
+    return RawEurope(mk, rk, lines, funda, fx, raw / "secd_daily", raw / "jkp", sec)
 
 
 # ------------------------------------------------------------------ risk-free
@@ -188,23 +198,12 @@ def ff_europe(path: Path, fxtab: pd.DataFrame, calendar: pd.DatetimeIndex,
 
 def corwin_schultz(d: pd.DataFrame) -> pd.Series:
     """Two-day Corwin-Schultz (2012) spread per row of `d` (one line's consecutive rows,
-    sorted), from local high `prchd`, low `prcld`, close `prccd`, using this row and the
-    previous one; NaN unless both days are traded closes with 0 < low <= high. Overnight
-    adjustment: if today's low is above yesterday's close, today's high and low are moved
-    down by the gap; if today's high is below it, up by the gap."""
-    g = d.groupby(["gvkey", "iid"], sort=False, observed=True)
-    h1, l1, c0 = d["prchd"].astype("float64"), d["prcld"].astype("float64"), g["prccd"].shift(1).astype("float64")
-    h0, l0 = g["prchd"].shift(1).astype("float64"), g["prcld"].shift(1).astype("float64")
-    ok = ((d["prcstd"] == 10) & (g["prcstd"].shift(1) == 10) & (l0 > 0) & (l1 > 0) & (h0 >= l0) & (h1 >= l1))
-    up_gap = (l1 - c0).clip(lower=0).fillna(0.0)          # today's range entirely above yesterday's close
-    dn_gap = (c0 - h1).clip(lower=0).fillna(0.0)          # entirely below
-    h1a, l1a = h1 - up_gap + dn_gap, l1 - up_gap + dn_gap
-    beta = np.log(h0 / l0) ** 2 + np.log(h1a / l1a) ** 2
-    gamma = np.log(np.maximum(h0, h1a) / np.minimum(l0, l1a)) ** 2
-    k = 3.0 - 2.0 * np.sqrt(2.0)
-    alpha = (np.sqrt(2.0 * beta) - np.sqrt(beta)) / k - np.sqrt(gamma / k)
-    s = 2.0 * (np.exp(alpha) - 1.0) / (1.0 + np.exp(alpha))
-    return s.clip(lower=0.0).where(ok)
+    sorted), from local high `prchd`, low `prcld`, close `prccd` over the adjustment factor
+    `ajexdi` (a split between the two days is not a price range; 2026-11-17), using this row
+    and the previous one; NaN unless both days are traded closes (prcstd 10). The estimator
+    and its overnight adjustment: hl_spread.corwin_schultz."""
+    d = d.assign(_traded=d["prcstd"] == 10)
+    return hl_spread.by_line(d, ["gvkey", "iid"], "prchd", "prcld", "prccd", "_traded", factor="ajexdi")
 
 
 # ------------------------------------------------------------------ company series
@@ -223,11 +222,19 @@ def company_lines(mktcap: pd.DataFrame) -> pd.DataFrame:
     return m.drop_duplicates(["gvkey", "m"]).sort_values(["gvkey", "m"], ignore_index=True)
 
 
-def company_daily(dret: pd.DataFrame, mktcap: pd.DataFrame, calendar: pd.DatetimeIndex) -> pd.DataFrame:
+def company_daily(dret: pd.DataFrame, mktcap: pd.DataFrame, calendar: pd.DatetimeIndex,
+                  delisted: pd.DataFrame | None = None) -> pd.DataFrame:
     """One row per (company, pooled trading day): the carrying line's values. The line for
     month M is the cap-table line at the end of M-1; if the company has no cap row then,
     the latest earlier one; before its first cap row, the first one (the only choice
-    that uses no later information than the first row itself)."""
+    that uses no later information than the first row itself).
+
+    With `delisted` ((gvkey, iid, dldtei), g_security), a carrying line delisted inside the
+    month hands over: from its delisting date to the month end the company takes, each day,
+    its most active other line with a row that day (largest volume, then iid), so a company
+    whose line is cancelled or converted keeps its returns (ArcelorMittal's Paris line
+    2007-11-13, Unilever's NV certificates 2019-07; Kevin's data check, 2026-11-17). The
+    hand-over uses only that day's rows and a delisting that has happened: point in time."""
     d = dret[dret["date"].isin(calendar)].copy()
     d["gvkey"], d["iid"] = d["gvkey"].astype(str), d["iid"].astype(str)
     d["m"] = _month_number(d["date"].dt.to_period("M")) - 1
@@ -237,7 +244,23 @@ def company_daily(dret: pd.DataFrame, mktcap: pd.DataFrame, calendar: pd.Datetim
     first = lines.groupby("gvkey")["iid"].first()
     lk["iid"] = lk["iid"].fillna(lk["gvkey"].map(first))
     d = d.merge(lk.rename(columns={"iid": "line"}), on=["gvkey", "m"], how="left")
-    d = d[d["iid"] == d["line"]].drop(columns=["line", "m"])
+    carry = d["iid"] == d["line"]
+    if delisted is not None and len(delisted):
+        dl = delisted.rename(columns={"iid": "line", "dldtei": "_line_out"})[["gvkey", "line", "_line_out"]]
+        d = d.merge(dl, on=["gvkey", "line"], how="left")
+        carry = (d["iid"] == d["line"]).to_numpy()
+        out = d["_line_out"].notna() & (d["date"] >= d["_line_out"])     # the carrying line is gone
+        other = d[~carry & out.to_numpy()].copy()
+        other["_v"] = other["cshtrd"].astype("float64").fillna(-1.0)
+        other = (other.sort_values(["gvkey", "date", "_v", "iid"], ascending=[True, True, False, True])
+                 .drop_duplicates(["gvkey", "date"]))
+        have = d.loc[carry, ["gvkey", "date"]].assign(_c=True)
+        other = other.merge(have, on=["gvkey", "date"], how="left")
+        other = other[other["_c"].isna()].drop(columns=["_c", "_v"])
+        d = pd.concat([d[carry], other], ignore_index=True).drop(columns=["_line_out"])
+    else:
+        d = d[carry.to_numpy()]
+    d = d.drop(columns=["line", "m"])
     # plain float64: the parquet metadata restores nullable Float64, whose to_numpy() is an
     # object array, and SUV's 0/0 then raises ZeroDivisionError (the us_panel.load_daily trap)
     num = [c for c in d.columns if c not in ("gvkey", "iid", "date", "curcdd", "traded", "prcstd")

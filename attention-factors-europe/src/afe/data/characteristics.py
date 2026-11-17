@@ -106,6 +106,10 @@ def _stat(M: MonthlyInputs, name: str) -> pd.DataFrame:
 
 FF3_X = ["one", "mktrf", "smb", "hml"]  # regressors of the Resid_Var regression, in order
 
+# Annual characteristics divided by (or built on) December market equity `me_dec`; the
+# builds check that ME against the company's later cap (us_panel.validate_dec_me).
+USES_DEC_ME = ("A2ME", "BEME", "CF2P", "Q", "E2P")
+
 
 def cross_key(a: str, b: str) -> str:
     """Name of the per-month sum of x_a * x_b; stored once per unordered pair."""
@@ -356,9 +360,12 @@ def resid_var(M: MonthlyInputs) -> pd.DataFrame:
 
 @register("Spread", "Trading Frictions", "monthly", "Chung and Zhang (2014)")
 def spread(M: MonthlyInputs) -> pd.DataFrame:
-    """Average relative bid-ask spread over month m: mean of (ask - bid) / midpoint from
-    CRSP closing quotes, days with ask <= bid or a missing quote excluded, at least
-    spread_min_obs days."""
+    """Average spread over month m, at least spread_min_obs days: the mean of the daily
+    Corwin-Schultz (2012) high-low estimate (hl_spread; both markets since 2026-11-17, config
+    `spread.source: corwin_schultz`), or with `spread.source: quotes` (US builds before
+    2026-11-17) the mean of (ask - bid) / midpoint from CRSP closing quotes, days with
+    ask <= bid or a missing quote excluded. Which one is decided where the per-month sums
+    are made (us_panel.monthly_daily_stats, europe_panel.monthly_daily_stats)."""
     n = _stat(M, "n_spread")
     return _ratio(_stat(M, "sum_spread"), n).where(n >= M.cfg["spread_min_obs"])
 
@@ -393,9 +400,12 @@ def suv(M: MonthlyInputs) -> pd.DataFrame:
 
 @register("Vol", "Trading Frictions", "daily", "attention paper")
 def weekly_volume(D: DailyInputs) -> pd.DataFrame:
-    """Shares traded over the last weekly_days (5) trading days ending on d."""
+    """Value traded over the last weekly_days (5) trading days ending on d: shares traded
+    times the close, in USD (US) or the numeraire (Europe). Until 2026-11-17 it was shares
+    traded, which ranks a stock by how low its price is (a UK member trades ten times the
+    shares of a Swiss one) and jumps at a split (audit B5)."""
     w = D.cfg["weekly_days"]
-    return D.vol.rolling(w, min_periods=w).sum()
+    return (D.vol * D.prc).rolling(w, min_periods=w).sum()
 
 
 @register("Beta", "Trading Frictions", "monthly", "Frazzini and Pedersen (2014)")

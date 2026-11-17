@@ -65,6 +65,31 @@ the window further down (`sample.universe_first_rank`, default 1): `configs/us_d
 keeps the lines ranked 301-800, re-ranked 1-500 in `universe.parquet` (`cap_rank_all` in
 `universe_asof.parquet` keeps the rank among all lines).
 
+Screens added after the input audit of 2026-11-17 (`Thesis/diagnostics/2026-11-17_input_data_audit`,
+private; config `universe`). They decide only who may be RANKED; a screened line keeps its cap
+for LME and December ME (`us_panel.rankable`):
+- `exclude_permnos`: three receipts whose CRSP or secm share count makes a micro cap a top-500
+  company and that no home-market cap can check (OneSmart Education 2018-20, Genetic
+  Technologies 2021, Crosswave 2002). They are dropped from the eligible pool altogether.
+- `receipt_min_traded_share: 0.9` over `receipt_activity_months: 6`: a receipt whose line traded
+  (volume > 0, `crsp_daily_extra`) on fewer than 90% of the days of the last six months is not
+  ranked. CRSP prices a no-trade day at the quote midpoint, so dormant 1990s programmes
+  (Daiei, Kubota, Mitsui, JAL) carried stale and quote-driven returns at ranks 40-100.
+- `min_history_months: 1`: a line needs a CRSP monthly row in the month before the ranking
+  month, so a listing is not ranked on its first month's price (Addentax 2022-08: $21bn on
+  its IPO day, -95% the next). Spin-offs and new merger permnos wait a month too.
+- `listed_within_days: 10` (Kevin's data check, same day): a line must still be listed at the end of
+  the ranking month, its last daily return at most 10 days before the month end and no delisting row
+  on or before it (`us_panel.listed_at_month_end`). A line that stopped mid-month was ranked on its
+  monthly row and held a slot for the whole next month without a return (339 member-months).
+- `receipt_carry_links: true`: a receipt whose CCM link has ended keeps that last link, so its share
+  base and the home-market check still apply (AmBev's receipt had no link 1998-04..2013-11 and sat at
+  CRSP's receipts-only cap, out of the universe, for 15 years).
+The receipt guard (a funda count above 20,000x CRSP's receipt cap is dropped) applies only where
+the issuer has no home-market cap that month; where it has one, the home-market check above
+judges the count (the guard had thrown away Mitsubishi Bank's correct $43bn in Dec 1990 because
+only 103 thousand receipts were outstanding).
+
 Pool for characteristics = every permno that is ever a member (config `pool`). Ranks and
 medians are over the 500 members of the day (`median_over`; CONFIRM 3 in schemas.md).
 
@@ -77,7 +102,18 @@ medians are over the 500 members of the day (`median_over`; CONFIRM 3 in schemas
   `lag_months: 6` after each firm's own fiscal year end. A record older than
   `max_age_months` (30) is dropped rather than carried on.
 - `me_dec` (denominator of A2ME, BEME, CF2P, Q, E2P) is the company cap at the December
-  end of the fiscal year's calendar year, via the CCM link valid on that date.
+  end of the fiscal year's calendar year, via the CCM link valid on that date. Since
+  2026-11-17 it is used in month m only while the company cap of m is within 8x of `me_dec`
+  grown by the stock's return since that December (`fundamentals.me_dec_max_ratio`,
+  `us_panel.validate_dec_me`); otherwise those five characteristics are missing that month.
+  It catches a December cap from CRSP's receipts outstanding, a CRSP share count in the wrong
+  unit (EnCana Dec 2001: 255 thousand shares) and real recapitalisations. Point in time.
+- Risk-free rate (`risk_free.source: ff_monthly`, since 2026-11-17): the daily file states rf in whole
+  basis points (four values since 1990), so day t earns the month's 1-month T-bill rate for the
+  calendar days since the previous trading day, (1 + rf_m) ** (days / days in month) - 1, with mktrf
+  moved by the same amount (`build_us.rf_from_monthly`); written to `rf_daily.parquet` too. It reaches
+  Beta, Resid_Var and the features' rf column; the PCA runner still reads `raw/ff_daily` unless its
+  config sets `data.rf_file`.
 - Missing items treated as zero: `txditc txdb pstk mib ivao xrd xad txp dlc`
   (config `fundamentals.fill_zero`). Everything else missing propagates to NaN.
 - A missing characteristic takes the stock's last observed value if it has one, else,
@@ -131,13 +167,13 @@ above; `m` = month end; `t = m+1` = prediction month. Windows are in the config.
 |---|---|
 | AT | total assets, USD mn (annual) |
 | LME | company cap at m, USD mn |
-| LTurnover | monthly volume / (shrout x 1000) |
+| LTurnover | monthly volume / (shrout x 1000); Nasdaq volume divided by 2.0 / 1.8 / 1.6 before 2001-02 / 2002 / 2004 (Gao-Ritter, `volume.nasdaq_divisor`, since 2026-11-17) |
 | Rel2High | (prc_m / cumfacpr_m) / max over the past 252 days of (high / cumfacpr); >= 120 days. Ratio form, so a later split cannot change a past value |
 | Resid_Var | residual variance of daily excess returns on FF3 + intercept over the 2 calendar months ending at m; >= 20 days |
-| Spread | mean over month m of (ask - bid) / midpoint from closing quotes, ask > bid > 0; >= 10 days |
+| Spread | mean over month m of the daily Corwin-Schultz (2012) high-low estimate (`hl_spread`), two consecutive traded days, prices over cumfacpr; >= 10 days (`spread.source: corwin_schultz`, since 2026-11-17, as in Europe). Before: (ask - bid) / midpoint of CRSP closing quotes (`quotes`), whose NYSE quotes are several times too wide until a break in 2003 |
 | SUV | daily volume regressed on 1, r+, r- over months m-6..m-1 (>= 60 days); mean residual in month m under those coefficients, divided by the estimation residual s.d. |
 | Variance | sample variance of daily returns over the 2 calendar months ending at m; >= 20 days |
-| Vol | shares traded over the 5 trading days ending on d |
+| Vol | value traded (shares x close, USD) over the 5 trading days ending on d (since 2026-11-17; shares traded before, which ranked by price level); Nasdaq shares as for LTurnover |
 | Beta | corr(3-day log excess returns, market; 1260 days, >= 750) x sd(daily log excess; 252 days, >= 120) / same for the market. No shrinkage |
 
 ### Profitability (annual)
@@ -173,10 +209,17 @@ above; `m` = month end; `t = m+1` = prediction month. Windows are in the config.
 7. Foreign-incorporated companies (`usincflg N`) and REITs are out, mirroring CRSP share
    codes 10/11. Step 1's Compustat universe kept REITs; the build report shows the
    overlap between the two universes by year.
-8. Volume-based characteristics (LTurnover, Vol, SUV) use CRSP volume as reported.
-   Nasdaq volume before 2001 double-counts dealer trades relative to NYSE (Anderson &
-   Dyl 2005); Chen-Pelger-Zhu do not adjust and neither do we. Cross-sectional ranking
-   within a large-cap universe limits the effect.
+8. Volume-based characteristics (LTurnover, Vol, SUV) divide Nasdaq volume by the Gao and
+   Ritter (2010) factors since 2026-11-17 (Nasdaq double-counts dealer trades relative to
+   NYSE, Anderson & Dyl 2005; Jensen-Kelly-Pedersen and Chen-Zimmermann adjust, Chen-Pelger-Zhu
+   do not). Before the adjustment Nasdaq was 13% of members but 34-42% of the top turnover
+   quintile before 2004.
+10. Daily returns (since 2026-11-17, config `returns.broken_quote_spread: 0.10`): a no-trade
+   day whose closing quote is wider than 10% of its midpoint keeps the previous close with a
+   zero return, and CRSP's return of that day is compounded into the next row, so two-day
+   returns are unchanged (`us_panel.fold_broken_quotes`; ABN AMRO's receipt 2007-10-04: bid
+   53, ask 141, close 97, +82.6% then -45.4% at rank 52). `corrections.drop_delisting` drops
+   delisting rows that are not a holder's return (ABB's ADR -94.6% in 2023).
 9. Point in time: `scripts/build_us_dataset.py --cutoff DATE` rebuilds from truncated
    inputs. On the 2010 smoke build, features and universe at the cutoff were identical to
    the full build and returns identical on common rows. `returns.parquet` carries the

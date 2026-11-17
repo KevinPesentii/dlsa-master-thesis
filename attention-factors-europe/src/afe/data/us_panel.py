@@ -36,7 +36,7 @@ import pyarrow.parquet as pq
 
 from afe import schemas
 from afe.data import characteristics as ch
-from afe.data import compustat_global, wrds_us
+from afe.data import compustat_global, hl_spread, wrds_us
 
 
 @dataclass
@@ -52,6 +52,7 @@ class RawUS:
     daily_extra_dir: Path | None = None   # crsp_daily_extra/: receipts, units, trusts
     secm: pd.DataFrame | None = None      # comp_secm_receipts.parquet: receipts' share base
     global_home: dict | None = None       # global_home/: issuers' home-market month-end rows
+    daily_low_dir: Path | None = None     # crsp_daily_low/: daily low, for the Corwin-Schultz spread
 
     def truncate(self, cutoff: pd.Timestamp) -> "RawUS":
         """Everything dated after `cutoff` removed: the input of a prefix-invariance test.
@@ -67,6 +68,7 @@ class RawUS:
             delisting=self.delisting[self.delisting["date"] <= c],
             daily_extra_dir=self.daily_extra_dir,
             secm=None if self.secm is None else self.secm[self.secm["datadate"] <= c],
+            daily_low_dir=self.daily_low_dir,
             global_home=None if self.global_home is None else
             {**self.global_home, "secd": self.global_home["secd"][self.global_home["secd"]["datadate"] <= c]},
         )
@@ -87,6 +89,8 @@ def load_raw(raw_dir: Path) -> RawUS:
               rd("ff_daily"), rd("ff_monthly"), raw_dir / "crsp_daily")
     if has("crsp_daily_extra"):
         r.daily_extra_dir = raw_dir / "crsp_daily_extra"
+    if has("crsp_daily_low"):
+        r.daily_low_dir = raw_dir / "crsp_daily_low"
     if has("global_home/secd_monthend.parquet"):
         gh = {k: pd.read_parquet(raw_dir / "global_home" / f"{f}.parquet")
               for k, f in [("secd", "secd_monthend"), ("security", "security"), ("company", "company"), ("fx", "fx_daily")]}
@@ -137,13 +141,18 @@ def funda_to_usd(funda: pd.DataFrame, currency: pd.DataFrame, fx: pd.DataFrame) 
 
 def eligible_monthly(monthly: pd.DataFrame, cfg: dict) -> pd.DataFrame:
     """Monthly rows that may enter the universe: the share types, incorporation, issuer
-    types and exchanges of config eligibility, with a positive market cap."""
+    types and exchanges of config eligibility, with a positive market cap, less the lines
+    of `universe.exclude_permnos` (receipts whose share count makes a micro cap a top-500
+    company and that no home-market cap can check; audit A8, 2026-11-17)."""
     e = cfg["eligibility"]
     m = monthly[monthly["usincflg"].isin(e["usincflg"]) & monthly["issuertype"].isin(e["issuertype"])
                 & monthly["primaryexch"].isin(e["primaryexch"])
                 & monthly["sharetype"].isin(e.get("sharetype", ["NS"])) & (monthly["cap"] > 0)]
     if e.get("min_price", 0) > 0:
         m = m[m["prc"].abs() >= e["min_price"]]
+    excl = [int(x["permno"]) for x in cfg.get("universe", {}).get("exclude_permnos", []) or []]
+    if excl:
+        m = m[~m["permno"].isin(excl)]
     m = m.copy()
     m["month"] = m["date"].dt.to_period("M")
     return m
@@ -196,7 +205,7 @@ def home_caps(gh: dict | None) -> pd.DataFrame | None:
 def receipt_caps(elig: pd.DataFrame, secm: pd.DataFrame | None, ccm: pd.DataFrame, funda: pd.DataFrame,
                  lag_months: int = 6, max_age_months: int = 30,
                  max_fallback_ratio: float = 20_000.0, home: pd.DataFrame | None = None,
-                 home_tol: float = 1.5, home_max_ratio: float = 100.0) -> pd.DataFrame:
+                 home_tol: float = 1.5, home_max_ratio: float = 100.0, carry_links: bool = False) -> pd.DataFrame:
     """`elig` with the cap of each depositary receipt (sharetype AD) at company level:
     shares in receipt equivalents x the receipt's close, in CRSP units (USD thousands).
     CRSP's own cap counts only receipts outstanding (Mizuho 2020-12: $0.2bn, company $32bn).
@@ -211,7 +220,8 @@ def receipt_caps(elig: pd.DataFrame, secm: pd.DataFrame | None, ccm: pd.DataFram
     the receipt ratio (Smith & Nephew 1999, Centaur Mining 2000). Only data known at the
     time may judge it, so a fallback above `max_fallback_ratio` x CRSP's cap is dropped
     (those two: 111,000x and 34,000x; secm caps reach 24,000x legitimately, Sanofi 2002,
-    so the rule is for the fallback only; smaller errors, Fiat's ~4x, stay).
+    so the rule is for the fallback only; smaller errors, Fiat's ~4x, stay) where the
+    issuer has no home-market cap that month; where it has one, rule 3 is the check.
     Never below CRSP's cap (a class-A-only cshom understates, e.g. Baidu), unless rule 3 says so.
       3. Where the issuer's home-market cap is known (`home`, from home_caps: same month,
          Compustat Global) it checks the result: a receipt cap above `home_tol` x the whole
@@ -258,6 +268,21 @@ def receipt_caps(elig: pd.DataFrame, secm: pd.DataFrame | None, ccm: pd.DataFram
         ad = ad.set_index("_i")
         ad.loc[c["_i"], ["gvkey", "liid"]] = c[["gvkey", "liid"]].to_numpy()
         ad = ad.reset_index()
+    if carry_links:
+        # A receipt still without a link keeps the last link its own line had (one that has ended
+        # by then: point in time), so the issuer's share base and the home-market check of rule 3
+        # still apply. CCM has no link for AmBev's receipt from 1998-04 to 2013-11, which left it
+        # at CRSP's receipts-only cap for 15 years (Kevin's data check, 2026-11-17).
+        past = links[links["linkenddt"] < pd.Timestamp("2099-12-31")][["permno", "gvkey", "liid", "linkenddt"]]
+        need = ad.loc[ad["gvkey"].isna(), ["_i", "permno", "key"]].sort_values("key")
+        if len(need) and len(past):
+            cf = pd.merge_asof(need, past.sort_values("linkenddt"), left_on="key", right_on="linkenddt", by="permno",
+                               direction="backward")
+            cf = cf[cf["gvkey"].notna()]
+            ad = ad.set_index("_i")
+            ad.loc[cf["_i"], ["gvkey", "liid"]] = cf[["gvkey", "liid"]].to_numpy()
+            ad = ad.reset_index()
+    if secm is not None and len(secm):
         ad = ad.drop(columns="sh").merge(s[["gvkey", "liid", "month", "sh"]], on=["gvkey", "liid", "month"], how="left")
     ad["src"] = np.where(ad["sh"].notna(), "secm", "crsp")
 
@@ -274,7 +299,13 @@ def receipt_caps(elig: pd.DataFrame, secm: pd.DataFrame | None, ccm: pd.DataFram
     age = (fb["key"].dt.year - fb["datadate"].dt.year) * 12 + (fb["key"].dt.month - fb["datadate"].dt.month)
     fb["sh_f"] = (fb["csho"] * 1e6 * carry).where(age <= max_age_months)
     ad = ad.merge(fb[["_i", "sh_f"]], on="_i", how="left")
-    ad.loc[ad["prc"].abs() * ad["sh_f"] / 1000.0 > max_fallback_ratio * ad["cap"], "sh_f"] = np.nan
+    # The guard is for counts nothing else can check: where the home market sizes the issuer,
+    # rule 3 judges the count instead (a tiny receipt programme made a right count look
+    # 26,000x CRSP's: Mitsubishi Bank 1990-12, $43bn against $1.6m; audit B2, 2026-11-17).
+    homed = (ad[["gvkey", "month"]].merge(home[["gvkey", "month"]].drop_duplicates().assign(_h=True),
+                                          on=["gvkey", "month"], how="left")["_h"].notna().to_numpy()
+             if home is not None and len(home) else np.zeros(len(ad), dtype=bool))
+    ad.loc[(ad["prc"].abs() * ad["sh_f"] / 1000.0 > max_fallback_ratio * ad["cap"]) & ~homed, "sh_f"] = np.nan
     use_f = ad["sh"].isna() & ad["sh_f"].notna()
     ad.loc[use_f, "sh"], ad.loc[use_f, "src"] = ad.loc[use_f, "sh_f"], "funda"
 
@@ -340,27 +371,193 @@ def build_universe(co: pd.DataFrame, cfg: dict, calendar: pd.DatetimeIndex,
     return uni, pd.concat(asof, ignore_index=True)
 
 
+def receipt_activity(extra_dir: Path | None, permnos, years, window: int,
+                     cutoff: pd.Timestamp | None = None) -> pd.DataFrame:
+    """(permno, month, traded_share): the share of the trading days of months m-window+1..m
+    on which the receipt line traded (volume > 0), from its daily rows (crsp_daily_extra).
+    On a day without a trade CRSP prices a line at its quote midpoint, so a receipt that
+    trades on few days has a return series of stale and quote-driven prices (Daiei 87% of
+    its member-days without volume, Kubota 42%, Mitsui 41%; audit B1, 2026-11-17)."""
+    permnos = [int(p) for p in permnos]
+    if extra_dir is None or not permnos:
+        return pd.DataFrame(columns=["permno", "month", "traded_share"])
+    parts = []
+    for y in years:
+        f = extra_dir / f"{y}.parquet"
+        if f.exists():
+            t = pq.read_table(f, columns=["permno", "date", "vol"], filters=[("permno", "in", permnos)]).to_pandas()
+            t["date"] = pd.to_datetime(t["date"])
+            if cutoff is not None:
+                t = t[t["date"] <= cutoff]
+            t = t.assign(month=t["date"].dt.to_period("M"), traded=(t["vol"].astype("float64") > 0),
+                         permno=t["permno"].astype("int64"))
+            parts.append(t.groupby(["permno", "month"]).agg(days=("traded", "size"), traded=("traded", "sum")))
+    if not parts:
+        return pd.DataFrame(columns=["permno", "month", "traded_share"])
+    m = pd.concat(parts).groupby(level=[0, 1]).sum().reset_index().sort_values(["permno", "month"])
+    out = []
+    for p, g in m.groupby("permno", sort=False):
+        g = g.set_index("month").reindex(pd.period_range(g["month"].min(), g["month"].max(), freq="M"), fill_value=0)
+        roll = g[["days", "traded"]].rolling(window, min_periods=1).sum()
+        out.append(pd.DataFrame({"permno": p, "month": roll.index,
+                                 "traded_share": (roll["traded"] / roll["days"].where(roll["days"] > 0)).to_numpy()}))
+    return pd.concat(out, ignore_index=True)
+
+
+def listed_at_month_end(daily_dirs: list[Path], years, delisting: pd.DataFrame | None, within_days: int,
+                        cutoff: pd.Timestamp | None = None) -> pd.DataFrame:
+    """(permno, month, listed): whether a line is still listed at the end of the month: its last
+    daily return in the month is at most `within_days` calendar days before the month end, and
+    it has no delisting row (crsp_delisting.parquet) on or before the month end. A line that
+    stopped trading in the middle of month m was still ranked on its m row and held a slot for
+    all of m+1 without a return (Kevin's data check, 2026-11-17: 339 US member-months). Every
+    permno of the daily files, one year at a time; known at the month end: point in time."""
+    parts = []
+    for y in years:
+        for d in daily_dirs:
+            f = d / f"{y}.parquet"
+            if not f.exists():
+                continue
+            t = pq.read_table(f, columns=["permno", "date", "ret"]).to_pandas()
+            t = t[t["ret"].notna()]
+            t["date"] = pd.to_datetime(t["date"]).astype("datetime64[ns]")
+            if cutoff is not None:
+                t = t[t["date"] <= cutoff]
+            t = t.assign(permno=t["permno"].astype("int64"), month=t["date"].dt.to_period("M"))
+            parts.append(t.groupby(["permno", "month"])["date"].max())
+    last = pd.concat(parts).groupby(level=[0, 1]).max().rename("last").reset_index()
+    m_end = last["month"].dt.to_timestamp(how="end").dt.normalize()
+    last["listed"] = (m_end - last["last"]).dt.days <= int(within_days)
+    if delisting is not None and len(delisting):
+        dl = delisting.assign(permno=delisting["permno"].astype("int64"), date=pd.to_datetime(delisting["date"]))
+        first = dl.groupby("permno")["date"].min()
+        out = last["permno"].map(first)
+        last.loc[out.notna() & (out <= m_end), "listed"] = False
+    return last[["permno", "month", "listed"]]
+
+
+def rankable(frame: pd.DataFrame, elig: pd.DataFrame, monthly: pd.DataFrame, cfg: dict,
+             activity: pd.DataFrame | None = None, listed: pd.DataFrame | None = None) -> pd.DataFrame:
+    """The rows of `frame` (company_month or line_month) that may be RANKED for the universe;
+    the rest keep their caps (LME, December ME) but cannot be members. `listed`
+    (listed_at_month_end, config `universe.listed_within_days`): a line must still be listed
+    at the end of the ranking month. Two more rules of config `universe` (audit of 2026-11-17):
+      receipt_min_traded_share  a depositary receipt (sharetype AD) whose line traded on
+                                fewer than this share of the days of the last
+                                receipt_activity_months months (receipt_activity) is not
+                                ranked; no daily rows to judge: ranked (B1).
+      min_history_months        a line needs a CRSP monthly row this many months before the
+                                ranking month: a listing is not ranked on its first month's
+                                price (Addentax 2022-08: $21bn on its IPO day, -95% the day
+                                after; B7). Spin-offs and new merger permnos wait a month too."""
+    u = cfg.get("universe", {})
+    keep = pd.Series(True, index=frame.index)
+    k = int(u.get("min_history_months", 0) or 0)
+    if k:
+        have = pd.DataFrame({"primary_permno": monthly["permno"].astype("int64"),
+                             "_m": monthly["date"].dt.to_period("M"), "_have": True}).drop_duplicates(["primary_permno", "_m"])
+        x = pd.DataFrame({"primary_permno": frame["primary_permno"].astype("int64").to_numpy(),
+                          "_m": (frame["month"] - k).to_numpy()}).merge(have, on=["primary_permno", "_m"], how="left")
+        keep &= x["_have"].notna().to_numpy()
+    if listed is not None and len(listed):
+        x = frame[["primary_permno", "month"]].merge(listed.rename(columns={"permno": "primary_permno"}),
+                                                     on=["primary_permno", "month"], how="left")
+        keep &= x["listed"].fillna(False).astype(bool).to_numpy()          # no return at all in the month: not listed
+    thr = u.get("receipt_min_traded_share")
+    if thr and activity is not None and len(activity):
+        st = elig[["permno", "month", "sharetype"]].rename(columns={"permno": "primary_permno"})
+        x = frame[["primary_permno", "month"]].merge(st, on=["primary_permno", "month"], how="left").merge(
+            activity.rename(columns={"permno": "primary_permno"}), on=["primary_permno", "month"], how="left")
+        keep &= ~((x["sharetype"] == "AD") & (x["traded_share"] < float(thr))).to_numpy()
+    return frame[keep.to_numpy()]
+
+
 # ------------------------------------------------------------------ daily data
 
 
-DAILY_COLS = ["permno", "permco", "date", "ret", "prc", "vol", "bid", "ask", "high", "cap", "shrout", "cumfacpr"]
+DAILY_COLS =["permno", "permco", "date", "ret", "prc", "vol", "bid", "ask", "high", "cap", "shrout", "cumfacpr",
+              "primaryexch"]
+
+# Gao and Ritter (2010): Nasdaq's dealer market reported both legs of a trade, so its share
+# volume is divided by these factors before it is compared with exchange volume (Jensen-
+# Kelly-Pedersen and Chen-Zimmermann do the same). Each divisor applies before its date.
+NASDAQ_DIVISORS = [(pd.Timestamp("2001-02-01"), 2.0), (pd.Timestamp("2002-01-01"), 1.8),
+                   (pd.Timestamp("2004-01-01"), 1.6)]
+
+
+def nasdaq_divisor(dates: pd.Series, exch: pd.Series) -> np.ndarray:
+    """Per row: the Gao-Ritter divisor of a Nasdaq (primaryexch 'Q') volume, else 1."""
+    d = pd.to_datetime(dates).to_numpy()
+    out = np.ones(len(d))
+    lo = np.datetime64("1900-01-01")
+    for end, k in NASDAQ_DIVISORS:
+        out[(d >= lo) & (d < end.to_datetime64())] = k
+        lo = end.to_datetime64()
+    return np.where(np.asarray(exch.astype(str)) == "Q", out, 1.0)
+
+
+def fold_broken_quotes(df: pd.DataFrame, max_rel_spread: float) -> pd.DataFrame:
+    """`df` (rows sorted by permno and date) with no-trade days priced off a broken quote
+    neutralised: volume zero or missing and a closing quote wider than `max_rel_spread` of
+    its midpoint. CRSP prices such a day at the midpoint and its return follows it (ABN
+    AMRO's receipt 2007-10-04: bid 53, ask 141, close 97, +82.6% then -45.4%, at rank 52;
+    audit A6, 2026-11-17). The day keeps the previous close and a zero return, and its
+    return is compounded into the permno's next row, so the return over the two days is
+    CRSP's. Whether a day is flagged depends on that day's data only: point in time.
+    Adds `broken_quote` (bool)."""
+    bid, ask = df["bid"], df["ask"]
+    rel = ((ask - bid) / ((ask + bid) / 2)).where((bid > 0) & (ask > bid))
+    flag = (~(df["vol"] > 0) & (rel > max_rel_spread)).to_numpy()
+    df = df.copy()
+    df["broken_quote"] = flag
+    if not flag.any():
+        return df
+    key = df["permno"].to_numpy()
+    ret = df["ret"].to_numpy(dtype="float64").copy()
+    # each flagged row belongs to the next row of its permno that has a return: a row without
+    # one in between (ABN AMRO 2007-10-05) is skipped, as CRSP's next return skips it too
+    absorb = ~flag & ~np.isnan(ret)
+    nf = pd.Series(absorb.astype("int64")[::-1])
+    grp = nf.groupby(key[::-1]).cumsum().to_numpy()[::-1]
+    factor = np.where(flag, 1.0 + np.nan_to_num(ret), 1.0)
+    prod = pd.Series(factor).groupby([key, grp]).transform("prod").to_numpy()
+    target = absorb & (prod != 1.0)
+    ret[target] = (1.0 + ret[target]) * prod[target] - 1.0
+    ret[flag] = 0.0
+    df["ret"] = ret
+    df.loc[flag, ["prc", "high"]] = np.nan
+    carried = df.groupby("permno")["prc"].ffill()          # only the flagged rows take it
+    df.loc[flag, "prc"] = carried[flag]
+    return df
 
 
 def load_daily(daily_dir: Path | list[Path], permnos, years, ff_daily: pd.DataFrame,
-               cutoff: pd.Timestamp | None = None, delisting: pd.DataFrame | None = None
+               cutoff: pd.Timestamp | None = None, delisting: pd.DataFrame | None = None,
+               low_dir: Path | None = None, fixes: dict | None = None
                ) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Daily rows for `permnos` over `years`, and the per-(permno, month) statistics
-    that the monthly-from-daily characteristics are built from. One year at a time so
-    50M rows never sit in memory together. `daily_dir` may be a list (crsp_daily plus
-    crsp_daily_extra): a permno has one share type on a date, so the files do not overlap.
+    that the monthly-from-daily characteristics are built from. `daily_dir` may be a list
+    (crsp_daily plus crsp_daily_extra): a permno has one share type on a date, so the files
+    do not overlap.
 
     `delisting` (crsp_delisting.parquet) supplies each permno's delisting-day row, whose
     dlyret is the delisting return; the yearly files cannot contain it (module docstring
-    of wrds_us). It is appended to the year's rows; the daily-file row wins if both exist."""
+    of wrds_us). It is appended to the year's rows; the daily-file row wins if both exist.
+
+    `fixes` (config, all optional; audit of 2026-11-17): `broken_quote_spread` neutralises
+    no-trade days priced off a broken quote (fold_broken_quotes); `nasdaq_volume:
+    gao_ritter` divides Nasdaq volume (nasdaq_divisor); `spread: corwin_schultz` adds the
+    daily high-low estimate `cs` (hl_spread, from the daily low in `low_dir`, written by
+    fetch_us_raw.py --low), which the Spread sums then use instead of the closing quotes."""
+    fixes = fixes or {}
     permnos = [int(p) for p in permnos]
     dirs = [daily_dir] if isinstance(daily_dir, Path) else list(daily_dir)
     dl = pd.DataFrame(columns=DAILY_COLS) if delisting is None else delisting[delisting["permno"].isin(permnos)]
-    frames, stats = [], []
+    dl = dl.reindex(columns=DAILY_COLS)
+    use_cs = fixes.get("spread", "quotes") == "corwin_schultz"
+    if use_cs and low_dir is None:
+        raise ValueError("spread: corwin_schultz needs the daily low (raw crsp_daily_low/, fetch_us_raw.py --low)")
+    frames = []
     for y in years:
         parts = [pq.read_table(d / f"{y}.parquet", columns=DAILY_COLS, filters=[("permno", "in", permnos)]).to_pandas()
                  for d in dirs if (d / f"{y}.parquet").exists()]
@@ -370,11 +567,12 @@ def load_daily(daily_dir: Path | list[Path], permnos, years, ff_daily: pd.DataFr
         # plain float64: the parquet metadata restores nullable Float64/Int32, whose to_numpy() is
         # an object array, and a receipt-month with returns but no volume then divides a Python
         # 0.0 in SUV (ZeroDivisionError, 2026-09-23). NA becomes NaN, values are unchanged.
-        num = [c for c in DAILY_COLS if c not in ("permno", "permco", "date")]
+        num = [c for c in DAILY_COLS if c not in ("permno", "permco", "date", "primaryexch")]
         df[num] = df[num].astype("float64")
+        df["primaryexch"] = df["primaryexch"].astype(str)
         df["date"] = pd.to_datetime(df["date"]).astype("datetime64[ns]")
         df["permno"], df["permco"] = df["permno"].astype("int64"), df["permco"].astype("int64")
-        extra = dl[dl["date"].dt.year == y][DAILY_COLS] if len(dl) else dl
+        extra = dl[dl["date"].dt.year == y] if len(dl) else dl
         if len(extra):
             df = pd.concat([df, extra.astype(df.dtypes.to_dict())], ignore_index=True)
             df = df.drop_duplicates(["permno", "date"], keep="first")
@@ -382,10 +580,25 @@ def load_daily(daily_dir: Path | list[Path], permnos, years, ff_daily: pd.DataFr
             df = df[df["date"] <= cutoff]
         if len(df) == 0:
             continue
+        if use_cs:
+            lp = low_dir / f"{y}.parquet"
+            low = (pq.read_table(lp, columns=["permno", "date", "low"], filters=[("permno", "in", permnos)]).to_pandas()
+                   if lp.exists() else pd.DataFrame({"permno": [], "date": [], "low": []}))
+            low = low.astype({"permno": "int64", "low": "float64"})
+            low["date"] = pd.to_datetime(low["date"]).astype("datetime64[ns]")
+            df = df.merge(low.drop_duplicates(["permno", "date"]), on=["permno", "date"], how="left")
         df["prc"] = df["prc"].abs()
         frames.append(df)
-        stats.append(monthly_daily_stats(df, ff_daily))
     daily = pd.concat(frames, ignore_index=True).sort_values(["permno", "date"], ignore_index=True)
+    if fixes.get("broken_quote_spread"):
+        daily = fold_broken_quotes(daily, float(fixes["broken_quote_spread"]))
+    if fixes.get("nasdaq_volume") == "gao_ritter":
+        daily["vol"] = daily["vol"] / nasdaq_divisor(daily["date"], daily["primaryexch"])
+    if use_cs:
+        daily["cs"] = hl_spread.by_line(daily.assign(_traded=daily["vol"] > 0), ["permno"], "high", "low", "prc",
+                                        "_traded", factor="cumfacpr").to_numpy()
+    year = daily["date"].dt.year.to_numpy()
+    stats = [monthly_daily_stats(daily[year == y], ff_daily) for y in np.unique(year)]
     return daily, pd.concat(stats).sort_index()
 
 
@@ -396,11 +609,13 @@ def monthly_daily_stats(df: pd.DataFrame, ff_daily: pd.DataFrame) -> pd.DataFram
 
       n_ret, sum_ret, sum_ret2      returns                      -> Variance
       x_<a>_<b>, xy_<a>, sum_exret2 FF3 cross products           -> Resid_Var
-      n_spread, sum_spread          relative closing spread      -> Spread
+      n_spread, sum_spread          daily spread: the Corwin-Schultz estimate `cs` where the
+                                    frame has it, else the relative closing quote -> Spread
       n_vol, sum_vol, sum_vol2, sum_rp, sum_rn, sum_rp2, sum_rn2, sum_rp_vol, sum_rn_vol
                                     volume on |r+| and |r-|      -> SUV
     """
-    d = df[["permno", "date", "ret", "vol", "bid", "ask"]].merge(
+    cols = ["permno", "date", "ret", "vol", "bid", "ask"] + (["cs"] if "cs" in df else [])
+    d = df[cols].merge(
         ff_daily[["mktrf", "smb", "hml", "rf"]], left_on="date", right_index=True, how="left")
     d["month"] = d["date"].dt.to_period("M")
     r = d["ret"]
@@ -417,8 +632,11 @@ def monthly_daily_stats(df: pd.DataFrame, ff_daily: pd.DataFrame) -> pd.DataFram
             out[ch.cross_key(a, b)] = (x[a] * x[b]).where(exret.notna())
     out["sum_exret2"] = exret ** 2
 
-    mid = (d["ask"] + d["bid"]) / 2
-    rel = ((d["ask"] - d["bid"]) / mid).where((d["bid"] > 0) & (d["ask"] > d["bid"]))
+    if "cs" in d:
+        rel = d["cs"].astype("float64")
+    else:
+        mid = (d["ask"] + d["bid"]) / 2
+        rel = ((d["ask"] - d["bid"]) / mid).where((d["bid"] > 0) & (d["ask"] > d["bid"]))
     out["n_spread"] = rel.notna().astype("float32")
     out["sum_spread"] = rel
 
@@ -441,13 +659,16 @@ def daily_inputs(daily: pd.DataFrame, ff_daily: pd.DataFrame, windows: dict) -> 
 
 
 def monthly_inputs(monthly: pd.DataFrame, co: pd.DataFrame, permnos, stats: pd.DataFrame,
-                   D: ch.DailyInputs, windows: dict) -> ch.MonthlyInputs:
+                   D: ch.DailyInputs, windows: dict, nasdaq_volume: str | None = None) -> ch.MonthlyInputs:
     """Wide monthly frames for `permnos`. The return/price/volume series are the
     permno's own (unfiltered, so a spell outside the eligible pool does not punch a hole
-    in its momentum); cap_co is the company cap from the eligible classes."""
+    in its momentum); cap_co is the company cap from the eligible classes. `nasdaq_volume:
+    gao_ritter` divides Nasdaq's monthly volume as load_daily divides the daily one."""
     m = monthly[monthly["permno"].isin(permnos)].copy()
     m["month"] = m["date"].dt.to_period("M")
     m["prc"] = m["prc"].abs()
+    if nasdaq_volume == "gao_ritter":
+        m["vol"] = m["vol"].astype("float64") / nasdaq_divisor(m["date"], m["primaryexch"])
     m = m.merge(co[["permco", "month", "cap_co"]], on=["permco", "month"], how="left")
     wide = lambda col: m.pivot(index="month", columns="permno", values=col).astype("float64")  # noqa: E731
     ret = wide("ret")
@@ -527,15 +748,19 @@ def annual_frame(funda: pd.DataFrame, ccm: pd.DataFrame, co: pd.DataFrame, cfg: 
 
 
 def align_annual(annual: pd.DataFrame, mapping: pd.DataFrame, cols: list[str], max_age_months: int,
-                 last_observed: bool = False) -> pd.DataFrame:
+                 last_observed: bool = False, carry_for: list[str] | None = None) -> pd.DataFrame:
     """For each (permno, month, gvkey) in `mapping`, the latest fiscal record whose
     avail_month <= month and whose datadate is at most max_age_months old. Returns
     (permno, month) + `cols`. With last_observed, each column comes instead from the latest
-    such record in which it is not missing: the stock's last observed value."""
+    such record in which it is not missing: the stock's last observed value. For each column
+    of `carry_for`, also `_dd_<col>` and `_me_<col>`: the datadate and the December market
+    equity of the record it came from (validate_dec_me reads them)."""
+    carry_for = [c for c in (carry_for or []) if c in cols]
     left = mapping.copy()
     left["key"] = left["month"].dt.to_timestamp(how="end").dt.normalize()
     left = left.sort_values("key", ignore_index=True)
-    right = annual[["gvkey", "datadate", "avail_month"] + cols].copy()
+    extra = ["me_dec"] if carry_for and "me_dec" in annual else []
+    right = annual[["gvkey", "datadate", "avail_month"] + cols + extra].copy()
     right["key"] = right["avail_month"].dt.to_timestamp(how="end").dt.normalize()
     # A fiscal-year-end change puts two records in one calendar year (AMD: 1987-03 and 1987-12),
     # both usable from the same June; merge_asof takes the last tie, so order ties by datadate.
@@ -545,9 +770,51 @@ def align_annual(annual: pd.DataFrame, mapping: pd.DataFrame, cols: list[str], m
     out = left[["permno", "month"]].copy()
     for group in ([[c] for c in cols] if last_observed else [cols]):
         r = right.dropna(subset=group) if last_observed else right
-        m = pd.merge_asof(left, r[["gvkey", "key", "datadate"] + group], on="key", by="gvkey",
+        m = pd.merge_asof(left, r[["gvkey", "key", "datadate"] + group + extra], on="key", by="gvkey",
                           direction="backward")
         age = (m["key"].dt.year - m["datadate"].dt.year) * 12 + (m["key"].dt.month - m["datadate"].dt.month)
-        m.loc[~(age <= max_age_months), group] = np.nan
+        old = ~(age <= max_age_months)
+        m.loc[old, group] = np.nan
         out[group] = m[group].to_numpy()
+        for c in (c for c in group if c in carry_for):
+            out[f"_dd_{c}"] = m["datadate"].where(~old).to_numpy()
+            out[f"_me_{c}"] = m["me_dec"].where(~old).to_numpy() if extra else np.nan
     return out
+
+
+def validate_dec_me(aligned: pd.DataFrame, chars: list[str], cap: pd.DataFrame, ret: pd.DataFrame,
+                    max_ratio: float = 8.0) -> pd.DataFrame:
+    """`aligned` (align_annual output with carry_for = `chars`) with each value of `chars`
+    set missing where its record's December market equity does not belong to the company
+    priced in that month: the company cap of the month, `cap` (month x id), over December ME
+    grown by the company's return since that December (`ret`, month x id), outside
+    1/max_ratio..max_ratio. That is a share count that moved more than max_ratio-fold
+    without a return to explain it. Causes found by the 2026-11-17 audit (B2): a receipt
+    whose December cap fell back to CRSP's receipts outstanding (Mitsubishi Bank Dec 1990:
+    $1.6m against a $43bn company, BEME 6,387 at rank 3), a CRSP share count in thousands
+    of the wrong unit (EnCana Dec 2001), a pre-IPO or certificate line under the same id
+    (GDF 2004, Credit Agricole 2000, Areva's certificates), and real recapitalisations whose
+    old December ME no longer prices the company (AIB 2011). Uses only months up to the row's
+    own: point in time. Rows it cannot check (no cap that month, December before the
+    return grid) keep their value. Drops the `_dd_` / `_me_` columns."""
+    out = aligned.copy()
+    grid = cap.index.union(ret.index)
+    lr = np.log1p(ret.reindex(index=grid).astype("float64").fillna(0.0)).cumsum()
+    lr_s = lr.stack(future_stack=True)
+    cap_s = cap.reindex(index=grid).astype("float64").stack(future_stack=True)
+    ids = out["permno"].to_numpy()
+    month = pd.PeriodIndex(out["month"], freq="M")
+    for c in chars:
+        if f"_dd_{c}" not in out:
+            continue
+        dd = pd.to_datetime(out[f"_dd_{c}"])
+        dec = pd.PeriodIndex.from_fields(year=dd.dt.year.fillna(1800).astype(int), month=12, freq="M")
+        l_m = lr_s.reindex(pd.MultiIndex.from_arrays([month, ids])).to_numpy()
+        l_d = lr_s.reindex(pd.MultiIndex.from_arrays([dec, ids])).to_numpy()
+        cap_m = cap_s.reindex(pd.MultiIndex.from_arrays([month, ids])).to_numpy()
+        me = pd.to_numeric(out[f"_me_{c}"], errors="coerce").to_numpy(dtype="float64")
+        with np.errstate(invalid="ignore", divide="ignore"):
+            q = np.log(cap_m / (me * np.exp(l_m - l_d)))
+        bad = np.isfinite(q) & (np.abs(q) > np.log(max_ratio)) & dd.notna().to_numpy()
+        out.loc[bad, c] = np.nan
+    return out.drop(columns=[x for x in out.columns if x.startswith(("_dd_", "_me_"))])

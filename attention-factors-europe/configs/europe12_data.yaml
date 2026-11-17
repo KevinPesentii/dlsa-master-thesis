@@ -26,6 +26,9 @@ filters:                             # as configs/universe_eu_compustat.yaml, pl
   min_class_share: 0.05              # a share class below 5% of the cap never prices the company (compustat_global)
   dup_tol: 0.02                      # a class within 2% of another in shares AND price is that class again
   fx_max_stale_days: 7
+  # a listing prices and sizes a company at a month end only if its month-end row is at most this many
+  # days old and the line is not delisted by then (g_security.dldtei): Kevin's data check, 2026-11-17
+  listed_within_days: 10
 
 corrections:
   # g_secd share counts in another unit than the price, found by scripts/check_caps.py
@@ -63,11 +66,44 @@ corrections:
        note: "UBS Group second CHF line of 2025-05 (3.46bn shares, 09W's price)"}
     - {gvkey: "273099", iid: "10W", start: 1984-01-01, end: 2099-12-31,
        note: "MTU young shares line of 2023-05 carrying the total share count"}
+    - {gvkey: "250339", iid: "01W", start: 2007-11-13, end: 2099-12-31,
+       note: "Arcelor after its merger into ArcelorMittal (2007-11-13): ArcelorMittal's share count and price under the old gvkey (audit A5)"}
+    - {gvkey: "009267", iid: "01W", start: 2005-07-19, end: 2099-12-31,
+       note: "Royal Dutch Petroleum from its last trading day (2005-07-19) on: Shell plc trades from 2005-07-20; the last row would put both in the August universe (audit B6)"}
+    - {gvkey: "009267", iid: "04W", start: 2005-07-19, end: 2099-12-31,
+       note: "Royal Dutch Petroleum, second line, after the 2005 unification (audit B6)"}
   # one gvkey holding both halves of a dual-listed company: the cap sums the home classes of
   # all the countries (the pricing line is still the most active class)
   dual_listed:
     - {gvkey: "010846", countries: [NLD, GBR], start: 1984-01-01, end: 2020-10-31,
        note: "Unilever NV (Amsterdam) + Unilever PLC (London), one company until the 2020-11-29 unification"}
+  # the two halves of a group filed under TWO gvkeys: `from`'s cap is added to `into`, which keeps its
+  # pricing line; `from` is not eligible (compustat_global.merge_companies; audit B6, 2026-11-17)
+  merge_companies:
+    - {into: "100338", from: "100075", start: 1984-01-01, end: 2018-09-30,
+       note: "RELX PLC (London) + RELX NV (Amsterdam), one group until RELX NV merged into RELX PLC in 2018-09"}
+    - {into: "009267", from: "009655", start: 1984-01-01, end: 2005-07-31,
+       note: "Royal Dutch Petroleum (60%) + Shell Transport and Trading (40%), the Royal Dutch/Shell group until Shell plc (2005-07-20)"}
+  # a company whose own records are not the business its cap prices: `gvkey`'s records dated start..end
+  # are replaced by `source`'s (europe_accounts.accounts_from)
+  accounts_from:
+    - {gvkey: "009267", source: "012384", start: 1984-01-01, end: 2005-07-31,
+       note: "Royal Dutch's own records are holding accounts of its 60%; Compustat files the group's under Shell plc back to 1989"}
+  # Compustat FX quotes that jump 3% against the other currencies and revert the next business day
+  # (europe_fx.drop_bad_quotes drops the day and its carried copies; audit A4, 2026-11-17)
+  fx_quotes:
+    - {currency: DKK, date: 1985-05-14}
+    - {currency: DKK, date: 1985-08-26}
+    - {currency: ITL, date: 1982-02-03}
+    - {currency: ESP, date: 1986-04-04}
+    - {currency: FIM, date: 1984-09-17}
+    - {currency: IEP, date: 1985-05-17}
+    - {currency: ATS, date: 1982-06-16}
+    - {currency: ATS, date: 1988-09-05}
+    - {currency: ATS, date: 1989-06-28}
+    - {currency: ATS, date: 1990-10-05}
+    - {currency: ATS, date: 1991-12-17}
+    - {currency: NOK, date: 1993-07-23, note: "11.985 per GBP between 11.035 and 11.035: NOK/DEM +9% for one day"}
 
 currency:
   numeraire: XEU                     # ECU to 1998-12-31, EUR from 1999-01-01, 1:1 at the switch
@@ -92,6 +128,7 @@ raw:
 returns:
   delisting_return: null             # Compustat Global has none; open decision (docs/eu_raw_data.md)
   calendar_min_lines: 100            # pooled trading day: >= this many traded closes in the pool
+  carry_untraded_price: true         # a non-traded row (prcstd != 10) keeps the last traded close (Kevin's data check)
   holiday_fill_max_gap: 3            # stage 2b (scripts/fill_europe_holidays.py): a member's gap of <= 3 pooled
                                      # days with returns on both sides gets a zero local return, traded False
 
@@ -110,6 +147,10 @@ fundamentals:                        # as configs/us_data.yaml
   lag_months: 6
   max_age_months: 30
   fill_zero: [txditc, txdb, pstk, mib, ivao, xrd, xad, txp, dlc]
+  fill_zero_fs: [invt]               # banks and insurers (FS): INVT 0 to FY2010, empty from FY2011 (Kevin's data check)
+  # December ME of a record is used only while the company's cap stays within this factor of it,
+  # grown by the company's return since that December (us_panel.validate_dec_me; audit B2, 2026-11-17)
+  me_dec_max_ratio: 8
 
 windows:                             # as configs/us_data.yaml
   momentum_min_obs: {r12_2: 8, r12_7: 4, r36_13: 16}

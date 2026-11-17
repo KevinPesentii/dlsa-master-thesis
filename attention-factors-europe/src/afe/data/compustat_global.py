@@ -262,7 +262,7 @@ def company_month_mktcap(secd: pd.DataFrame, company: pd.DataFrame, security: pd
                          turnover_window: int = 6, min_class_share: float = 0.05,
                          genussschein_countries: tuple[str, ...] = (), share_corrections: list[dict] | None = None,
                          dup_tol: float = 0.02, exclude_lines: list[dict] | None = None,
-                         dual_listed: list[dict] | None = None) -> pd.DataFrame:
+                         dual_listed: list[dict] | None = None, listed_within_days: int | None = None) -> pd.DataFrame:
     """One row per (gvkey, datadate) with market cap in `target_ccy` millions.
 
     Steps: keep priced issues of the requested classes with a share count (`issue_types`,
@@ -297,6 +297,19 @@ def company_month_mktcap(secd: pd.DataFrame, company: pd.DataFrame, security: pd
     df = (df.sort_values(["gvkey", "iid", "price_date"])
           .drop_duplicates(["gvkey", "iid", "datadate"], keep="last"))
     df = df[(df["prccd"] > 0) & (df["cshoc"] > 0) & df["curcdd"].notna()].copy()
+    if listed_within_days is not None:
+        # A listing still listed at the month end: its month-end row is at most listed_within_days
+        # old and it is not delisted by then (g_security.dldtei). The monthend row of a line that
+        # stopped mid-month is its last trading day; moved to the month end it used to rank a
+        # company that no longer trades in the universe of the next month (Kevin's data check,
+        # 2026-11-17: 103 europe17 member-months) and to carry a company on a line that had
+        # stopped (ArcelorMittal's Paris line after 2007-11-13).
+        stale = df["price_date"] < df["datadate"] - pd.Timedelta(days=int(listed_within_days))
+        if "dldtei" in security:
+            dl = security[["gvkey", "iid", "dldtei"]].drop_duplicates(["gvkey", "iid"])
+            dd = df[["gvkey", "iid"]].merge(dl, on=["gvkey", "iid"], how="left")["dldtei"]
+            stale |= (pd.to_datetime(dd).to_numpy() <= df["datadate"].to_numpy())
+        df = df[~stale.to_numpy()].copy()
     df["qunit"] = df["qunit"].fillna(1.0)
     df["fx"] = convert_to_currency(df, fx, target_ccy, date_col="price_date")
     df = df[df["fx"].notna()].copy()
@@ -377,6 +390,31 @@ def company_month_mktcap(secd: pd.DataFrame, company: pd.DataFrame, security: pd
                   "loc", "sic", "conm", "iid", "exchg", "isin", "curcdd", "prccd", "cshoc", "prcstd",
                   "fx", "price_date"]
     return out[cols]
+
+
+def merge_companies(mcap: pd.DataFrame, merges: list[dict] | None) -> pd.DataFrame:
+    """The cap table with the two halves of a dual-structure group as one company (config
+    `corrections.merge_companies`, audit B6): in each month end of start..end where both have
+    a row, `into` gets `from`'s cap and classes added, and `from` is not eligible. `into`
+    keeps its own pricing line, turnover screen and accounts (`accounts_from` can point them
+    at the group's). The `dual_listed` rule does the same for a group that Compustat files
+    under ONE gvkey (Unilever); this one is for halves under two (RELX NV + PLC, Royal Dutch
+    + Shell Transport and Trading), which otherwise sat in the universe as two companies."""
+    if not merges:
+        return mcap
+    out = mcap.copy()
+    for m in merges:
+        into, frm = str(m["into"]), str(m["from"])
+        span = out["datadate"].between(pd.Timestamp(m["start"]), pd.Timestamp(m["end"]))
+        a = out[span & (out["gvkey"] == into)][["datadate"]].reset_index()
+        b = out[span & (out["gvkey"] == frm)][["datadate", "mktcap", "n_classes"]].reset_index()
+        both = a.merge(b, on="datadate", suffixes=("_into", "_from"))
+        out.loc[both["index_into"], "mktcap"] = (out.loc[both["index_into"], "mktcap"].to_numpy(dtype="float64")
+                                                 + both["mktcap"].to_numpy(dtype="float64"))
+        out.loc[both["index_into"], "n_classes"] = (out.loc[both["index_into"], "n_classes"].to_numpy()
+                                                    + both["n_classes"].to_numpy())
+        out.loc[b["index"], "eligible"] = False
+    return out
 
 
 def rank_within(mcap: pd.DataFrame, by: list[str], value: str = "mktcap") -> pd.DataFrame:

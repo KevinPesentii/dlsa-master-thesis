@@ -57,6 +57,29 @@ EURO_FIXED_RATES = {"DEM": 1.95583, "FRF": 6.55957, "ITL": 1936.27, "NLG": 2.203
                     "PTE": 200.482, "GRD": 340.750}
 
 
+def drop_bad_quotes(fx: pd.DataFrame, entries: list[dict] | None) -> pd.DataFrame:
+    """`fx` (comp.g_exrt_dly rows: datadate, tocurd, exratd) without the bad quotes of the
+    config's `corrections.fx_quotes`: for each {currency, date}, the quote of that day and the
+    calendar days Compustat carries it on (the same value, e.g. over a weekend). The gap then
+    takes the previous quote (`_quotes` carries rates forward). Found 2026-11-17 by a spike
+    that moves 3% against the other currencies and reverts the next business day (NOK
+    1993-07-23: 9% against the DEM, gone on Monday)."""
+    if not entries:
+        return fx
+    drop = pd.Series(False, index=fx.index)
+    dates = pd.to_datetime(fx["datadate"])
+    for e in entries:
+        ccy, day = str(e["currency"]), pd.Timestamp(e["date"])
+        rows = fx[(fx["tocurd"] == ccy) & (dates >= day)].assign(_d=dates).sort_values("_d")
+        if rows.empty or rows["_d"].iloc[0] != day:
+            continue
+        v = rows["exratd"].iloc[0]
+        changed = rows["exratd"].ne(v).to_numpy()
+        n = int(changed.argmax()) if changed.any() else len(rows)
+        drop.loc[rows.index[:n]] = True
+    return fx[~drop.to_numpy()]
+
+
 def _quotes(fx: pd.DataFrame, max_stale_days: int = 7, keep_xeu: bool = False) -> pd.DataFrame:
     """Wide calendar-day table of units per GBP, each quote carried at most
     `max_stale_days` forward (Compustat quotes every calendar day inside a currency's range).
@@ -148,6 +171,10 @@ def conversion_table(fx: pd.DataFrame, max_stale_days: int = 7) -> pd.DataFrame:
             ext.append(pd.DataFrame({"date": days, "currency": ccy, "eur_per_unit": 1.0 / rate, "numeraire": "EUR"}))
     if ext:
         tab = pd.concat([tab] + ext, ignore_index=True)
+    # Amounts reported in ECU itself (g_funda curcd 'XEU', 2026-11-17: two companies' 1994-98
+    # accounts) are already in the numeraire; the euro replaced the ECU 1:1.
+    tab = pd.concat([tab, pd.DataFrame({"date": q.index, "currency": NUMERAIRE, "eur_per_unit": 1.0,
+                                        "numeraire": label})], ignore_index=True)
     return tab.sort_values(["currency", "date"], ignore_index=True)
 
 

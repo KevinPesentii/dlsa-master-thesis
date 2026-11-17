@@ -12,8 +12,18 @@ from afe.data import europe_panel as xp
 
 
 def _line(rows):
-    base = dict(gvkey="1", iid="01W", prcstd=10)
+    base = dict(gvkey="1", iid="01W", prcstd=10, ajexdi=1.0)
     return pd.DataFrame([{**base, **r} for r in rows])
+
+
+def test_corwin_schultz_a_split_between_the_two_days_is_not_a_spread():
+    # 2-for-1 split on day 2: prices halve; Compustat's factor is 2 before the split and 1
+    # after (price / ajexdi is on the latest basis, as eu_panel.daily_returns uses it). On
+    # that basis both days are 50.25 / 49.75 / 50, so the estimate is the bounce's 1%, not
+    # what the raw two-day range (100.5 down to 49.75) would give.
+    d = _line([dict(datadate=pd.Timestamp("2000-01-03"), prchd=100.5, prcld=99.5, prccd=100.0, ajexdi=2.0),
+               dict(datadate=pd.Timestamp("2000-01-04"), prchd=50.25, prcld=49.75, prccd=50.0, ajexdi=1.0)])
+    assert xp.corwin_schultz(d).iloc[1] == pytest.approx(0.01)
 
 
 def test_corwin_schultz_recovers_a_pure_bid_ask_bounce():

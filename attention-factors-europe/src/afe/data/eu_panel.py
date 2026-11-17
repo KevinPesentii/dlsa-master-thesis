@@ -144,13 +144,22 @@ def eur_factor(dates: pd.Series, currencies: pd.Series, fxtab: pd.DataFrame, tar
 # ------------------------------------------------------------------ returns
 
 
-def daily_returns(daily: pd.DataFrame, fxtab: pd.DataFrame) -> pd.DataFrame:
+def daily_returns(daily: pd.DataFrame, fxtab: pd.DataFrame, carry_untraded: bool = False) -> pd.DataFrame:
     """Per (gvkey, iid, date): EUR price, local and EUR total returns.
 
     Rows without a price, an adjustment factor or a usable FX rate carry no return and
-    break the chain (the next row's return is NaN too)."""
+    break the chain (the next row's return is NaN too). With `carry_untraded`, a row that is
+    not a traded close (prcstd != 10: Compustat's rows on an exchange holiday) takes the line's
+    last traded close, so its return is the FX move alone, as in the holiday fill: on UK May
+    Day 1997 Compustat carried the close of two days earlier for several lines (+3.9% then
+    -2.1% for International Power without a trade; Kevin's data check, 2026-11-17)."""
     d = daily.sort_values(["gvkey", "iid", "datadate"]).copy()
     d["qunit"] = d["qunit"].fillna(1.0)
+    if carry_untraded:
+        traded = pd.to_numeric(d["prcstd"], errors="coerce") == 10
+        last = d["prccd"].where(traded).groupby([d["gvkey"], d["iid"]], sort=False, observed=True).ffill()
+        fix = ~traded & last.notna() & d["prccd"].notna()
+        d.loc[fix, "prccd"] = last[fix]
     ok = (d["prccd"] > 0) & (d["ajexdi"] > 0) & d["trfd"].notna() & d["curcdd"].notna()
     d["fx_eur"] = eur_factor(d["datadate"], d["curcdd"], fxtab)
     d["prc_eur"] = (d["prccd"] / d["qunit"] * d["fx_eur"]).where(ok)
@@ -207,7 +216,8 @@ def universe_lagged(asof: pd.DataFrame, calendar: pd.DatetimeIndex, start: str, 
 
 
 def returns_table(dret: pd.DataFrame, mktcap: pd.DataFrame, start: str, end: str,
-                  delisting_return: float | None = None, calendar: pd.DatetimeIndex | None = None) -> pd.DataFrame:
+                  delisting_return: float | None = None, calendar: pd.DatetimeIndex | None = None,
+                  by_line: bool = True) -> pd.DataFrame:
     """docs/schemas.md returns table for every company in `dret`: the return of the
     line that priced the company's cap at the end of the previous month, on every
     calendar day of the month, with that cap as mktcap_lag (EUR mn), country ISO-2,
@@ -221,7 +231,13 @@ def returns_table(dret: pd.DataFrame, mktcap: pd.DataFrame, start: str, end: str
     d = d[(d["month_prev"] + 1 >= lo) & (d["month_prev"] + 1 <= hi)]
     prev = mktcap[["gvkey", "iid", "datadate", "mktcap", "country"]].copy()
     prev["month_prev"] = prev["datadate"].dt.to_period("M")
-    d = d.merge(prev.drop(columns="datadate"), on=["gvkey", "iid", "month_prev"], how="inner")
+    # by_line: the rows of the line that priced the cap at the end of M-1 (euro-11 build). Otherwise
+    # `dret` is already one row per company and day (europe_panel.company_daily, which may hand a
+    # month over to another line of the company) and only the company's cap at M-1 is joined.
+    on = ["gvkey", "iid", "month_prev"] if by_line else ["gvkey", "month_prev"]
+    if not by_line:
+        prev = prev.drop(columns="iid")
+    d = d.merge(prev.drop(columns="datadate"), on=on, how="inner")
     if delisting_return is not None:
         last = d.groupby("gvkey")["date"].transform("max")
         d.loc[(d["date"] == last), "ret"] = (1 + d.loc[d["date"] == last, "ret"]) * (1 + delisting_return) - 1
