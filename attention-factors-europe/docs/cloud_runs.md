@@ -1034,3 +1034,52 @@ At the end the service packs `~/search_t4q_eu.tgz` and stops the machine. Collec
 in section 18 (terminate, check EC2 -> Volumes, release any Elastic IP). Read the finalists table at the end of
 each `search_eu_t4q_K*.log` (the winner against `eu_v2_headline` and the carried US winner on seeds 0-2), then
 `summary.csv` for the rows against thesis_v2's `eu_attention`.
+
+## 22. The drivers table and the US top 200 on the per-K K = 30 values (2026-11-11)
+
+`configs/table4_k30_rerun_matrix.yaml` (out dir `runs/_matrix/table4_k30_rerun`; nothing else is touched) reruns two
+K = 30 exhibits that still traded with the v2 values on the winner of `search_t4q/us_t4q_K30` (sobol-076), US only,
+1998-2021, seeds 0-4, sequential runs: the six theme ablations (`features.drop_groups`, as thesis_v2's `us_drop_*`),
+`us_top200_t4q_K30` (`sample.universe_size: 200`, as thesis_v2's `us_top200`) and `us_attention_t4q_K30_base`, the
+search_t4q row unchanged. The winner's values sit in the block `t4q_K30`; each resolved config equals
+`runs/_matrix/search_t4q/configs/us_attention_t4q_K30.yaml` but for its one key. No searches.
+
+The base row is a reproduction check: its net SR must equal search_t4q's `us_attention_t4q_K30` seed by seed to
+1e-6. That needs search_t4q's CPU and thread count, so the same machine as section 20 and `--threads 2`; the laptop
+already differs at the first epoch of 1998 (2026-11-11).
+
+Size: 40 runs, about 40 process-hours (search_t4q's K = 30 rows took 39-40 minutes each on the m7i; top 200 is
+smaller). All 40 at once: 80 of 96 vCPU, 40 x 5.5 = 220 of 384 GiB, about **1 hour** of wall time.
+
+Machine: **m7i.24xlarge** (96 vCPU, 384 GiB), Spot, persistent, interruption behaviour Stop (section 18), in
+eu-north-1, as section 20. Storage 30 GiB gp3, encrypted. Data: US tables only.
+
+On the laptop, from the branch, committed and pushed:
+
+```powershell
+cd C:\Users\henri\Desktop\SSE\masterThesis\Code\dlsa-table4\attention-factors-europe
+$PY = "C:\Users\henri\miniconda3\envs\afe\python.exe"
+& $PY scripts\run_matrix.py --matrix configs\table4_k30_rerun_matrix.yaml --dry-run --jobs 40    # 40 jobs
+& $PY scripts\make_bundle.py --markets us --out $env:TEMP\afe_bundle_k30rerun
+scp $env:TEMP\afe_bundle_k30rerun\afe_data.tar $env:TEMP\afe_bundle_k30rerun\SHA256SUMS $env:TEMP\afe_bundle_k30rerun\COMMIT "ubuntu@${IP}:~"
+```
+
+On the machine, clone, `sha256sum -c` and `cloud_setup.sh` as in section 7, then:
+
+```bash
+cd ~/dlsa/attention-factors-europe; PY=~/afe-venv/bin/python
+$PY scripts/run_matrix.py --matrix configs/table4_k30_rerun_matrix.yaml --smoke --jobs 8    # "0 failed"
+bash scripts/spot_resume.sh install configs/table4_k30_rerun_matrix.yaml --jobs 40 --threads 2
+bash scripts/spot_resume.sh status                     # "active (running)"
+tail -f runs/table4_k30_rerun_console.log
+```
+
+At the end the service packs `~/table4_k30_rerun.tgz` (summaries, configs, logs, ledger) and stops the machine. The
+run directories (oos_daily.csv, weights.parquet, diagnostics, models) are under `runs/`, not in that tgz. Start the
+machine again (the service does nothing) and pack them; the smoke run's went to `runs/_smoke`:
+
+```bash
+tar -czf ~/table4_k30_rerun_rundirs.tgz -C ~/dlsa/attention-factors-europe --exclude 'runs/_*' runs
+```
+
+Collect both files and cancel as in section 18.

@@ -1,0 +1,63 @@
+# The drivers table (characteristic-theme ablations) and the US top-200 row, rerun on the per-K
+# K = 30 values (2026-11-10). Until now both exhibits traded with the v2 K = 30 values (us_v2,
+# runs/_matrix/thesis_v2: us_drop_*, us_top200), which are not the per-K winner at K = 30 in the US.
+# Decided 2026-11-10, after the out-of-sample rows of search_t4q and thesis_v2 had been seen.
+#
+# Base: the US quick-search K = 30 winner, sobol-076 of runs/_matrix/search_t4q/searches/us_t4q_K30 (validation net SR 8.263), i.e. exactly the resolved
+# config runs/_matrix/search_t4q/configs/us_attention_t4q_K30.yaml: configs/us_headline_v2.yaml with
+# the block `t4q_K30` below (the winner's values as recorded under matrix.hyper.values there). A
+# block instead of `hyper:`, because run_matrix reads a `hyper` search from this matrix's own out
+# dir only. Nothing else changes; each spec adds one `set`, as thesis_v2's us_drop_* and us_top200 do.
+# Rows: K = 30, seeds 0-4, 1998-2021, sequential runs (not --split-years), same mechanics as
+# search_t4q. us_attention_t4q_K30_base is a reproduction check: its net SR must equal
+# search_t4q's us_attention_t4q_K30 seed by seed (1e-6); a CPU other than search_t4q's
+# (AWS m7i) may not reproduce it.
+# Own out dir runs/_matrix/table4_k30_rerun; nothing of search_t4q or thesis_v2 is touched.
+#   python scripts/run_matrix.py --matrix configs/table4_k30_rerun_matrix.yaml --dry-run
+#   python scripts/run_matrix.py --matrix configs/table4_k30_rerun_matrix.yaml --jobs 6 --threads 2
+
+name: table4_k30_rerun
+
+sets:
+  seeds5: [0, 1, 2, 3, 4]
+  K30: [30]
+
+blocks:
+  t4q_K30:                       # search_t4q/us_t4q_K30 winner sobol-076
+    policy.residual_window: fixed
+    policy.input: cumulative
+    model.level_hidden: 0
+    features.timing: asof
+    features.include_cross_sectional_median: false
+    features.include_risk_free: false
+    policy.residual_lookback: 30
+    objective.lambda_var: 10.5
+    policy.input_scale: 39.4
+    model.score_std_target: 0.837
+    model.lambda_ridge: 2.02e-05
+    training.batch_days: 125
+    policy.input_normalise: window_vol
+    policy.hidden: 64
+    policy.dropout: 0.1
+    model.embedding_dim: 32
+    training.epochs: 10
+    policy.layers: 1
+    training.lr: 0.0085
+    training.weight_decay: 0.0453
+    policy.kernel_init: geom_decay
+    policy.lambda_squash: 0.0068
+
+prep: {}
+
+specs:
+  # --- reproduction check: search_t4q's us_attention_t4q_K30, unchanged -----------------------
+  - {name: us_attention_t4q_K30_base, group: reproduction, runner: attention, config: configs/us_headline_v2.yaml, K: K30, seeds: seeds5, use: [t4q_K30]}
+  # --- drivers table (the paper's Table 3): one theme dropped -----------------------------------
+  - {name: us_t4q_K30_drop_past_returns, group: ablation, runner: attention, config: configs/us_headline_v2.yaml, K: K30, seeds: seeds5, use: [t4q_K30], set: {features.drop_groups: [past_returns]}}
+  - {name: us_t4q_K30_drop_value, group: ablation, runner: attention, config: configs/us_headline_v2.yaml, K: K30, seeds: seeds5, use: [t4q_K30], set: {features.drop_groups: [value]}}
+  - {name: us_t4q_K30_drop_investment, group: ablation, runner: attention, config: configs/us_headline_v2.yaml, K: K30, seeds: seeds5, use: [t4q_K30], set: {features.drop_groups: [investment]}}
+  - {name: us_t4q_K30_drop_profitability, group: ablation, runner: attention, config: configs/us_headline_v2.yaml, K: K30, seeds: seeds5, use: [t4q_K30], set: {features.drop_groups: [profitability]}}
+  - {name: us_t4q_K30_drop_intangibles, group: ablation, runner: attention, config: configs/us_headline_v2.yaml, K: K30, seeds: seeds5, use: [t4q_K30], set: {features.drop_groups: [intangibles]}}
+  - {name: us_t4q_K30_drop_trading_frictions, group: ablation, runner: attention, config: configs/us_headline_v2.yaml, K: K30, seeds: seeds5, use: [t4q_K30], set: {features.drop_groups: [trading_frictions]}}
+  # --- US top 200 -------------------------------------------------------------------------------
+  - {name: us_top200_t4q_K30, group: robustness, runner: attention, config: configs/us_headline_v2.yaml, K: K30, seeds: seeds5, use: [t4q_K30], set: {sample.universe_size: 200}}
