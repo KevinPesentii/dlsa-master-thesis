@@ -2,7 +2,7 @@
 
     python scripts/build_pca_residuals.py [--config configs/us_pca_longconv.yaml]
                                           [--K 3 30] [--end 1992-12-31] [--out data/us/private/pca_test]
-                                          [--loading-window 252]
+                                          [--loading-window 252] [--pca-on covariance]
 
 Reads data/us/shared/returns.parquet + universe.parquet (+ raw daily files for the year before
 the sample so that the first PCA window is complete), writes factors.out_dir/K<K>/.
@@ -31,6 +31,7 @@ def main():
     ap.add_argument("--end", help="override sample.end (YYYY-MM-DD), for quick checks")
     ap.add_argument("--out", help="override factors.out_dir")
     ap.add_argument("--loading-window", type=int, help="override factors.loading_window (0 = PCA projection)")
+    ap.add_argument("--pca-on", choices=["correlation", "covariance"], help="override factors.pca_on (default correlation)")
     args = ap.parse_args()
     cfg = yaml.safe_load(Path(args.config).read_text())
     fc = cfg["factors"]
@@ -44,7 +45,8 @@ def main():
     print(f"panel: {panel.R.shape[0]} days x {panel.R.shape[1]} names, "
           f"{panel.dates[0]:%Y-%m-%d} to {panel.dates[-1]:%Y-%m-%d}, "
           f"members/day {panel.member.sum(1)[panel.member.any(1)].mean():.0f}  ({time.time() - t0:.0f}s)")
-    meta = pca_factors.build(panel, Ks, fc["cov_window"], lw, out)
+    pca_on = args.pca_on or fc.get("pca_on", "correlation")
+    meta = pca_factors.build(panel, Ks, fc["cov_window"], lw, out, pca_on=pca_on)
     print(meta)
     print(f"wrote {out}  ({(time.time() - t0) / 60:.1f} min)")
 

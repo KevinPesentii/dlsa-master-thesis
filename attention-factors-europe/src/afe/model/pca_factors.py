@@ -99,12 +99,13 @@ def full_history(R: np.ndarray, window: int) -> np.ndarray:
     return ok
 
 
-def _pca_one_date(R, t, P, Q, Ks, cov_window, loading_window, k_max):
+def _pca_one_date(R, t, P, Q, Ks, cov_window, loading_window, k_max, standardise=True):
     """Eigenvectors, loadings and residuals at one date. P: PCA/tradable set, Q: pool
-    names with full history (superset of P). Returns dict K -> (V, B_P, resid_Q), 1/vol."""
+    names with full history (superset of P). Returns dict K -> (V, B_P, resid_Q), 1/vol.
+    standardise False: PCA of the covariance matrix, factors R V, so vol is 1 throughout."""
     W = R[t - cov_window:t][:, P]
     mu = W.mean(axis=0)
-    vol = W.std(axis=0)
+    vol = W.std(axis=0) if standardise else np.ones(W.shape[1])
     Z = (W - mu) / vol
     n = Z.shape[1]
     evals, evecs = eigh(Z.T @ Z, subset_by_index=[n - k_max, n - 1])
@@ -133,7 +134,7 @@ def _pca_one_date(R, t, P, Q, Ks, cov_window, loading_window, k_max):
 
 
 def build(panel: Panel, Ks: list[int], cov_window: int, loading_window: int, out_dir: Path,
-          max_members: int = 500, log=print) -> dict:
+          max_members: int = 500, log=print, pca_on: str = "correlation") -> dict:
     """Write, per K, `out_dir/K<K>/` with
         resid.npy   (T, N_pool) float32   residual return, NaN where undefined
         V.npy       (T, max_members, K)   factor weights of the PCA set, zero-padded
@@ -141,7 +142,13 @@ def build(panel: Panel, Ks: list[int], cov_window: int, loading_window: int, out
         invvol.npy  (T, max_members)      1 / vol of the PCA set, zero-padded
         idx.npy     (T, max_members) int32  pool column of each slot, N_pool for padding
         n.npy       (T,) int16            size of the PCA set (0 before the first date)
-    plus dates.npy, sec_ids.npy and meta.json at `out_dir`."""
+    plus dates.npy, sec_ids.npy and meta.json at `out_dir`.
+    pca_on "correlation" (GPZ, every thesis row) or "covariance" (a diagnostic: eigenvectors
+    of the return covariance, factor weights V on raw returns, invvol 1)."""
+    if pca_on not in ("correlation", "covariance"):
+        raise ValueError(f"unknown pca_on: {pca_on}")
+    if pca_on == "covariance" and loading_window == 0:
+        raise ValueError("the projection loadings (loading_window 0) assume correlation PCA")
     R, T, N = panel.R, *panel.R.shape
     Ks = sorted(Ks)
     k_max = max(Ks)
@@ -173,7 +180,8 @@ def build(panel: Panel, Ks: list[int], cov_window: int, loading_window: int, out
             continue
         if n > max_members:  # cannot happen with a 500-name universe; guard the layout
             raise ValueError(f"{n} names in the PCA set at {panel.dates[t]:%Y-%m-%d} > {max_members}")
-        res, iv = _pca_one_date(R, t, P, Q, Ks, cov_window, loading_window, k_max)
+        res, iv = _pca_one_date(R, t, P, Q, Ks, cov_window, loading_window, k_max,
+                                standardise=pca_on == "correlation")
         cols = np.flatnonzero(P)
         idx[t, :n] = cols
         invvol[t, :n] = iv
@@ -191,7 +199,7 @@ def build(panel: Panel, Ks: list[int], cov_window: int, loading_window: int, out
         np.save(out_dir / f"K{K}" / "invvol.npy", invvol)
         np.save(out_dir / f"K{K}" / "idx.npy", idx)
         np.save(out_dir / f"K{K}" / "n.npy", n_set)
-    meta = {"cov_window": cov_window, "loading_window": loading_window, "Ks": Ks,
+    meta = {"cov_window": cov_window, "loading_window": loading_window, "pca_on": pca_on, "Ks": Ks,
             "n_pool": int(N), "n_dates": int(T), "max_members": max_members,
             "first_date": str(panel.dates[cov_window].date()), "last_date": str(panel.dates[-1].date())}
     (out_dir / "meta.json").write_text(json.dumps(meta, indent=2))

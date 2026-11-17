@@ -38,6 +38,13 @@ GPZ_EPS = 1e-6
 def ou_signal(x: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """s-score, R2 and the mean-reversion mask of cumulative paths x (..., L), oldest first.
     Population moments, as in GPZ's code.  s and R2 are 0 where the mask is False."""
+    s, r2, _, ok = ou_fit(x)
+    return s, r2, ok
+
+
+def ou_fit(x: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """ou_signal plus the AR(1) slope b (1 where the mask is False), for the
+    mean-reversion-speed filter kappa = -252 log b."""
     x = np.asarray(x, dtype=np.float64)
     X, Y = x[..., :-1], x[..., 1:]
     mX, mY = X.mean(axis=-1), Y.mean(axis=-1)
@@ -51,7 +58,7 @@ def ou_signal(x: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
         s = (x[..., -1] - a / (1 - b + GPZ_EPS)) / sigma
         r2 = cov * cov / (vX * vY)
     ok = (vX > 0) & (vY > 0) & (b > 0) & (b < 1) & (sigma > 0)
-    return np.where(ok, s, 0.0), np.where(ok, r2, 0.0), ok
+    return np.where(ok, s, 0.0), np.where(ok, r2, 0.0), np.where(ok, b, 1.0), ok
 
 
 def threshold_weights(x: np.ndarray, tradable: np.ndarray, c_thresh: float = 1.25,
@@ -62,4 +69,35 @@ def threshold_weights(x: np.ndarray, tradable: np.ndarray, c_thresh: float = 1.2
     w = np.zeros(s.shape, dtype=np.float32)
     w[on & (s > c_thresh)] = -1.0
     w[on & (s < -c_thresh)] = 1.0
+    return w
+
+
+def band_weights(s: np.ndarray, open_ok: np.ndarray, hold_ok: np.ndarray, sec: np.ndarray,
+                 state: np.ndarray, c_open: float = 1.25, c_close_short: float = 0.75,
+                 c_close_long: float = 0.50) -> np.ndarray:
+    """Avellaneda & Lee's (2010, Section 5) bands, with memory: buy to open if s < -c_open,
+    sell to open if s > c_open, close a short if s < c_close_short, close a long if
+    s > -c_close_long (their 1.25, 1.25, 0.75, 0.50).  A diagnostic next to GPZ's
+    memoryless rule (threshold_weights), not a thesis row.
+
+    s, open_ok, hold_ok, sec: (T, S) by day and slot; sec is the slot's pool column, so a
+    position follows the name across days.  open_ok gates new positions (signal defined and
+    the filter passed); a held position is closed when hold_ok is False (signal undefined:
+    b outside (0, 1), or the name left the tradable set).  A close and an opening on the
+    same day are allowed (long to short in one step).  state: (P + 1,) position by pool
+    column carried in, updated in place; names not in a day's slots are flat after it."""
+    T = s.shape[0]
+    w = np.zeros(s.shape, dtype=np.float32)
+    for t in range(T):
+        prev = state[sec[t]]
+        cur = prev.copy()
+        cur[(prev > 0) & ((s[t] > -c_close_long) | ~hold_ok[t])] = 0.0
+        cur[(prev < 0) & ((s[t] < c_close_short) | ~hold_ok[t])] = 0.0
+        flat = (cur == 0) & open_ok[t]
+        cur[flat & (s[t] < -c_open)] = 1.0
+        cur[flat & (s[t] > c_open)] = -1.0
+        w[t] = cur
+        state[:] = 0.0
+        state[sec[t]] = cur
+        state[-1] = 0.0                                   # padding column
     return w

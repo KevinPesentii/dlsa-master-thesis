@@ -81,3 +81,31 @@ def test_threshold_rule_of_section_iii():
     zigzag = np.cumsum(0.02 * (-1.0) ** np.arange(30)) + np.random.default_rng(2).normal(0, 1e-3, 30)
     assert not ou_signal(zigzag[None])[2][0]     # b < 0: not an OU process, never traded
     assert threshold_weights(zigzag[None], np.array([True]))[0] == 0
+
+
+def test_bands_follow_avellaneda_lee():
+    """Avellaneda & Lee (2010), Section 5: open at |s| > 1.25, close a short below 0.75 and a
+    long above -0.50; the position follows the name (pool column), not the slot."""
+    from afe.policy.ou_threshold import band_weights
+    s = np.array([[-1.3, 1.3], [-0.6, 0.8], [-0.4, 0.7], [1.3, 0.0], [0.0, 1.0]])
+    sec = np.array([[0, 1], [0, 1], [0, 1], [0, 1], [1, 0]])          # day 4: the two names swap slots
+    ok = np.ones_like(s, dtype=bool)
+    state = np.zeros(3, dtype=np.float32)
+    w = band_weights(s, ok, ok, sec, state)
+    assert w[0].tolist() == [1, -1]          # open long below -1.25, short above 1.25
+    assert w[1].tolist() == [1, -1]          # -0.6 < -0.50 keeps the long; 0.8 > 0.75 keeps the short
+    assert w[2].tolist() == [0, 0]           # -0.4 > -0.50 closes the long; 0.7 < 0.75 closes the short
+    assert w[3].tolist() == [-1, 0]          # flat name 0 opens short
+    assert w[4].tolist() == [0, -1]          # name 0, now in slot 1, keeps its short at 1.0 > 0.75
+
+
+def test_bands_close_when_signal_undefined_and_open_needs_filter():
+    from afe.policy.ou_threshold import band_weights
+    s = np.array([[-2.0, -2.0], [-2.0, -2.0]])
+    sec = np.array([[0, 1], [0, 1]])
+    open_ok = np.array([[True, False], [False, True]])
+    hold_ok = np.array([[True, True], [False, True]])
+    state = np.zeros(3, dtype=np.float32)
+    w = band_weights(s, open_ok, hold_ok, sec, state)
+    assert w[0].tolist() == [1, 0]           # name 1 fails the filter: no opening
+    assert w[1].tolist() == [0, 1]           # name 0: signal undefined closes the long; name 1 opens
