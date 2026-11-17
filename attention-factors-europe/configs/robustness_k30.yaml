@@ -1,0 +1,54 @@
+# Implementation robustness of the saved K = 30 books (scripts/robustness_stored_weights.py).
+# Nothing is retrained: every run's weights.parquet is booked again under other assumptions.
+# matrix: a runs/_matrix/<name>/summary.csv; its run dirs are runs/<basename> next to _matrix
+# (pass --runs <matrix>=<runs dir> when the matrix lives in another checkout).
+
+tc: 0.0005          # flat cost per unit of turnover (baseline)
+sc: 0.0001          # short fee per unit short, every variant
+winsor: 0.01        # spread estimates winsorised per month over the universe members
+tax_calendar: configs/tax_calendar.yaml
+
+markets:
+  us:
+    data_dir: data/us/shared
+    crsp_daily: [data/us/private/raw/crsp_daily, data/us/private/raw/crsp_daily_extra]   # closing bid/ask
+    crsp_highlow: data/us/private/raw/crsp_highlow.parquet   # scripts/fetch_us_highlow.py, cross-checks only
+    spread: quoted
+  eu:
+    data_dir: data/europe17/holfill
+    company_daily: data/europe17/private/company_daily.parquet   # local high/low/close, cs, ret_local
+    company_header: data/europe/private/company_header.parquet  # fic = country of incorporation
+    jkp_monthly: data/europe17/private/jkp_monthly.parquet      # bidaskhl_21d, comparison only
+    spread: cs
+
+# Rows re-scored. headline = the K = 30 rows of results_v2.tex (per-K attention, fixed-window per-K PCA);
+# october = the rows of runs/_matrix/thesis named in the original task (comparison).
+rows:
+  headline:
+    - {market: us, model: attention, matrix: search_t4q, spec: us_attention_t4q_K30}
+    - {market: us, model: pca_longconv, matrix: pca_perk, spec: us_pca_longconv_perk_K30}
+    - {market: us, model: pca_ou, matrix: pca_perk, spec: us_pca_ou_perk_K30}
+    - {market: eu, model: attention, matrix: search_t4q_eu, spec: eu_attention_t4q_K30}
+    - {market: eu, model: pca_longconv, matrix: pca_perk, spec: eu_pca_longconv_perk_K30}
+    - {market: eu, model: pca_ou, matrix: pca_perk, spec: eu_pca_ou_perk_K30}
+  october:
+    - {market: us, model: attention, matrix: thesis, spec: us_attention}
+    - {market: us, model: pca_longconv, matrix: thesis, spec: us_pca_longconv}
+    - {market: us, model: pca_ou, matrix: thesis, spec: us_pca_ou}
+    - {market: eu, model: attention, matrix: thesis, spec: eu_attention}
+    - {market: eu, model: pca_longconv, matrix: thesis, spec: eu_pca_longconv}
+    - {market: eu, model: pca_ou, matrix: thesis, spec: eu_pca_ou}
+
+# Retrained with execution.lag 1 ("a model that knows it trades late"), read from their own metrics,
+# shown next to variant (a) for contrast; not a re-scoring.
+# headline: thesis_v2's lag-1 rows (model v2, K = 30 values of the v2 lag-1 searches; the per-K quick search
+# has no lag-1 twin); october: the lag-1 rows of runs/_matrix/thesis.
+retrained_lag1:
+  headline:
+    - {market: us, model: attention, matrix: thesis_v2, spec: us_lag1}
+    - {market: eu, model: attention, matrix: thesis_v2, spec: eu_lag1}
+  october:
+    - {market: us, model: attention, matrix: thesis, spec: us_lag1}
+    - {market: eu, model: attention, matrix: thesis, spec: eu_lag1}
+    - {market: us, model: pca_longconv, matrix: thesis, spec: us_pca_longconv_lag1}
+    - {market: eu, model: pca_longconv, matrix: thesis, spec: eu_pca_longconv_lag1}
