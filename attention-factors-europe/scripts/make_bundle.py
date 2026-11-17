@@ -58,6 +58,19 @@ FILES = {
 DEFAULT_MARKETS = ["us", "europe"]
 
 
+def stale_holfill(files: list[str]) -> list[str]:
+    """Holiday-filled tables (data/<market>/holfill/) older than the shared table of the same name
+    they are filled from: a rebuild of shared/ without the fill after it (2026-11-17 guard)."""
+    out = []
+    for f in files:
+        if "/holfill/" in f:
+            src = ROOT / f.replace("/holfill/", "/shared/")
+            if src.exists() and (ROOT / f).stat().st_mtime < src.stat().st_mtime:
+                out.append(f"{f} ({datetime.fromtimestamp((ROOT / f).stat().st_mtime):%Y-%m-%d %H:%M}) older than "
+                           f"{src.relative_to(ROOT).as_posix()} ({datetime.fromtimestamp(src.stat().st_mtime):%Y-%m-%d %H:%M})")
+    return out
+
+
 def sha256(path: Path) -> str:
     h = hashlib.sha256()
     with path.open("rb") as f:
@@ -72,6 +85,7 @@ def main():
     ap.add_argument("--git-bundle", action="store_true", help="also write the branch as a git bundle")
     ap.add_argument("--markets", nargs="+", choices=list(FILES), default=DEFAULT_MARKETS,
                     help="only these markets' tables (default: us europe)")
+    ap.add_argument("--allow-stale", action="store_true", help="pack holfill tables older than their shared build")
     args = ap.parse_args()
     files = [f for m in args.markets for f in FILES[m]]
     commit = runs.git_commit(ROOT)
@@ -83,6 +97,13 @@ def main():
     missing = [f for f in files if not (ROOT / f).exists()]
     if missing:
         raise SystemExit(f"missing: {missing}")
+    stale = stale_holfill(files)
+    if stale and not args.allow_stale:
+        raise SystemExit("holiday-filled tables older than the build they are filled from (rerun "
+                         "scripts/fill_europe_holidays.py, then scripts/build_asof_tables.py on holfill):\n  "
+                         + "\n  ".join(stale) + "\n--allow-stale packs them anyway")
+    for f in files:                      # what is packed, and when it was built
+        print(f"  {datetime.fromtimestamp((ROOT / f).stat().st_mtime):%Y-%m-%d %H:%M}  {f}")
 
     upstream = subprocess.run(["git", "rev-parse", "@{u}"], cwd=ROOT, text=True, capture_output=True).stdout.strip()
     if upstream != commit:

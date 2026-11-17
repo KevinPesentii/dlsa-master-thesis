@@ -23,6 +23,12 @@ by name, so the two spaces must be the same (Europe's searches and the US winner
 (runs/_matrix/<matrix>/searches/<search>, which must be there: the matrix refuses to start
 without it) and waits for nothing.
 `K: <n>` runs the search at n factors instead of its config's K (one search per K).
+`fixed: {key: value}` on a search holds more keys for every candidate: the matrix writes the
+search config with them added to its `fixed` block to runs/_matrix/<name>/configs/search_<search>.yaml
+(a variant of a search, e.g. execution.lag 1), and its rows carry them like any fixed key.
+A spec's `hyper_rank: n` trades with the search's n-th finalist (same ranking as the winner).
+`ensembles: {<name>: {search, top, seeds, compare}}` runs scripts/ensemble_validation.py after
+that search on its `top` finalists, each on every seed, into runs/_matrix/<name>/ensembles/<name>.
 A search never starts more workers than --jobs. --device cuda trains the searches on the
 machine's GPUs (search_validation.py --device cuda --gpu-procs <--jobs>); runs stay on the
 CPU, so a matrix with runs to do refuses it.
@@ -106,13 +112,37 @@ def set_dotted(cfg: dict, key: str, value) -> None:
     d[last] = value
 
 
-def selected_values(search_dir: Path) -> tuple[dict, dict]:
+def rel(p: Path) -> str:
+    """p relative to the repo's attention-factors-europe/ when it is inside it, else absolute."""
+    try:
+        return p.relative_to(ROOT).as_posix()
+    except ValueError:
+        return p.as_posix()
+
+
+def ranked(search_dir: Path, rank: int = 1) -> dict:
+    """The finalist of a finished search at `rank` (1 = the winner, 2 = the runner-up, ...), by the
+    same mean validation net Sharpe that picks the winner. A smoke search has fewer finalists than
+    a real one: there the last stands in for a missing rank; a real search refuses."""
+    m = json.loads((search_dir / "metrics.json").read_text())
+    if rank == 1:
+        return m["winner"]
+    fin = m["finalists"]
+    if rank > len(fin):
+        if not search_dir.parent.parent.name.endswith("_smoke"):
+            raise SystemExit(f"{search_dir}: {len(fin)} finalists, no rank {rank}")
+        rank = len(fin)
+    return fin[rank - 1]
+
+
+def selected_values(search_dir: Path, rank: int = 1) -> tuple[dict, dict]:
     """(winner, values) of a finished search: the value of EVERY searched or fixed key in the
     selected config (base config + winner's overrides), so a winning "base" candidate carries
-    the base config's values too; data / sample keys of a fixed block are never carried."""
+    the base config's values too; data / sample keys of a fixed block are never carried.
+    `rank` > 1 gives the finalist at that rank instead of the winner (hyper_rank of a spec)."""
     man = json.loads((search_dir / "manifest.json").read_text())["config"]
     S, base = man["search"], man["base"]
-    w = json.loads((search_dir / "metrics.json").read_text())["winner"]
+    w = ranked(search_dir, rank)
     space = {k: v for k, v in S["search"].get("space", {}).items() if not v.get("unused")}   # no placeholders
     keys = [*(S.get("fixed") or {}), *space, *S["search"].get("grid", {})]
     values = {}
@@ -123,20 +153,22 @@ def selected_values(search_dir: Path) -> tuple[dict, dict]:
     return w, values
 
 
-def winner(out: Path, search: str) -> dict:
+def winner(out: Path, search: str, rank: int = 1) -> dict:
     d = out / "searches" / search
-    w, values = selected_values(d)
+    w, values = selected_values(d, rank)
     return {"search": search, "run_dir": d.relative_to(ROOT).as_posix(), "candidate": w["name"],
-            "validation_net_SR": w["val_net_SR"], "values": values}
+            "validation_net_SR": w["val_net_SR"], "values": values, **({"rank": rank} if rank > 1 else {})}
 
 
 def resolve(spec: dict, matrix: dict, out: Path | None = None) -> dict:
-    """Base config + `use` blocks + the `hyper` search's values (needs `out`) + `set`."""
+    """Base config + `use` blocks + the `hyper` search's values (needs `out`) + `set`.
+    `hyper_rank: n` takes the search's n-th finalist instead of its winner."""
     cfg = yaml.safe_load((ROOT / spec["config"]).read_text())
     for b in spec.get("use", []):
         for k, v in matrix["blocks"][b].items():
             set_dotted(cfg, k, copy.deepcopy(v))
-    hyper = winner(out, spec["hyper"]) if spec.get("hyper") and out is not None else None
+    hyper = winner(out, spec["hyper"], int(spec.get("hyper_rank", 1))) \
+        if spec.get("hyper") and out is not None else None
     for k, v in (hyper or {}).get("values", {}).items():
         set_dotted(cfg, k, copy.deepcopy(v))
     for k, v in (spec.get("set") or {}).items():
@@ -164,6 +196,15 @@ def search_job(name: str, s: dict, out: Path, threads: int, smoke: bool, jobs: i
     if other and not smoke and not (src_out / "searches" / src / "selected.yaml").exists():
         raise SystemExit(f"search {name}: keep_from {keep_from} has no finished search at "
                          f"{src_out / 'searches' / src}; unpack it first")
+    config = s["config"]
+    if s.get("fixed"):                  # a variant of a search config: more keys held for every candidate
+        S = yaml.safe_load((ROOT / config).read_text())
+        S["fixed"] = {**(S.get("fixed") or {}), **s["fixed"]}
+        path = out / "configs" / f"search_{name}.yaml"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(f"# {config} with the matrix's `fixed` keys of search {name} (scripts/run_matrix.py)\n"
+                        + yaml.safe_dump(S, sort_keys=False))
+        config = rel(path)
 
     def make_cmd() -> list[str]:
         where = ["--resume", d.relative_to(ROOT).as_posix()] if (d / "manifest.json").exists() else \
@@ -173,12 +214,42 @@ def search_job(name: str, s: dict, out: Path, threads: int, smoke: bool, jobs: i
             w = winner(src_out, src)["candidate"]
             keep = [] if w == "base" else ["--keep", w]
         K = ["--K", str(s["K"])] if s.get("K") else []
-        return [sys.executable, "-u", "scripts/search_validation.py", "--config", s["config"], "--stage", "select",
+        return [sys.executable, "-u", "scripts/search_validation.py", "--config", config, "--stage", "select",
                 "--jobs", str(workers), "--threads", str(threads)] + where + keep + K + gpu + (["--smoke"] if smoke else [])
     after = [f"prep_{a}" for a in ([s["after"]] if isinstance(s.get("after"), str) else s.get("after", []))]
     after += [f"search_{keep_from}"] if keep_from and not other else []
     return Job(f"search_{name}", [], workers * float(s.get("mem_gb_per_worker", 2.5)), 1e6 + 100, after,
                done_file=d / "selected.yaml", slots=workers, make_cmd=make_cmd)
+
+
+def ensemble_job(name: str, e: dict, out: Path, threads: int, smoke: bool, jobs: int | None = None) -> Job:
+    """scripts/ensemble_validation.py on the top `top` finalists of a finished search of this
+    matrix (its own base config, fixed block, K and window, so seeds of the search's finalist
+    seeds reproduce its trials), each on `seeds`; written to runs/_matrix/<name>/ensembles/<name>."""
+    d, search = out / "ensembles" / name, e["search"]
+    workers = 2 if smoke else int(e.get("workers", 15))
+    workers = min(workers, jobs) if jobs else workers
+
+    def make_cmd() -> list[str]:
+        sd = out / "searches" / search
+        S = json.loads((sd / "manifest.json").read_text())["config"]["search"]
+        top = [ranked(sd, r) for r in range(1, int(e["top"]) + 1)]
+        E = {"base_config": S["base_config"], "fixed": S.get("fixed") or {}, "K": S["K"],
+             "first_oos_year": S["first_oos_year"], "validation_years": S["validation_years"],
+             "seeds": list(e["seeds"]), "book": e.get("book", "avg_l1"),
+             "compare": list(e.get("compare", ["seeds", "configs"])),
+             "search": rel(sd),
+             "candidates": {f["name"]: f["overrides"] for f in top},
+             "search_val_net_SR": {f["name"]: f["val_net_SR"] for f in top}}
+        path = out / "configs" / f"ensval_{name}.yaml"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(f"# The top {e['top']} finalists of {search}, best first (scripts/run_matrix.py)\n"
+                        + yaml.safe_dump(E, sort_keys=False))
+        return [sys.executable, "-u", "scripts/ensemble_validation.py", "--config", rel(path),
+                "--jobs", str(workers), "--threads", str(threads), "--run-dir", rel(d)] \
+            + (["--smoke"] if smoke else [])
+    return Job(f"ensval_{name}", [], workers * float(e.get("mem_gb_per_worker", 3.0)), 1e6 + 50,
+               [f"search_{search}"], done_file=d / "metrics.json", slots=workers, make_cmd=make_cmd)
 
 
 def expand(matrix: dict, groups: list[str] | None, out: Path, threads: int, smoke: bool,
@@ -188,6 +259,8 @@ def expand(matrix: dict, groups: list[str] | None, out: Path, threads: int, smok
                 p["cost"] + 1e6, done_file=ROOT / p["done"]) for name, p in matrix["prep"].items()]
     jobs += [search_job(name, s, out, threads, smoke, max_jobs, device)
              for name, s in (matrix.get("searches") or {}).items()]
+    jobs += [ensemble_job(name, e, out, threads, smoke, max_jobs)
+             for name, e in (matrix.get("ensembles") or {}).items()]
     (out / "configs").mkdir(parents=True, exist_ok=True)
     for spec in matrix["specs"]:
         if groups and spec["group"] not in groups:

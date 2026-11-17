@@ -88,8 +88,8 @@ def average(ws: list[np.ndarray], rescale: bool) -> np.ndarray:
 
 def book(p: slots.SlotPanel, wp: np.ndarray, t_idx: np.ndarray, cfg: dict) -> dict:
     d = base.daily_book(p, wp, t_idx, cfg)
-    ob = cfg["objective"]
-    net = (d["gross"] - ob["turnover_cost"] * d["turnover"] - ob["short_cost"] * d["short"]).to_numpy(float)
+    tc, sc = metrics.eval_costs(cfg)
+    net = (d["gross"] - tc * d["turnover"] - sc * d["short"]).to_numpy(float)
     return {"net_SR": float(metrics.annualised(net)["SR"]),
             "gross_SR": float(metrics.annualised(d["gross"].to_numpy(float))["SR"]),
             "turnover": float(d["turnover"].mean()), "short": float(d["short"].mean()),
@@ -154,17 +154,22 @@ def main():
     single = df[df.kind == "single"].set_index("book")["net_SR"]
     by_seed = sr[[f"configs:s{s}" for s in seeds]]
     seeds_rule, configs_rule = float(sr[f"seeds:{win}"]), float(by_seed.mean())
+    # `compare` names the books the decision reads (default seeds vs configs, as on 2026-11-02);
+    # "all" = every candidate on every seed (configs + seeds). Ties go to the first named.
+    rules = {"seeds": seeds_rule, "configs": configs_rule, "all": float(sr["all"])}
+    compare = list(E.get("compare", ["seeds", "configs"]))
     summary = {"book": kind, "winner": win,
                "single_winner_mean": float(single[[f"single:{win}:s{s}" for s in seeds]].mean()),
                "rule_seeds": seeds_rule, "rule_configs": configs_rule, "rule_configs_by_seed": by_seed.to_dict(),
                "seeds_books": {c: float(sr[f"seeds:{c}"]) for c in cands},
                "latin": {b: float(v) for b, v in sr.items() if b.startswith("configs:latin")},
-               "all": float(sr["all"]), "choice": "seeds" if seeds_rule >= configs_rule else "configs"}
+               "all": rules["all"], "compare": compare, "choice": max(compare, key=lambda r: rules[r])}
     runs.write_metrics(run_dir, summary)
     pd.set_option("display.width", 200)
     log(df.round(3).to_string(index=False))
     log(f"validation net SR ({kind}): seeds of {win} {seeds_rule:+.2f}, configs (mean of {len(by_seed)} seeds) "
-        f"{configs_rule:+.2f}, single {win} {summary['single_winner_mean']:+.2f} -> {summary['choice']}")
+        f"{configs_rule:+.2f}, all {rules['all']:+.2f}, single {win} {summary['single_winner_mean']:+.2f}; "
+        f"{' vs '.join(compare)} -> {summary['choice']}")
 
 
 if __name__ == "__main__":

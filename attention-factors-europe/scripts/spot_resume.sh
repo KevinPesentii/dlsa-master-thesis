@@ -3,8 +3,10 @@
 # A persistent Spot request with interruption behaviour "Stop" keeps the disk but not the processes,
 # so `install` writes a systemd service that starts the matrix now and again at every boot until it
 # has finished. run_matrix.py skips finished jobs and each search resumes from its trials.jsonl: an
-# interruption costs the trials in flight. At the end it packs the matrix's out dir and console log
-# into ~/<name>.tgz, leaves ~/<name>.done (later boots then do nothing) and shuts the machine down.
+# interruption costs the trials in flight. At the end it packs the matrix's out dir, the console log,
+# the output check (scripts/check_matrix_outputs.py -> runs/<name>_outputs.txt) and every finished
+# run directory into ~/<name>.tgz (+ .sha256), leaves ~/<name>.done (later boots then do nothing) and
+# shuts the machine down.
 #   bash scripts/spot_resume.sh install configs/search_t4_k30_matrix.yaml --jobs 46 --threads 2
 #   bash scripts/spot_resume.sh status
 #   bash scripts/spot_resume.sh unit <matrix> [run_matrix args]   # print the service, install nothing
@@ -61,9 +63,15 @@ case "${1:-}" in
     echo "=== $(date -u +%FT%TZ) start or resume" >> "$log"
     status=0
     "$PY" scripts/run_matrix.py --matrix "$matrix" "$@" >> "$log" 2>&1 || status=$?
-    tail_lines=$(tail -n 40 "$log")
-    if [ "$status" -eq 0 ] && [[ $tail_lines == *"matrix done in"* ]]; then
-        tar -czf "$HOME/$name.tgz" -C "$REPO" "runs/_matrix/$name" "$log"
+    # "matrix done in" anywhere after this boot's start line (a long summary pushes it out of any tail)
+    start=$(grep -n "start or resume" "$log" | tail -n 1 | cut -d: -f1)
+    if [ "$status" -eq 0 ] && tail -n +"$start" "$log" | grep -q "matrix done in"; then
+        # every finished run directory travels too (not only runs/_matrix/<name>), and the output check
+        "$PY" scripts/check_matrix_outputs.py --matrix "$matrix" "$@" > "runs/${name}_outputs.txt" 2>&1 || true
+        "$PY" scripts/check_matrix_outputs.py --matrix "$matrix" "$@" --list-run-dirs > "runs/${name}_rundirs.txt"
+        tar -czf "$HOME/$name.tgz" -C "$REPO" "runs/_matrix/$name" "$log" "runs/${name}_outputs.txt" \
+            "runs/${name}_rundirs.txt" -T "runs/${name}_rundirs.txt"
+        sha256sum "$HOME/$name.tgz" > "$HOME/$name.tgz.sha256"
         touch "$HOME/$name.done"
         echo "=== $(date -u +%FT%TZ) packed $HOME/$name.tgz, shutting down" >> "$log"
         sudo shutdown -h now
