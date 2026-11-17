@@ -113,8 +113,7 @@ class Matrix:
 
 @lru_cache(maxsize=None)
 def _costs(run: Path) -> tuple[float, float]:
-    ob = json.loads((run / "manifest.json").read_text())["config"]["objective"]
-    return float(ob["turnover_cost"]), float(ob["short_cost"])
+    return metrics.eval_costs(json.loads((run / "manifest.json").read_text())["config"])
 
 
 @lru_cache(maxsize=512)

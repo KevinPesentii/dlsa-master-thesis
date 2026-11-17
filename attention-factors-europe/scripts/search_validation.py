@@ -192,7 +192,10 @@ def score(model, c: dict) -> dict:
         _, parts, _ = base.span(model, p, t_va0, t_va1, c)
     ob = c["objective"]
     net, to, sh = (parts[k].cpu().numpy().astype(float) for k in ("net", "turnover", "short"))
-    g = metrics.annualised(net + ob["turnover_cost"] * to + ob["short_cost"] * sh)
+    gross = net + ob["turnover_cost"] * to + ob["short_cost"] * sh       # net of the objective's costs
+    tc, sc = metrics.eval_costs(c)
+    net = gross - tc * to - sc * sh                                      # scored at the evaluation costs
+    g = metrics.annualised(gross)
     return {"net_SR": float(metrics.annualised(net)["SR"]), "gross_SR": float(g["SR"]),
             "sigma_pct": float(g["sigma_pct"]), "turnover": float(to.mean()), "ev": float(parts["ev"]),
             "beta": float(metrics.beta(net, p.mkt_ew[t_va0:t_va1].astype(float)))}
@@ -225,7 +228,8 @@ def evaluate_pca(job: dict) -> dict:
     gross = (wp * s1.R_pool[t_idx]).sum(axis=1)
     to = np.abs(np.diff(wp, axis=0, prepend=np.zeros((1, wp.shape[1])))).sum(axis=1)
     sh = np.clip(-wp, 0, None).sum(axis=1)
-    net = gross - ob["turnover_cost"] * to - ob["short_cost"] * sh
+    tc, sc = metrics.eval_costs(c)
+    net = gross - tc * to - sc * sh
     g = metrics.annualised(gross)
     r = {"net_SR": float(metrics.annualised(net)["SR"]), "gross_SR": float(g["SR"]),
          "sigma_pct": float(g["sigma_pct"]), "turnover": float(to.mean()), "ev": float("nan"),

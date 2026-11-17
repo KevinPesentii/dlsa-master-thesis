@@ -102,8 +102,8 @@ def merge_group(rs: list[dict], dry_run: bool, walk_forward: bool = False) -> No
         daily.loc[daily["date"] == d_cur, "turnover"] = seam
         print(f"  seam {d_prev:%Y-%m-%d} -> {d_cur:%Y-%m-%d}: turnover {standalone:.3f} -> {seam:.3f}")
 
-    ob, ev = man0["config"]["objective"], man0["config"]["evaluation"]
-    m = metrics.performance(daily, ob["turnover_cost"], ob["short_cost"], ev["cost_grid_bps"])
+    ev = man0["config"]["evaluation"]
+    m = metrics.performance(daily, *metrics.eval_costs(man0["config"]), ev["cost_grid_bps"])
     extra = {k: v for k, v in rs[0]["metrics"].items() if k not in m and k not in BY_YEAR}
     m.update(extra)
     for key in BY_YEAR:

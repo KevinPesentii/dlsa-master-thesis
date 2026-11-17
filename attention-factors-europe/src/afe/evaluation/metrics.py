@@ -17,6 +17,15 @@ import pandas as pd
 ANN = 252
 
 
+def eval_costs(cfg: dict) -> tuple[float, float]:
+    """(turnover, short) cost per unit for the REPORTED net return and the validation score:
+    `evaluation.turnover_cost` / `evaluation.short_cost` where the config sets them, else the
+    objective's. They differ only in a row trained without costs (objective costs 0) and
+    reported after them; with neither key set every earlier run scores as before."""
+    ob, ev = cfg["objective"], cfg.get("evaluation") or {}
+    return float(ev.get("turnover_cost", ob["turnover_cost"])), float(ev.get("short_cost", ob["short_cost"]))
+
+
 def annualised(r: np.ndarray) -> dict:
     r = np.asarray(r, dtype=float)
     mu, sd = r.mean() * ANN, r.std(ddof=1) * np.sqrt(ANN)

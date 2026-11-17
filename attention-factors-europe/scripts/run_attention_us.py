@@ -116,16 +116,24 @@ def train_window(model, p: slots.SlotPanel, t_tr0: int, t_te0: int, cfg: dict,
                  rng: np.random.Generator, log, on_epoch=None, curve: list | None = None) -> None:
     """`on_epoch(epoch, model)`, if given, runs after every epoch (1-based), e.g. to score a
     validation span in eval mode; tests/test_search_validation.py checks that this leaves
-    the training path unchanged. `curve`, if given, collects each epoch's means."""
+    the training path unchanged. `curve`, if given, collects each epoch's means.
+
+    `training.two_step: true` (2026-11-17) trains the same model in two steps instead of jointly:
+    first the attention factors alone on explained variance (`training.epochs` epochs, the policy
+    untouched), then, with the factor parameters frozen, the policy alone on the Sharpe part of
+    the objective (`training.epochs` epochs again), i.e. on fixed residuals, like the PCA two-step
+    benchmark. `on_epoch` runs in the second step only. Without the key nothing changes."""
     tr = cfg["training"]
+    two_step = bool(tr.get("two_step"))
     # Table 4 of the paper: weight decay 0.05 is "Adam weight decay in LongConv model", so it
     # applies to the sequence model only. The attention factor parameters (Q, W_K) are not
     # decayed; decaying them would shrink the scores and flatten the softmax towards equal
     # weights, i.e. towards less discriminating factors.
-    opt = torch.optim.AdamW([
-        {"params": model.policy.parameters(), "weight_decay": tr["weight_decay"]},
-        {"params": model.factors.parameters(), "weight_decay": 0.0},
-    ], lr=tr["lr"])
+    if not two_step:
+        opt = torch.optim.AdamW([
+            {"params": model.policy.parameters(), "weight_decay": tr["weight_decay"]},
+            {"params": model.factors.parameters(), "weight_decay": 0.0},
+        ], lr=tr["lr"])
     target = cfg["model"].get("score_std_target")
     if target:
         # Calibrated on the training dates of this window only; see
@@ -136,6 +144,22 @@ def train_window(model, p: slots.SlotPanel, t_tr0: int, t_te0: int, cfg: dict,
     starts = list(range(t_tr0 + model.lookback, t_te0, tr["batch_days"]))
     blocks = [(b0, min(b0 + tr["batch_days"], t_te0)) for b0 in starts]
     blocks = [(b0, b1) for b0, b1 in blocks if b1 - b0 >= 20]
+    run = dict(model=model, p=p, cfg=cfg, blocks=blocks, rng=rng, log=log, curve=curve)
+    if not two_step:
+        _epochs(**run, opt=opt, pick=lambda loss, parts: loss, on_epoch=on_epoch)
+        return
+    opt = torch.optim.AdamW(model.factors.parameters(), lr=tr["lr"], weight_decay=0.0)
+    _epochs(**run, opt=opt, pick=lambda loss, parts: -parts["ev"], on_epoch=None, step="factors")
+    for q in model.factors.parameters():
+        q.requires_grad_(False)                  # step 2: the residuals stay those of step 1
+    opt = torch.optim.AdamW(model.policy.parameters(), lr=tr["lr"], weight_decay=tr["weight_decay"])
+    _epochs(**run, opt=opt, pick=lambda loss, parts: parts["sharpe_loss"], on_epoch=on_epoch, step="policy")
+
+
+def _epochs(model, p, cfg, blocks, rng, log, curve, opt, pick, on_epoch, step: str | None = None) -> None:
+    """`training.epochs` passes over the shuffled blocks, minimising `pick(loss, parts)`: the
+    whole objective (joint training) or one part of it (a step of two-step training)."""
+    tr = cfg["training"]
     for epoch in range(tr["epochs"]):
         model.train()
         rng.shuffle(blocks)
@@ -143,7 +167,9 @@ def train_window(model, p: slots.SlotPanel, t_tr0: int, t_te0: int, cfg: dict,
         for b0, b1 in blocks:
             opt.zero_grad()
             loss, parts, _ = span(model, p, b0, b1, cfg)
-            loss.backward()
+            target = pick(loss, parts)
+            if target.requires_grad:             # EV alone is a constant on a block where no name has 20 dates
+                target.backward()
             if tr.get("grad_clip"):
                 torch.nn.utils.clip_grad_norm_(model.parameters(), tr["grad_clip"])
             opt.step()
@@ -152,16 +178,16 @@ def train_window(model, p: slots.SlotPanel, t_tr0: int, t_te0: int, cfg: dict,
             sh += parts["sharpe_loss"].item()
         if curve is not None:
             curve.append({"epoch": epoch + 1, "loss": tot / len(blocks), "sharpe_part": sh / len(blocks),
-                          "ev": ev / len(blocks)})
+                          "ev": ev / len(blocks), **({"step": step} if step else {})})
         if epoch == 0 or (epoch + 1) % 10 == 0:
-            log(f"      epoch {epoch + 1:2d}: loss {tot / len(blocks):+.3f}  "
+            log(f"      {step + ' ' if step else ''}epoch {epoch + 1:2d}: loss {tot / len(blocks):+.3f}  "
                 f"(sharpe part {parts['sharpe_loss'].item():+.3f}, EV {ev / len(blocks):.3f})")
         if on_epoch is not None:
             on_epoch(epoch + 1, model)
 
 
 def run_K(K: int, cfg: dict, seed: int, p: slots.SlotPanel, years: list[int], log) -> dict:
-    mc, pc, ob, ev = cfg["model"], cfg["policy"], cfg["objective"], cfg["evaluation"]
+    mc, pc, ev = cfg["model"], cfg["policy"], cfg["evaluation"]
     run_dir = runs.create_run(f"attention_K{K}_s{seed}", {**cfg, "K": K, "years": years}, seed,
                               root=ROOT / "runs")
     log(f"K={K}: run dir {run_dir}")
@@ -206,7 +232,7 @@ def run_K(K: int, cfg: dict, seed: int, p: slots.SlotPanel, years: list[int], lo
 
     t_idx = np.concatenate(t_all)
     daily = daily_book(p, np.concatenate(w_pool_all), t_idx, cfg)
-    m = metrics.performance(daily, ob["turnover_cost"], ob["short_cost"], ev["cost_grid_bps"])
+    m = metrics.performance(daily, *metrics.eval_costs(cfg), ev["cost_grid_bps"])
     m.update({"K": K, "seed": seed, "factor_model": "attention", "policy_input": pc["input"],
               "residual_window": pc.get("residual_window", "rolling"),
               "n_features": len(p.features), "drop_groups": cfg["features"].get("drop_groups") or [],

@@ -77,6 +77,7 @@ training:
   weight_decay: 0.05
   batch_days: 125                 # contiguous blocks, each with residual_lookback extra dates in front
   grad_clip: 1.0
+  two_step: false                # 2026-11-17: true = factors on explained variance first, then the policy on frozen residuals
 
 evaluation:
   report_break_even_cost: true

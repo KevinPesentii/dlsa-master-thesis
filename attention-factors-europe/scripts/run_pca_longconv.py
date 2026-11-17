@@ -180,7 +180,7 @@ def evaluate_window(model, b: trading.SlotBatch):
 
 
 def run_K(K: int, cfg: dict, seed: int, panel: pca_factors.Panel, years: list[int], log) -> dict:
-    pc, ev, ob = cfg["policy"], cfg["evaluation"], cfg["objective"]
+    pc, ev = cfg["policy"], cfg["evaluation"]
     s1 = Stage1(ROOT / cfg["factors"]["out_dir"], K, panel)
     meta = json.loads((ROOT / cfg["factors"]["out_dir"] / "meta.json").read_text())
     cfg = {**cfg, "factors": {**cfg["factors"], "loading_window": meta["loading_window"], "cov_window": meta["cov_window"]}}
@@ -231,7 +231,7 @@ def run_K(K: int, cfg: dict, seed: int, panel: pca_factors.Panel, years: list[in
     short = np.clip(-wp, 0, None).sum(axis=1)
     daily = pd.DataFrame({"date": dates[t_idx], "gross": gross, "turnover": turnover, "short": short,
                           "n_traded": (wp != 0).sum(axis=1), "mkt_ew": s1.mkt_ew[t_idx], "rf": s1.rf[t_idx]})
-    m = metrics.performance(daily, ob["turnover_cost"], ob["short_cost"], ev["cost_grid_bps"])
+    m = metrics.performance(daily, *metrics.eval_costs(cfg), ev["cost_grid_bps"])
     e = cfg.get("execution") or {}
     m.update({"K": K, "seed": seed, "policy": kind, "policy_input": pc["input"], "policy_input_normalise": norm,
               "residual_window": window,
