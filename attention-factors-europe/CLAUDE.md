@@ -208,6 +208,20 @@ weaken a test to make code pass.
   Reason: the book is roughly self-financing, so its net return is already an excess return. Every run and search
   before this date trained with the paper's (Rbar_net - R_f) / sd; their saved configs still say true and
   reproduce. rf stays a model input. Nothing has been rerun under the new objective yet.
+- Full rerun, thesis_v3 (decided 2026-11-17, Henrik, before any of it ran): `configs/thesis_v3_matrix.yaml` reruns
+  every reported row on the objective without R_f and the audited input data, with the rules of the per-K headline:
+  attention and PCA + LongConv each with its own search per K, PCA + OU on its grid, both markets, seeds 0-4,
+  1998-2021; at K = 30 the six theme ablations (both markets), the US top 200 and the 2022-2025 holdout (both
+  markets). Added at K = 30, both markets: (1) the search's #2 and #3 finalists out of sample (`hyper_rank`), and an
+  ensemble validation (`ensembles:`, scripts/ensemble_validation.py) that decides on 1996-97 whether the thesis
+  reports the winner's five-seed book or the top-three x five-seed book (`compare: [seeds, all]`); every book is
+  reported either way, and the ensemble chapter uses K = 30 in both markets. (2) Three mechanism rows, each with its
+  own search (the 2026-10-10 rule): trained without costs in the objective, its search scored on gross Sharpe, its
+  rows reported after 5bp / 1bp (`evaluation.turnover_cost` / `short_cost`, `metrics.eval_costs`); two-step attention
+  (`training.two_step`: factors on explained variance first, then the policy on the frozen residuals); trained and
+  traded at lag 1. Spec names are those of search_t4q / search_t4q_eu / pca_perk / table4_k30_rerun. Run on
+  Kevin's AWS account (docs/rerun_thesis_v3.md); results in `runs/_matrix/thesis_v3`. The earlier matrices become
+  the comparison.
 
 ## Trading costs: limits, not replication
 

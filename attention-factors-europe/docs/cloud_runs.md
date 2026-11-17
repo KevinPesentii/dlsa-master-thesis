@@ -1083,3 +1083,13 @@ tar -czf ~/table4_k30_rerun_rundirs.tgz -C ~/dlsa/attention-factors-europe --exc
 ```
 
 Collect both files and cancel as in section 18.
+
+## 23. The full rerun `thesis_v3`, on Kevin's AWS account (2026-11-17)
+
+`configs/thesis_v3_matrix.yaml`: every reported row again on the objective without R_f and the audited data, plus
+the K = 30 ensemble validation, the #2 / #3 finalists and the three mechanism rows (331 jobs, about 15-20 hours on
+an m7i.24xlarge). Its own guide, written for running it from a second AWS account, is `docs/rerun_thesis_v3.md`.
+Two changes to the tooling of section 18 apply to every matrix from now on: `spot_resume.sh` finds "matrix done in"
+anywhere after the last boot (a long summary pushed it out of the 40-line tail before), and it packs every finished
+run directory into `~/<name>.tgz` (list from `scripts/check_matrix_outputs.py --list-run-dirs`) together with the
+output check `runs/<name>_outputs.txt`.
