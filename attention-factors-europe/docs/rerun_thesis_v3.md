@@ -62,8 +62,8 @@ Henrik does this once the data audit rebuild is finished (his checklist, for ref
 3. `python scripts/make_bundle.py --out <dir>` from that clean, pushed tip. It refuses holiday-filled tables
    older than the build they come from and prints when each packed table was built.
 
-You get three files: `COMMIT` (branch and commit), `afe_data.tar` (about 0.4 GB) and `SHA256SUMS`, over a
-private channel (not GitHub, not email to anyone else).
+You get four files: `COMMIT` (branch and commit), `afe_data.tar` (about 0.4 GB), `SHA256SUMS` and
+`README_Kevin.md`, over a private channel (not GitHub, not email to anyone else).
 
 ## 1. Read the code first (our rule: neither of us runs generated code the other has not read)
 
@@ -81,7 +81,12 @@ What changed for this run, apart from the data fixes:
 - `ensemble_validation.py`: `compare:` (the `all` book can be the decision);
 - `spot_resume.sh`: finds "matrix done" anywhere after the last boot, runs the output check and packs every run
   directory; `check_matrix_outputs.py`; `make_bundle.py` stale-holfill guard;
-- `configs/thesis_v3_matrix.yaml`, `tests/test_thesis_v3.py`.
+- `configs/thesis_v3_matrix.yaml`, `tests/test_thesis_v3.py`;
+- halts closed, not masked (your data check item 2, commit a273753): `src/afe/data/return_gaps.py` holds the
+  rule, read by the slot loader (`slots.load_slots`), the PCA panel (`pca_factors.load_panel`) and the robustness
+  re-scoring (`robustness.load_market`); `data.return_gaps: closed` in the twelve base configs (default `masked`,
+  so every earlier run reproduces); the PCA stage-one `meta.json` records the setting and `run_pca_longconv.Stage1`
+  refuses a build made with the other one; `tests/test_return_gaps.py`.
 
 ## 2. AWS account, one time (console)
 
@@ -131,7 +136,7 @@ tar -xf ~/afe_data.tar && sha256sum -c ~/SHA256SUMS | grep -v ': OK$' ; echo "(n
 bash scripts/cloud_setup.sh                       # ends with "afe ok, torch 2.14.0+cpu"
 PY=~/afe-venv/bin/python
 $PY -m pytest -q tests/test_thesis_v3.py tests/test_sharpe_objective.py tests/test_search_validation.py \
-    tests/test_ensemble_validation.py              # "79 passed" (the tests of this run; no data needed)
+    tests/test_ensemble_validation.py tests/test_return_gaps.py   # "91 passed" (the tests of this run; no data needed)
 $PY scripts/run_matrix.py --matrix configs/thesis_v3_matrix.yaml --dry-run --jobs 46 | head -1
                                                   # "331 jobs in the matrix, 331 to run ..."
 $PY scripts/run_matrix.py --matrix configs/thesis_v3_matrix.yaml --smoke --jobs 16
