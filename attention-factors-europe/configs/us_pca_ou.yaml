@@ -11,6 +11,7 @@ seed: 0                          # recorded only: the rule is deterministic
 
 data:
   dir: data/us/shared
+  return_gaps: closed            # a halt inside a name's trading life = closed, zero-return day (data/return_gaps.py)
   history_start: 1989-01-01
   raw_daily_dir: data/us/shared/raw/crsp_daily
 

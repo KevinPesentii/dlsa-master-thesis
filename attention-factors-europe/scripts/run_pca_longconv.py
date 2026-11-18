@@ -44,6 +44,10 @@ class Stage1:
         d = pca_dir / f"K{K}"
         self.dates = pd.DatetimeIndex(np.load(pca_dir / "dates.npy"))
         assert (self.dates == panel.dates).all(), "stage-one dates differ from the return panel"
+        built = json.loads((pca_dir / "meta.json").read_text()).get("return_gaps", "masked")
+        if built != panel.return_gaps:
+            raise ValueError(f"{pca_dir} was built with data.return_gaps {built}, the config says "
+                             f"{panel.return_gaps}: rebuild it (scripts/build_pca_residuals.py)")
         self.resid = np.load(d / "resid.npy", mmap_mode="r")
         self.V = np.load(d / "V.npy", mmap_mode="r")
         self.B = np.load(d / "B.npy", mmap_mode="r")
@@ -166,11 +170,12 @@ def train_one_window(model, b: trading.SlotBatch, cfg: dict, rng: np.random.Gene
 
 def load_panel(cfg: dict, end: str) -> pca_factors.Panel:
     """The return panel of the config: data.dir, plus the optional raw pre-history
-    (data.history_start / raw_daily_dir, US) and rf file (data.rf_file, Europe)."""
+    (data.history_start / raw_daily_dir, US), rf file (data.rf_file, Europe) and
+    data.return_gaps (default masked)."""
     d = cfg["data"]
     opt = lambda k: ROOT / d[k] if d.get(k) else None  # noqa: E731
     return pca_factors.load_panel(ROOT / d["dir"], end, str(d["history_start"]) if d.get("history_start") else None,
-                                  opt("raw_daily_dir"), opt("rf_file"))
+                                  opt("raw_daily_dir"), opt("rf_file"), d.get("return_gaps", "masked"))
 
 
 @torch.no_grad()

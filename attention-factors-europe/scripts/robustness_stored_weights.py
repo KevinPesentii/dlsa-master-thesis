@@ -124,7 +124,7 @@ def variants(market: str, primary: str, spreads: dict) -> dict[str, dict]:
 def score_market(market: str, runs: pd.DataFrame, cfg: dict, out: Path) -> pd.DataFrame:
     mc = cfg["markets"][market]
     ids = set().union(*[set(pd.read_parquet(p / "weights.parquet", columns=["sec_id"])["sec_id"]) for p in runs.run_dir])
-    m = rb.load_market(ROOT / mc["data_dir"], ids)
+    m = rb.load_market(ROOT / mc["data_dir"], ids, return_gaps=mc.get("return_gaps", "masked"))  # as the runs
     members = pd.read_parquet(ROOT / mc["data_dir"] / "universe.parquet", columns=["month", "sec_id"])
     members["month"] = pd.to_datetime(members["month"])
     first = json.loads((runs.run_dir.iloc[0] / "metrics.json").read_text())

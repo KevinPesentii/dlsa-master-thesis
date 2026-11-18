@@ -36,6 +36,11 @@ Conventions common to all tables:
 | currency    | string  | EU only  | native currency before conversion            |
 | traded      | bool    | no       | False: the name's market did not trade at this close (its exchange's holiday, a carried price), so no order can fill there; the loader treats a missing column as all True |
 
+A member without a row on a day has no return there. What the loaders make of it is the run's
+`data.return_gaps` (`src/afe/data/return_gaps.py`): `masked` drops the name from that day; `closed` treats a
+halt (a run of at most 63 market days without a row in this table or `returns_history.parquet`, with rows
+before and after it) as if each day had a row with `ret` 0 and `traded` False, and masks only the rest.
+
 Returns are in EUR for the European leg, USD for the US leg. A USD European panel is
 built as a robustness check and lives at `data/eu_usd/`. The European builds that start
 before 1999 (`europe17`, `europe12`, 1990-) use one numeraire, the ECU to 1998-12-31 and

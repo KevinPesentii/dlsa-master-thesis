@@ -15,6 +15,7 @@ seed: 0
 
 data:
   dir: data/europe17/holfill
+  return_gaps: closed            # a halt inside a name's trading life = closed, zero-return day (data/return_gaps.py)
   rf_file: data/europe17/shared/rf_daily.parquet   # Bundesbank 1M rate, calendar-day accrual (stage 2)
 
 sample:

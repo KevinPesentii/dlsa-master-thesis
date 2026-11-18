@@ -39,6 +39,8 @@ import pandas as pd
 import pyarrow.parquet as pq
 from scipy.linalg import eigh
 
+from afe.data.return_gaps import check_mode, halted
+
 
 @dataclass
 class Panel:
@@ -48,13 +50,19 @@ class Panel:
     member: np.ndarray             # (T, N) bool, in the universe on that day
     rf: np.ndarray                 # (T,) float64 daily risk-free rate
     closed: np.ndarray | None = None  # (T, N) bool, returns.traded False (market closed); None = all traded
+    return_gaps: str = "masked"    # data.return_gaps the panel was loaded with (afe.data.return_gaps)
 
 
 def load_panel(data_dir: Path, end: str, history_start: str | None = None,
-               raw_daily_dir: Path | None = None, rf_file: Path | None = None) -> Panel:
+               raw_daily_dir: Path | None = None, rf_file: Path | None = None,
+               return_gaps: str = "masked") -> Panel:
     """Wide return panel of the pool plus the universe mask.  Rows before the first
     universe month are taken from the raw daily files (needed for the first PCA window).
-    rf from `rf_file` (date, rf), by default the US build's raw/ff_daily.parquet."""
+    rf from `rf_file` (date, rf), by default the US build's raw/ff_daily.parquet.
+    `return_gaps` "closed": a member-day without a return inside the name's trading life
+    (a halt, data/return_gaps.py) gets R = 0 and closed, like a holiday-filled row, instead
+    of NaN; the PCA then sees a zero return there, as it does on a filled holiday."""
+    check_mode(return_gaps)
     has_traded = "traded" in pq.read_schema(data_dir / "returns.parquet").names
     ret = pd.read_parquet(data_dir / "returns.parquet", columns=["date", "sec_id", "ret"] + (["traded"] if has_traded else []))
     ret = ret[ret["date"] <= pd.Timestamp(end)]
@@ -86,7 +94,12 @@ def load_panel(data_dir: Path, end: str, history_start: str | None = None,
         nt = ret[~ret["traded"].astype(bool)]
         closed = (nt.assign(one=True).pivot(index="date", columns="sec_id", values="one")
                   .reindex(index=dates, columns=pool).notna().to_numpy())
-    return Panel(dates, pool, R.to_numpy(), member, rf, closed)
+    R = R.to_numpy()
+    if return_gaps == "closed":
+        gaps = halted(data_dir, dates, pool)
+        R[gaps] = 0.0
+        closed = gaps if closed is None else closed | gaps
+    return Panel(dates, pool, R, member, rf, closed, return_gaps)
 
 
 def full_history(R: np.ndarray, window: int) -> np.ndarray:
@@ -200,7 +213,7 @@ def build(panel: Panel, Ks: list[int], cov_window: int, loading_window: int, out
         np.save(out_dir / f"K{K}" / "idx.npy", idx)
         np.save(out_dir / f"K{K}" / "n.npy", n_set)
     meta = {"cov_window": cov_window, "loading_window": loading_window, "pca_on": pca_on, "Ks": Ks,
-            "n_pool": int(N), "n_dates": int(T), "max_members": max_members,
+            "return_gaps": panel.return_gaps, "n_pool": int(N), "n_dates": int(T), "max_members": max_members,
             "first_date": str(panel.dates[cov_window].date()), "last_date": str(panel.dates[-1].date())}
     (out_dir / "meta.json").write_text(json.dumps(meta, indent=2))
     return meta

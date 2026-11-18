@@ -12,6 +12,7 @@ seed: 0
 
 data:
   dir: data/us/shared
+  return_gaps: closed            # a halt inside a name's trading life = closed, zero-return day (data/return_gaps.py)
   history_start: 1989-01-01      # raw daily rows prepended so the first PCA date is Jan 1990
   raw_daily_dir: data/us/shared/raw/crsp_daily   # only 1989.parquet is needed (and shipped) here
 

@@ -6,10 +6,14 @@ Everything below the line "On the machine" is meant to be run as written.
 ## What this run is
 
 One matrix, `configs/thesis_v3_matrix.yaml`, on one machine: every number the thesis reports, again,
-after two changes that move all of them:
+after three changes that move all of them:
 
 1. the objective without the risk-free rate (`objective.subtract_rf: false`, commit 87fe9bf);
-2. the audited input data (Henrik's data/input-audit-fixes, `Thesis/diagnostics/2026-11-17_input_data_audit`).
+2. the audited input data (Henrik's data/input-audit-fixes, `Thesis/diagnostics/2026-11-17_input_data_audit`);
+3. halts closed, not masked (`data.return_gaps: closed`, your data check item 2, `src/afe/data/return_gaps.py`):
+   a member day without a return inside a halt of at most 63 market days is a closed, zero-return day, so the
+   day-t weight no longer knows the stock will not trade on t and the position earns the reopening return.
+   Code only: `afe_data.tar` and `SHA256SUMS` are unchanged, `COMMIT` is new.
 
 331 jobs: 2 PCA stage-one builds, 48 validation searches, 2 ensemble validations, 279 out-of-sample runs.
 

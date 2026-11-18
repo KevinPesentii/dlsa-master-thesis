@@ -8,6 +8,7 @@ seed: 0
 
 data:
   dir: data/us/shared            # the three tables of docs/schemas.md; --data-dir overrides
+  return_gaps: closed            # a halt inside a name's trading life = closed, zero-return day (data/return_gaps.py)
   returns_history: false         # stage 2c, read by the fixed window only
 
 sample:

@@ -7,6 +7,7 @@ seed: 0                          # recorded only: the rule is deterministic
 
 data:
   dir: data/europe17/holfill
+  return_gaps: closed            # a halt inside a name's trading life = closed, zero-return day (data/return_gaps.py)
   rf_file: data/europe17/shared/rf_daily.parquet
 
 sample:

@@ -222,6 +222,15 @@ weaken a test to make code pass.
   traded at lag 1. Spec names are those of search_t4q / search_t4q_eu / pca_perk / table4_k30_rerun. Run on
   Kevin's AWS account (docs/rerun_thesis_v3.md); results in `runs/_matrix/thesis_v3`. The earlier matrices become
   the comparison.
+- Halts closed, not masked (decided 2026-11-18, Henrik, before thesis_v3 ran; Kevin's data check, item 2):
+  `data.return_gaps: closed` in the base configs. The loaders had masked a member on any day without a return, so
+  the day-t weight, decided at the close of t-1, knew the stock would not trade on t, and the book sold before the
+  gap and missed the reopening return. Now a run of days without a row inside a name's trading life, at most 63
+  market days long, is a halt: return 0 and market closed from its first member day to its end (like a
+  holiday-filled row), so the position is held and earns the reopening return; days after a name's last return and
+  longer runs stay masked (exits). `src/afe/data/return_gaps.py` holds the rule (slots, PCA panel, robustness
+  re-scoring all read it); the PCA stage-one meta records it and the runner refuses a mismatch. 2026-11-17 builds:
+  US 239 member-days (193 in 1998-2021), Europe 3,169 (194). Every run before it used `masked` and reproduces.
 
 ## Trading costs: limits, not replication
 

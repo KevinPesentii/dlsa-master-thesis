@@ -26,6 +26,7 @@ import pandas as pd
 import torch
 import yaml
 
+from afe.data.return_gaps import check_mode, halted
 from afe.evaluation import metrics
 from afe.policy import trading
 
@@ -39,20 +40,27 @@ class Market:
     rows: pd.DataFrame        # the returns.parquet rows of these names (date, sec_id, mktcap_lag, ...)
 
 
-def load_market(data_dir: Path, sec_ids, start: str = "1997-01-01") -> Market:
-    """The return panel of `data_dir` for `sec_ids` from `start` on (dates = every date of the file)."""
+def load_market(data_dir: Path, sec_ids, start: str = "1997-01-01", return_gaps: str = "masked") -> Market:
+    """The return panel of `data_dir` for `sec_ids` from `start` on (dates = every date of the file).
+    `return_gaps` as the run's data.return_gaps: "closed" marks a halt inside a name's trading life
+    closed (data/return_gaps.py), so a book re-scored here is executed as the run executed it."""
+    check_mode(return_gaps)
     cols = pd.Index(sorted(set(sec_ids)), name="sec_id")
     ret = pd.read_parquet(data_dir / "returns.parquet", filters=[("date", ">=", pd.Timestamp(start))])
     ret["date"] = pd.to_datetime(ret["date"]).astype("datetime64[ns]")
     dates = pd.DatetimeIndex(np.sort(ret["date"].unique()))
     ret = ret[ret["sec_id"].isin(cols)]
     R = ret.pivot(index="date", columns="sec_id", values="ret").reindex(index=dates, columns=cols)
+    R = R.to_numpy(dtype=np.float64)
     closed = None
     if "traded" in ret:
         nt = ret.loc[~ret["traded"].astype(bool), ["date", "sec_id"]].assign(one=True)
         closed = nt.pivot(index="date", columns="sec_id", values="one").reindex(index=dates, columns=cols).notna()
         closed = closed.to_numpy()
-    return Market(dates, cols, np.nan_to_num(R.to_numpy(dtype=np.float64)), closed, ret.reset_index(drop=True))
+    if return_gaps == "closed":
+        gaps = halted(data_dir, dates, cols)
+        closed = gaps if closed is None else closed | gaps
+    return Market(dates, cols, np.nan_to_num(R), closed, ret.reset_index(drop=True))
 
 
 def wide(m: Market, long: pd.DataFrame, value: str) -> np.ndarray:

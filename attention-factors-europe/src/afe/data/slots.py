@@ -27,7 +27,11 @@ cross-sectional values, which do not depend on the name.
 MEMBERSHIP. in_universe[t, s] is membership for the month AND a return on the day. A
 member without a return row (delisted mid-month, halted) keeps its slot and its idx so
 the pool column stays stable, but is masked: R is 0 there, and the factor model, the
-residual windows and the policy all ignore it.
+residual windows and the policy all ignore it. With `return_gaps` "closed"
+(data/return_gaps.py) a halt (at most 63 market days, with returns before and after) is not
+masked: such a day gets return 0 and a closed market, like a holiday-filled row, so the name
+stays in the universe and the position decided at t-1 is held; days after a name's last
+return and longer runs stay masked (exits).
 
 `rf` is the rate of the traded day t itself, unshifted, for the objective. `closed`
 (optional returns.traded) marks closes at which a name could not be traded.
@@ -57,6 +61,7 @@ import torch
 
 from afe import schemas
 from afe.data.characteristics import REGISTRY
+from afe.data.return_gaps import check_mode, halted
 
 
 @dataclass
@@ -109,17 +114,22 @@ def load_config(cfg: dict, data_dir: Path, start: str, end: str, max_rank: int |
     f, d = cfg["features"], cfg.get("data") or {}
     return load_slots(data_dir, start, end, max_rank, timing=f.get("timing", "lagged"),
                       medians=f.get("include_cross_sectional_median", True),
-                      rf_input=f.get("include_risk_free", True), history=bool(d.get("returns_history")))
+                      rf_input=f.get("include_risk_free", True), history=bool(d.get("returns_history")),
+                      return_gaps=d.get("return_gaps", "masked"))
 
 
 def load_slots(data_dir: Path, start: str, end: str, max_rank: int | None = None, timing: str = "lagged",
-               medians: bool = True, rf_input: bool = True, history: bool = False) -> SlotPanel:
+               medians: bool = True, rf_input: bool = True, history: bool = False,
+               return_gaps: str = "masked") -> SlotPanel:
     """Slot arrays for the trading days in [start, end]. Features of the trading day
     before `start` are read too, so that the first row is lagged like every other.
     `max_rank`: only members with cap_rank <= max_rank. timing "lagged": features.parquet,
-    shifted one trading day; "asof": features_asof.parquet as it is."""
+    shifted one trading day; "asof": features_asof.parquet as it is. `return_gaps`: "masked"
+    or "closed", what a member-day without a return inside the name's trading life is
+    (data/return_gaps.py)."""
     if timing not in ("lagged", "asof"):
         raise ValueError(f"unknown features.timing: {timing}")
+    check_mode(return_gaps)
     if timing == "asof" and medians:
         raise ValueError("features_asof.parquet has no med_* columns: set include_cross_sectional_median false")
     data_dir = Path(data_dir)
@@ -157,6 +167,10 @@ def load_slots(data_dir: Path, start: str, end: str, max_rank: int | None = None
     # returns in pool space, then gathered into slots; missing return = masked slot
     R_pool = np.full((T, n_pool + 1), np.nan, dtype=np.float32)
     R_pool[dates.get_indexer(ret["date"]), col[ret["sec_id"].to_numpy()].to_numpy()] = ret["ret"].to_numpy()
+    gaps = None
+    if return_gaps == "closed":                                 # a halt: return 0, market closed
+        gaps = halted(data_dir, dates, sec_ids, max_rank)
+        R_pool[:, :n_pool][gaps] = 0.0
     R_slot = np.take_along_axis(R_pool, idx, axis=1)
     in_universe = ~np.isnan(R_slot)
     R_slot = np.nan_to_num(R_slot)
@@ -175,11 +189,14 @@ def load_slots(data_dir: Path, start: str, end: str, max_rank: int | None = None
     R_pool = np.nan_to_num(R_pool[:, :n_pool])
     R_win = R_pool if R_win is None else R_win
     closed = None
-    if has_traded:
+    if has_traded or (gaps is not None and gaps.any()):
         closed = np.zeros((T, n_pool + 1), dtype=bool)
-        nt = ~ret["traded"].to_numpy(dtype=bool)
-        closed[dates.get_indexer(ret["date"][nt]), col[ret["sec_id"].to_numpy()[nt]].to_numpy()] = True
+        if has_traded:
+            nt = ~ret["traded"].to_numpy(dtype=bool)
+            closed[dates.get_indexer(ret["date"][nt]), col[ret["sec_id"].to_numpy()[nt]].to_numpy()] = True
         closed = closed[:, :n_pool]
+        if gaps is not None:
+            closed |= gaps
     n_mem = in_universe.sum(axis=1)
     mkt_ew = np.where(n_mem > 0, (R_slot * in_universe).sum(axis=1) / np.maximum(n_mem, 1), 0.0)
 

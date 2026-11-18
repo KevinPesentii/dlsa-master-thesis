@@ -9,6 +9,7 @@ seed: 0
 
 data:
   dir: data/europe17/holfill     # stage 2b output: shared tables + holiday fill + returns.traded
+  return_gaps: closed            # a halt inside a name's trading life = closed, zero-return day (data/return_gaps.py)
   returns_history: true          # stage 2c: first-listing-month returns, for the windows only
 
 sample:

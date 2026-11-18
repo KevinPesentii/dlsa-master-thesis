@@ -14,12 +14,14 @@ markets:
     crsp_daily: [data/us/private/raw/crsp_daily, data/us/private/raw/crsp_daily_extra]   # closing bid/ask
     crsp_highlow: data/us/private/raw/crsp_highlow.parquet   # scripts/fetch_us_highlow.py, cross-checks only
     spread: quoted
+    return_gaps: masked   # as the runs it scores (all before 2026-11-18); thesis_v3 runs: closed
   eu:
     data_dir: data/europe17/holfill
     company_daily: data/europe17/private/company_daily.parquet   # local high/low/close, cs, ret_local
     company_header: data/europe/private/company_header.parquet  # fic = country of incorporation
     jkp_monthly: data/europe17/private/jkp_monthly.parquet      # bidaskhl_21d, comparison only
     spread: cs
+    return_gaps: masked   # as the runs it scores (all before 2026-11-18); thesis_v3 runs: closed
 
 # Rows re-scored. headline = the K = 30 rows of results_v2.tex (per-K attention, fixed-window per-K PCA);
 # october = the rows of runs/_matrix/thesis named in the original task (comparison).

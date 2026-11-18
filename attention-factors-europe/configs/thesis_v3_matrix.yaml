@@ -1,7 +1,9 @@
-# The full thesis rerun (decided 2026-11-17, Henrik): every reported row again, after two changes that
+# The full thesis rerun (decided 2026-11-17, Henrik): every reported row again, after three changes that
 # touch every number, and before any of these runs existed:
 #   1. the objective without R_f (objective.subtract_rf: false in every base config, commit 87fe9bf);
-#   2. the audited input data (data/input-audit-fixes, Thesis/diagnostics/2026-11-17_input_data_audit).
+#   2. the audited input data (data/input-audit-fixes, Thesis/diagnostics/2026-11-17_input_data_audit);
+#   3. halts closed, not masked (data.return_gaps: closed in every base config, 2026-11-18; Kevin's data check
+#      item 2, src/afe/data/return_gaps.py).
 # Same rules as the per-K headline (search_t4q / search_t4q_eu / pca_perk): each K trades with the
 # winner of its own search, fitted 1990-95 (Europe 1993-95) and scored on net Sharpe 1996-97, seeds 0-4
 # out of sample 1998-2021. Spec names are those of the earlier matrices, so the analysis scripts only

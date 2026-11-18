@@ -15,6 +15,7 @@ seed: 0
 
 data:
   dir: data/us/shared            # the three tables of docs/schemas.md; --data-dir overrides
+  return_gaps: closed            # a halt inside a name's trading life = closed, zero-return day (data/return_gaps.py)
   returns_history: true          # stage 2c: first-listing-month returns, for the windows only
 
 sample:
