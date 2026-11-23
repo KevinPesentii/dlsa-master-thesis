@@ -1093,3 +1093,62 @@ Two changes to the tooling of section 18 apply to every matrix from now on: `spo
 anywhere after the last boot (a long summary pushed it out of the 40-line tail before), and it packs every finished
 run directory into `~/<name>.tgz` (list from `scripts/check_matrix_outputs.py --list-run-dirs`) together with the
 output check `runs/<name>_outputs.txt`.
+
+## 24. The gross-objective rows of the mechanism table, K = 30 (2026-11-23)
+
+`configs/thesis_v3_gross_matrix.yaml` (out dir `runs/_matrix/thesis_v3_gross`; nothing else is touched) adds the two
+missing cells of the mechanism table, both markets, seeds 0-4: two-step attention and PCA + LongConv trained WITHOUT
+costs, reported after 5bp / 1bp. 26 jobs: 2 PCA stage ones, 4 searches, 20 runs. Same code and data as `thesis_v3`
+(commit 1123394 plus this matrix, the bundle's `afe_data.tar` and `SHA256SUMS` unchanged); searches are the
+v3 searches with the costs held at 0, so a candidate name means the same point. Asked after thesis_v3's
+out-of-sample rows had been seen: diagnostic rows, the thesis has to say so.
+
+Size, estimated from thesis_v3's own times (2 threads, full load): searches 21 + 5 + 8 + 3 = about 37 process-hours, runs 5 x
+(90 + 56 + 49 + 63) minutes = about 21, so roughly 58 process-hours. The two US searches run first (15 + 8
+workers = 23 slots), Europe's wait for the US winner of their own kind. One chain sets the floor, the US
+two-step search (about 1.5 h) and then its 90-minute rows, so more than 48 vCPU mostly buys idle cores.
+
+Server, wall time from replaying the scheduler (slots, memory, v3's measured trial and run times) and prices from AWS's
+price file of 2026-11-21 (eu-north-1, Linux; the Spot column is the AWS Spot feed, unchecked, read the console):
+
+| machine | --jobs | wall | on-demand | Spot |
+|---|---|---|---|---|
+| c7i.8xlarge (32 vCPU, 64 GiB) | 15 | 4.4 h | $1.53/h, about $7.9 | $0.45/h, about $2.3 |
+| **c7i.12xlarge (48 vCPU, 96 GiB)** | **23** | **3.2 h** | **$2.29/h, about $9.2** | **$0.56/h, about $2.2** |
+| m7i.12xlarge (48 vCPU, 192 GiB) | 23 | 3.2 h | $2.57/h, about $10.3 | $0.90/h, about $3.6 |
+| c7i.24xlarge (96 vCPU, 192 GiB) | 46 | 2.5 to 3.1 h | $4.59/h, about $15 to $17.5 | $0.85/h, about $2.8 to $3.2 |
+| m7i.24xlarge (96 vCPU, 384 GiB) | 46 | 2.5 to 3.1 h | $5.14/h, about $17 to $20 | $0.96/h, about $3.2 to $3.7 |
+
+The dollar totals include 0.75 h of setup and smoke at the same price. Choice: **c7i.12xlarge, Spot, persistent, interruption
+behaviour Stop** (section 18), on-demand if Spot capacity is refused. c7i.8xlarge is $1 cheaper on demand but needs over an
+hour more, and its 54 GiB memory budget runs the US two-step and PCA searches one after the other. c7i and m7i are the same
+Intel generation (Sapphire Rapids), where earlier rows reproduced bit for bit across m7i sizes; whether a c7i does too is
+untested, and thesis_v3's own machine type is not in its run files. AMD (c7a, m7a) and other Intel generations are
+further away, so not chosen. A different CPU moves a row like another seed, it does not bias it. Storage: 60 GiB gp3, encrypted (PCA stage ones about 12 GB).
+
+On the laptop, from the branch, committed and pushed (the dry run must say 26 jobs):
+
+```powershell
+cd C:\Users\henri\Desktop\SSE\masterThesis\Code\dlsa-gross\attention-factors-europe
+$env:PYTHONPATH = "src"; $PY = "C:\Users\henri\miniconda3\envs\afe\python.exe"
+& $PY scripts\run_matrix.py --matrix configs\thesis_v3_gross_matrix.yaml --dry-run --jobs 23
+```
+
+Data: `afe_data.tar` and `SHA256SUMS` of the thesis_v3 bundle, and a `COMMIT` file naming this branch and commit.
+
+On the machine, clone, `sha256sum -c` and `cloud_setup.sh` as in `docs/rerun_thesis_v3.md` section 4, then:
+
+```bash
+cd ~/dlsa/attention-factors-europe; PY=~/afe-venv/bin/python
+$PY -m pytest -q tests/test_thesis_v3_gross.py                    # "16 passed"
+$PY scripts/run_matrix.py --matrix configs/thesis_v3_gross_matrix.yaml --smoke --jobs 8   # builds both PCA stage ones; "0 failed"
+bash scripts/spot_resume.sh install configs/thesis_v3_gross_matrix.yaml --jobs 23 --threads 2
+bash scripts/spot_resume.sh status                                # "active (running)"
+tail -f runs/thesis_v3_gross_console.log
+```
+
+At the end the service runs the output check, packs the matrix directory and every run directory into
+`~/thesis_v3_gross.tgz`, writes its sha256 next to it and shuts the machine down. Collect as in section 7 of
+`docs/rerun_thesis_v3.md` and terminate everything. A gross row's log prints "net SR" at zero costs (it equals
+gross); `metrics.json` and the summary hold the net Sharpe after 5bp / 1bp. The four searches are scored on gross
+Sharpe in 1996-97: compare their validation scores only with each other, not with the net searches.

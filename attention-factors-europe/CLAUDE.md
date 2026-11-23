@@ -231,6 +231,13 @@ weaken a test to make code pass.
   longer runs stay masked (exits). `src/afe/data/return_gaps.py` holds the rule (slots, PCA panel, robustness
   re-scoring all read it); the PCA stage-one meta records it and the runner refuses a mismatch. 2026-11-17 builds:
   US 239 member-days (193 in 1998-2021), Europe 3,169 (194). Every run before it used `masked` and reproduces.
+- Gross-objective cells of the mechanism table (decided 2026-11-23, Henrik, AFTER thesis_v3's out-of-sample rows had been
+  seen; the thesis has to say so): `configs/thesis_v3_gross_matrix.yaml`, K = 30, both markets, seeds 0-4. Two-step
+  attention (`training.two_step`) and PCA + LongConv trained without costs (`objective.turnover_cost` / `short_cost` 0), each with
+  its own search on 1996-97 (the costs held at 0, so it scores gross Sharpe) and reported after 5bp / 1bp
+  (`evaluation.*_cost`). Completes {joint attention, two-step attention, PCA} x {net, gross} with thesis_v3's rows:
+  same code, data, seeds and rules, `thesis_v3_matrix.yaml` unedited. DIAGNOSTIC rows, never a headline value. Results in
+  `runs/_matrix/thesis_v3_gross`; docs/cloud_runs.md section 24.
 
 ## Trading costs: limits, not replication
 
