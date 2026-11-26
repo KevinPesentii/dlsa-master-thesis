@@ -1,8 +1,8 @@
 # The PCA benchmarks of Table 2 on the footing of the per-K attention headline (CLAUDE.md, "Per-K headline",
 # 2026-11-10): each K trades with the winner of its own validation search, in both markets, so that attention
 # against the two-step benchmarks is like for like. Asked 2026-11-10, after the out-of-sample rows of the attention
-# per-K searches (search_t4q, search_t4q_eu) and of the October PCA rows (thesis, thesis_eu) had been seen: the
-# thesis has to say this search was designed after those results. Written and committed before any trial ran; do
+# per-K searches (search_t4q, search_t4q_eu) and of the October PCA rows (thesis, thesis_eu) had been seen.
+# Written and committed before any trial ran; do
 # not edit it after the run has started.
 #
 # Mechanics (configs/thesis_v2_pca_matrix.yaml header): model v2 as it reaches PCA = fixed residual window and

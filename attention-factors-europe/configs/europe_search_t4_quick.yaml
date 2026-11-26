@@ -4,7 +4,7 @@
 # match, and each K's US quick winner is carried into that K's finalists (`keep_from` in the matrix), as in
 # every Europe search since 2026-10. The fixed block is configs/europe_search_t4.yaml's: only the data differ.
 # Asked 2026-11-09, after the US quick search and its out-of-sample rows (runs/_matrix/search_t4q) and the
-# Europe rows of runs/_matrix/thesis_v2 had been seen: the thesis has to say so.
+# Europe rows of runs/_matrix/thesis_v2 had been seen.
 # Written 2026-11-09, before this search ran. Do not edit it after the run has started.
 #   python scripts/search_validation.py --config configs/europe_search_t4_quick.yaml --stage select --K 100
 

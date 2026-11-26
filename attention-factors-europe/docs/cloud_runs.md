@@ -1101,7 +1101,7 @@ missing cells of the mechanism table, both markets, seeds 0-4: two-step attentio
 costs, reported after 5bp / 1bp. 26 jobs: 2 PCA stage ones, 4 searches, 20 runs. Same code and data as `thesis_v3`
 (commit 1123394 plus this matrix, the bundle's `afe_data.tar` and `SHA256SUMS` unchanged); searches are the
 v3 searches with the costs held at 0, so a candidate name means the same point. Asked after thesis_v3's
-out-of-sample rows had been seen: diagnostic rows, the thesis has to say so.
+out-of-sample rows had been seen: diagnostic rows.
 
 Size, estimated from thesis_v3's own times (2 threads, full load): searches 21 + 5 + 8 + 3 = about 37 process-hours, runs 5 x
 (90 + 56 + 49 + 63) minutes = about 21, so roughly 58 process-hours. The two US searches run first (15 + 8

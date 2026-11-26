@@ -8,7 +8,7 @@
 # winner of its own Europe search, as the thesis_v2 `eu_attention` row does with the K = 30 Europe values
 # (eu_v2) at every K; the two are compared on the same seeds, as the US rows with `us_attention`. Never a
 # headline value until a decision says so. Asked after the US quick search, its rows and the Europe rows
-# of runs/_matrix/thesis_v2 had been seen: the thesis has to say so.
+# of runs/_matrix/thesis_v2 had been seen.
 # Own out dir runs/_matrix/search_t4q_eu, so nothing of search_t4q, search_t4 or thesis_v2 is touched.
 #   python scripts/run_matrix.py --matrix configs/search_t4q_eu_matrix.yaml --dry-run --jobs 23
 #   python scripts/run_matrix.py --matrix configs/search_t4q_eu_matrix.yaml --smoke --jobs 8

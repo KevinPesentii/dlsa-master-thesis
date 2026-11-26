@@ -5,7 +5,7 @@
 #                                         trained without costs (training.two_step + objective costs 0)
 #   PCA + LongConv, gross objective       the benchmark's policy trained without costs on the PCA residuals
 # so the table is {joint attention, two-step attention, PCA} x {net objective, gross objective}. Asked AFTER the
-# out-of-sample rows of thesis_v3 (its mechanism rows included) had been seen, and the thesis has to say so.
+# out-of-sample rows of thesis_v3 (its mechanism rows included) had been seen.
 # DIAGNOSTIC rows, never a headline value. thesis_v3_matrix.yaml is not edited: it ran as it stands.
 #
 # Same code, data, seeds (0-4), windows and rules as thesis_v3 (commit 1123394, the audited data, halts closed): each row

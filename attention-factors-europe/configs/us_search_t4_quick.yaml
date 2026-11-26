@@ -1,7 +1,7 @@
 # A quick version of configs/us_search_t4.yaml, run once per K (configs/search_t4q_us_matrix.yaml),
 # US only, so each K gets its own validated values. Asked 2026-11-09 after the K = 30 Table 4 search
-# (2026-11-08) and after the out-of-sample K = 100 rows of runs/_matrix/thesis_v2 had been seen: the
-# thesis has to say so. Same window (fit 1990-1995, net Sharpe on 1996-1997), model v2, same rule.
+# (2026-11-08) and after the out-of-sample K = 100 rows of runs/_matrix/thesis_v2 had been seen.
+# Same window (fit 1990-1995, net Sharpe on 1996-1997), model v2, same rule.
 # Two cuts, both decided before this search ran:
 #   1. One LongConv layer (the paper's value). The 2-layer trials were 92% of the K = 30 search's
 #      process time (202 of 219 h) and layers 1 and 2 had the same median and p90 validation net

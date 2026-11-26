@@ -130,7 +130,7 @@ weaken a test to make code pass.
   `configs/thesis_v2_matrix.yaml` reruns every attention row but the raw-input ones with new searches
   (`configs/*_search_v2*.yaml`, same windows, budget and rule), plus a ladder of K = 30 rows on the old values,
   one change at a time; results in `runs/_matrix/thesis_v2`. The fixed window was tested out of sample before
-  it was adopted (`runs/_matrix/exp_fixedwin_full`), and the thesis has to say so. The rows above stay the
+  it was adopted (`runs/_matrix/exp_fixedwin_full`). The rows above stay the
   headline until the results are in and a decision says otherwise.
 - PCA rows under model v2 (2026-11-06): `configs/thesis_v2_pca_matrix.yaml`, six searches
   (`configs/*_search_pca_v2*.yaml`, `*_search_ou_v2.yaml`) and every PCA row, with a ladder; results in
@@ -160,7 +160,7 @@ weaken a test to make code pass.
   trade 1998-2021 on seeds 0-4 with each K's own winner. Decided before any of it existed: they are DIAGNOSTIC
   rows, what choosing the values per K buys out of sample, compared on the same seeds with thesis_v2's
   `us_attention` (the K = 30 values at every K); never a headline value until a decision says so. Asked after
-  the out-of-sample K = 100 rows of `runs/_matrix/thesis_v2` had been seen, and the thesis has to say so.
+  the out-of-sample K = 100 rows of `runs/_matrix/thesis_v2` had been seen.
   Results in `runs/_matrix/search_t4q`.
 - Quick per-K search, Europe (2026-11-09): `configs/search_t4q_eu_matrix.yaml` runs
   `configs/europe_search_t4_quick.yaml` (the US quick search on Europe's first window, only the data differ) once
@@ -168,14 +168,14 @@ weaken a test to make code pass.
   the finished US matrix). Its rows `eu_attention_t4q_K<K>` trade 1998-2021 on seeds 0-4 with each K's own Europe
   winner. Decided before any of it existed: DIAGNOSTIC rows, compared on the same seeds with thesis_v2's
   `eu_attention`; never a headline value until a decision says so. Asked after the US quick search, its rows and
-  the Europe rows of `runs/_matrix/thesis_v2` had been seen, and the thesis has to say so. Results in
+  the Europe rows of `runs/_matrix/thesis_v2` had been seen. Results in
   `runs/_matrix/search_t4q_eu`.
 - Per-K headline (decided 2026-11-10, Henrik): the per-K rows are now the HEADLINE in both markets,
   `us_attention_t4q_K<K>` (`runs/_matrix/search_t4q`) and `eu_attention_t4q_K<K>` (`runs/_matrix/search_t4q_eu`),
   each K trading with the winner of its own search. Reason: choosing the values per K is the more sensible approach
   than carrying the K = 30 values to every K. thesis_v2's `us_attention` and `eu_attention` (the K = 30 values at
-  every K) become the comparison. Decided after both sets of out-of-sample rows had been seen, and the thesis has
-  to say so. Not done yet: the PCA + LongConv and OU benchmarks have no per-K searches (their rows are still those
+  every K) become the comparison. Decided after both sets of out-of-sample rows had been seen.
+  Not done yet: the PCA + LongConv and OU benchmarks have no per-K searches (their rows are still those
   of `runs/_matrix/thesis`; `thesis_v2_pca` never ran), and every K = 30 exhibit of the write-up (periods,
   ensembles, ablations, diversity) is on the v2 values, which are not the per-K winner at K = 30 in the US.
 - Per-K PCA benchmarks (2026-11-10): `configs/pca_perk_matrix.yaml` gives PCA + LongConv and PCA + OU the per-K
@@ -190,19 +190,19 @@ weaken a test to make code pass.
   `<market>_pca_longconv_perk[_rolling]_K<K>` (seeds 0-4) and `<market>_pca_ou_perk[_rolling]_K<K>` (one run:
   deterministic), 1998-2021. CANDIDATES for the benchmark headline; the rows of `runs/_matrix/thesis` and
   `thesis_eu` stay until a decision. Designed after the out-of-sample attention per-K rows and the October PCA rows
-  had been seen, and the thesis has to say so. Results in `runs/_matrix/pca_perk`.
+  had been seen. Results in `runs/_matrix/pca_perk`.
 - Per-K benchmark headline (decided 2026-11-10, Henrik, after the pca_perk results): the FIXED-window per-K rows
   are the benchmark headline in both markets, `<market>_pca_longconv_perk_K<K>` and `<market>_pca_ou_perk_K<K>`
   (`runs/_matrix/pca_perk`, run 2026-11-10, commit 35b8d63). Reason: the attention headline also uses the fixed
   window (model v2), so attention against PCA is like for like. The thesis has to say that the fixed window's hedge
   is in sample. The rolling twins (`*_perk_rolling_K<K>`) and the October rows of `runs/_matrix/thesis` and
-  `thesis_eu` become the comparison. Decided after the out-of-sample rows had been seen, and the thesis has to say
-  so. Report: `Thesis/diagnostics/2026-11-10_pca_perk` (private, outside the repo).
+  `thesis_eu` become the comparison. Decided after the out-of-sample rows had been seen.
+  Report: `Thesis/diagnostics/2026-11-10_pca_perk` (private, outside the repo).
 - K = 30 exhibits on the per-K values (decided 2026-11-10, after the out-of-sample results had been seen):
   `configs/table4_k30_rerun_matrix.yaml` reruns the drivers table (the six theme ablations, `features.drop_groups`)
   and the US top-200 row on the per-K K = 30 values (the winner of `search_t4q/us_t4q_K30`, sobol-076) instead of
   the v2 values, seeds 0-4, 1998-2021, with `us_attention_t4q_K30_base` as a reproduction check of search_t4q's
-  K = 30 row. Results in `runs/_matrix/table4_k30_rerun`; the thesis has to say when this was decided.
+  K = 30 row. Results in `runs/_matrix/table4_k30_rerun`.
 - Objective without R_f (decided 2026-11-17, Henrik): `objective.subtract_rf: false` in all ten base configs, so
   training maximises mean(net) / sd(net), the same Sharpe the validation search scores and the tables report.
   Reason: the book is roughly self-financing, so its net return is already an excess return. Every run and search
@@ -232,7 +232,7 @@ weaken a test to make code pass.
   re-scoring all read it); the PCA stage-one meta records it and the runner refuses a mismatch. 2026-11-17 builds:
   US 239 member-days (193 in 1998-2021), Europe 3,169 (194). Every run before it used `masked` and reproduces.
 - Gross-objective cells of the mechanism table (decided 2026-11-23, Henrik, AFTER thesis_v3's out-of-sample rows had been
-  seen; the thesis has to say so): `configs/thesis_v3_gross_matrix.yaml`, K = 30, both markets, seeds 0-4. Two-step
+  seen): `configs/thesis_v3_gross_matrix.yaml`, K = 30, both markets, seeds 0-4. Two-step
   attention (`training.two_step`) and PCA + LongConv trained without costs (`objective.turnover_cost` / `short_cost` 0), each with
   its own search on 1996-97 (the costs held at 0, so it scores gross Sharpe) and reported after 5bp / 1bp
   (`evaluation.*_cost`). Completes {joint attention, two-step attention, PCA} x {net, gross} with thesis_v3's rows:

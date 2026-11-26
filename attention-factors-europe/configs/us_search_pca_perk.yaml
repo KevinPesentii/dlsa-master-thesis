@@ -3,7 +3,7 @@
 # (fit 1990-1995, net Sharpe on 1996-1997), with the same space, draw, budget and rule as
 # configs/us_search_t4_quick.yaml, for every knob the PCA policy has.
 # Asked 2026-11-10, after the out-of-sample rows of the attention per-K searches (runs/_matrix/search_t4q,
-# search_t4q_eu) and of the October PCA rows (runs/_matrix/thesis, thesis_eu) had been seen: the thesis has to say so.
+# search_t4q_eu) and of the October PCA rows (runs/_matrix/thesis, thesis_eu) had been seen.
 #
 # Space: configs/us_search_t4_quick.yaml dimension by dimension, in its order. The four attention-only knobs
 # (lambda_var, score temperature, ridge, attention dim) stay in the space as {unused: true}: drawn and dropped
