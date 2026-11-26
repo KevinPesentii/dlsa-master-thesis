@@ -1152,3 +1152,152 @@ At the end the service runs the output check, packs the matrix directory and eve
 `docs/rerun_thesis_v3.md` and terminate everything. A gross row's log prints "net SR" at zero costs (it equals
 gross); `metrics.json` and the summary hold the net Sharpe after 5bp / 1bp. The four searches are scored on gross
 Sharpe in 1996-97: compare their validation scores only with each other, not with the net searches.
+
+## 25. Review follow-ups (2026-11-26)
+
+Three matrices, all K = 30, US and Europe, seeds 0-4, the same code and rules as `thesis_v3` and its data bundle
+unchanged (`runs/_bundle/thesis_v3/afe_data.tar` and `SHA256SUMS` in the `dlsa-rerun` worktree); every return after
+5bp / 1bp. Decided by Henrik after the external review (CLAUDE.md, "Review follow-ups"); diagnostic rows. Each tier
+has its own out dir and nothing else is touched: `runs/_matrix/review_t1`, `review_t2`, `review_t3`.
+
+| tier | matrix | jobs | what |
+|---|---|---|---|
+| 1 | `configs/review_t1_matrix.yaml` | 64: 2 PCA stage ones to 2025, 62 runs | (a) PCA + LongConv K = 30 on 2022-2025 with the PCA headline values (2 x 5 runs) and PCA + OU K = 30 on 2022-2025 (2 x 1 run); (b) lambda_Var sweep of the joint model on the headline K = 30 values, 1998-2021: 0.1, 1, 10, 100, 1000 in both markets (2 x 5 x 5 runs; one grid for both, Henrik 2026-11-26) |
+| 2 | `configs/review_t2_matrix.yaml` | 20 runs | headline K = 30 with `objective.subtract_rf: true`, and K = 30 with the paper's values (the searches' `base`), 2 x 2 x 5 runs, 1998-2021 |
+| 3 | `configs/review_t3_matrix.yaml` | 6: 1 search, 5 runs | US top-200 quick search at K = 30 (16 workers), then its winner on seeds 0-4, 1998-2021 |
+
+Tier 1 (c), the five-seed books of the 2022-2025 holdout (attention from thesis_v3, PCA + LongConv from tier 1), needs
+no machine: `scripts/holdout_books.py` averages the saved weights afterwards (below).
+
+The headline values travel as blocks copied from thesis_v3's resolved configs (`runs/_matrix/thesis_v3/configs/<spec>.yaml`,
+`matrix.hyper.values`), because `hyper:` reads only a search of the same matrix. Checked 2026-11-26: every tier 1 and
+tier 2 row resolves to its thesis_v3 twin but for its own keys (sample window and stage-one dir; lambda_var; subtract_rf;
+the ten searched values of `base`). Two new pieces of code: `search_validation.py` loads only the members up to cap rank
+200 when a search holds `sample.universe_size` in `fixed` (tier 3; before, a search ignored the key, so a `fixed` 200
+would have searched on 500 names; no earlier search holds it), and `scripts/holdout_books.py`.
+`tests/test_review_followups.py` checks the matrices (10 tests, no data).
+
+**Size**, from thesis_v3's logged run times (`runs/_matrix/thesis_v3/ledger.jsonl`, m7i.24xlarge, 46 jobs x 2 threads)
+and search trials (`searches/<s>/trials.jsonl`):
+
+- Tier 1: sweep 25 x 50.9 min (US, = `us_attention_t4q_K30`; lambda_Var does not change the work) + 25 x 43.2 min
+  (Europe, `eu_attention_t4q_K30`) = 39.2 h; PCA holdout 5 x 8 min (US) + 5 x 10.5 min (Europe), i.e. 4 / 24 of
+  `<m>_pca_longconv_perk_K30` (48.2 and 62.8 min; the attention holdout rows took 8.5 / 50.9 of theirs), OU under a
+  minute each, = 1.6 h; the two stage ones about 25 minutes (the 1998-2021 pair takes about 20, `docs/rerun_thesis_v3.md`;
+  four more years). About **41 process-hours**.
+- Tier 2: `rf` rows as the headline rows, 5 x 50.9 + 5 x 43.2 min = 7.8 h; `paper` rows scaled by the `base` trial
+  against the winner's trial in thesis_v3's K = 30 searches (US 178 s against 87 s, 2.05x: about 104 min a run;
+  Europe 34 s against 39 s, 0.87x: about 38 min) = 11.8 h. About **20 process-hours**.
+- Tier 3: the US-500 K = 30 search was 17.1 process-hours (282 trials); 200 names run at 0.40x (`us_top200_t4q_K30`
+  20.6 min against 50.9 for `us_attention_t4q_K30`), so about 6.9 h; rows 5 x 20.6 min = 1.7 h if the winner trains
+  like sobol-076, 3.4 h if it trains like `base`. About **9-10 process-hours**.
+
+**Machine** (Henrik, 2026-11-26): ONE m7i.24xlarge (96 vCPU, 384 GiB), thesis_v3's machine type, so its run times are
+the ones the estimate uses and tier 3 runs on an m7i too. Ubuntu 24.04 LTS, eu-north-1, Henrik's own AWS account, Spot,
+persistent, interruption behaviour Stop (section 18), on-demand if Spot is refused; 60 GiB gp3 root volume, encrypted
+(stage ones about 12 GB); an Elastic IP associated, so the address survives the stops. Tiers 1, 2 and 3 run one after the
+other on it, each with `--jobs 46 --threads 2` (two threads per job everywhere, as thesis_v3; tier 2 then runs all 20
+jobs at once, the tier 3 search its 16 workers from the matrix):
+
+| tier | wall (run) | process-hours |
+|---|---|---|
+| 1 | about 1.5 h (62 runs after the smoke built both stage ones, 46 slots: 25 US + 21 Europe sweep runs first, then the last 4 Europe runs and the 12 PCA rows; critical path two Europe runs, ~86 min) | about 41 |
+| 2 | about 1.8 h (all 20 at once, 85 GB; critical path a US `paper` run, less on a half-loaded machine) | about 20 |
+| 3 | about 1 h (search ~30 min on 16 workers, then the rows, 20-40 min) | about 9-10 |
+
+With setup and the tier 1 smoke (1.15 h: it builds both stage ones, which the run then skips), the smokes of tiers 2 and 3
+and the fetch between tiers (about 0.3 h each), about **6-6.5 machine-hours**: on Spot at $0.96/h about **$6-7**, on demand
+at $5.14/h about **$31-34** (section 24's prices, AWS price file of 2026-11-21, eu-north-1, Linux; Spot from the feed, read
+the console). The machine is stopped (not billed but for the disk and the Elastic IP) between a tier's end, when
+`spot_resume.sh` shuts it down, and the restart for the fetch. The separate per-tier machines of the first plan (m7i.24xlarge,
+m7i.12xlarge, c7i.8xlarge) are not used.
+
+**Prepare, on the laptop**, from `ops/review-followups`, committed and pushed (tests first):
+
+```powershell
+cd C:\Users\henri\Desktop\SSE\masterThesis\Code\dlsa-review\attention-factors-europe
+$env:PYTHONPATH = "src"; $PY = "C:\Users\henri\miniconda3\envs\afe\python.exe"
+& $PY -m pytest -q tests\test_review_followups.py tests\test_search_validation.py tests\test_thesis_v3.py   # all passed
+& $PY scripts\run_matrix.py --matrix configs\review_t1_matrix.yaml --dry-run --jobs 46 | Select-Object -First 1   # "64 jobs in the matrix, 64 to run"
+& $PY scripts\run_matrix.py --matrix configs\review_t2_matrix.yaml --dry-run --jobs 46 | Select-Object -First 1   # "20 jobs ..."
+$B = "$env:TEMP\afe_review"; New-Item -ItemType Directory -Force $B | Out-Null
+$V3 = "C:\Users\henri\Desktop\SSE\masterThesis\Code\dlsa-rerun\attention-factors-europe"
+Copy-Item $V3\runs\_bundle\thesis_v3\afe_data.tar, $V3\runs\_bundle\thesis_v3\SHA256SUMS $B
+[IO.File]::WriteAllText("$B\COMMIT", "ops/review-followups $(git rev-parse HEAD)`n")
+# tier 3 only: thesis_v3's finished US K = 30 search, which keep_from carries (3 files, no data)
+tar -cf $B\v3_us_t4q_K30.tar -C $V3 runs/_matrix/thesis_v3/searches/us_t4q_K30/manifest.json runs/_matrix/thesis_v3/searches/us_t4q_K30/metrics.json runs/_matrix/thesis_v3/searches/us_t4q_K30/selected.yaml
+$IP = "1.2.3.4"
+scp $B\afe_data.tar $B\SHA256SUMS $B\COMMIT $B\v3_us_t4q_K30.tar "ubuntu@${IP}:~"
+```
+
+The tier 3 dry run needs that search under `runs/` (it refuses to start without it): on the laptop, run it in the
+`dlsa-rerun` worktree after copying `configs/review_t3_matrix.yaml` and the new `scripts/search_validation.py` there,
+or on the machine (below). Expected: "6 jobs in the matrix, 6 to run".
+
+**On the machine**, clone, unpack, check and set up as in `docs/rerun_thesis_v3.md` section 4 (`tar -xf ~/afe_data.tar &&
+sha256sum -c ~/SHA256SUMS`, every line OK; `cloud_setup.sh`), once, then per tier (`<t>` = 1, 2, 3, one after the other):
+
+```bash
+cd ~/dlsa/attention-factors-europe; PY=~/afe-venv/bin/python
+$PY -m pytest --version || ~/afe-venv/bin/pip install -q pytest       # cloud_setup.sh installs pytest on GPU machines only
+$PY -m pytest -q tests/test_review_followups.py                       # "10 passed"
+# tier 3 only: unpack thesis_v3's search and check it
+tar -xf ~/v3_us_t4q_K30.tar && sha256sum -c - <<'SUMS'
+1443bc9b6566467054842406ef2a345d5183cb44eb9c537cb2d8160719a832b0  runs/_matrix/thesis_v3/searches/us_t4q_K30/manifest.json
+ae35cbe6fc58861700c7b22c6838191b356f30d98d15f1d5306b3b228baa38a3  runs/_matrix/thesis_v3/searches/us_t4q_K30/metrics.json
+44996e52e8a01096928749575107d8bf678c04874265501f449207c9fef93de5  runs/_matrix/thesis_v3/searches/us_t4q_K30/selected.yaml
+SUMS
+$PY scripts/run_matrix.py --matrix configs/review_t<t>_matrix.yaml --dry-run --jobs 46 | head -1   # 64 / 20 / 6 jobs
+$PY scripts/run_matrix.py --matrix configs/review_t<t>_matrix.yaml --smoke --jobs 8             # "0 failed" (tier 1 builds both stage ones)
+bash scripts/spot_resume.sh install configs/review_t<t>_matrix.yaml --jobs 46 --threads 2       # every tier; install replaces the previous tier's service
+bash scripts/spot_resume.sh status                                     # "active (running)"
+```
+
+Restarting (a Spot stop, a reboot) resumes: finished jobs are skipped and the tier 3 search resumes from its
+`trials.jsonl`. Monitor:
+
+```bash
+tail -f runs/review_t<t>_console.log
+grep -c "done  " runs/review_t<t>_console.log; grep -E "FAILED|SKIP" runs/review_t<t>_console.log
+tail -n 30 runs/_matrix/review_t<t>/logs/<job>.log
+tail -n 2 runs/_matrix/review_t3/logs/search_us200_t4q_K30.log          # tier 3: one line per trial
+free -g; df -h ~
+```
+
+At the end the service writes `summary.csv` / `summary_by_spec.csv`, runs the output check into
+`runs/review_t<t>_outputs.txt` ("64 / 20 / 6 jobs checked, 0 with problems"), packs the matrix directory and every run
+directory into `~/review_t<t>.tgz` with `~/review_t<t>.tgz.sha256`, and shuts the machine down. Failures with a machine
+cause: `rm ~/review_t<t>.done` and install again with `--retry-failed`, as in `docs/rerun_thesis_v3.md` section 7.
+Fetch (start the instance; the service does nothing), on the laptop:
+
+```powershell
+scp "ubuntu@${IP}:~/review_t1.tgz" "ubuntu@${IP}:~/review_t1.tgz.sha256" $env:TEMP\
+(Get-FileHash $env:TEMP\review_t1.tgz).Hash.ToLower(); Get-Content $env:TEMP\review_t1.tgz.sha256   # the same hash
+tar -xzf $env:TEMP\review_t1.tgz -C C:\Users\henri\Desktop\SSE\masterThesis\Code\dlsa-review\attention-factors-europe
+```
+
+On the one machine, the next tier follows on the same boot: its tests, dry run, smoke and `install` as above (`~/review_t<t>.done`
+of the finished tier keeps that tier from running again). After tier 3 is fetched: cancel the Spot request (terminate),
+release the Elastic IP, check EC2 -> Volumes, Snapshots and Elastic IPs, as in section 18.
+
+What to read: tier 1 `summary_by_spec.csv` (the sweep against `<m>_attention_t4q_K30` of thesis_v3 at the headline
+lambda_Var; the PCA holdout against `<m>_attention_t4q_K30_2022_2025`); tier 2 the `rf` and `paper` rows against the same
+headline rows; tier 3 the finalists table at the end of `search_us200_t4q_K30.log`, then the row against
+`us_top200_t4q_K30`. A tier 2 `rf` row's log prints "net SR" per year as always; the objective it trained on subtracts
+R_f, the reported Sharpe does not.
+
+**Five-seed books of the holdout** (tier 1 (c)), locally once tier 1 is unpacked, in a worktree with `data/` (the US and
+Europe tables of the bundle; the `dlsa-review` worktree has none, so copy or link them in) and tier 1 unpacked; thesis_v3's
+run directories and matrix files are read where they are, in the `dlsa-rerun` worktree:
+
+```powershell
+$V3 = "C:\Users\henri\Desktop\SSE\masterThesis\Code\dlsa-rerun\attention-factors-europe"
+& $PY scripts\holdout_books.py --run-root runs $V3\runs --matrix-root runs\_matrix $V3\runs\_matrix
+```
+
+It reads `thesis_v3/{summary.csv,configs}` and `review_t1/{summary.csv,configs}` under the `--matrix-root` directories
+(the first that has each), books every member with the runner's own accounting and stops unless each
+reproduces its `oos_daily.csv` within 1e-6, then writes `runs/_matrix/review_t1/books/holdout_books.csv` (each seed and
+the five-seed `avg_l1` book, the rule of thesis_v3's ensembles, metrics at 5bp / 1bp) and the daily series.
+`--models attention` builds the attention books now, before tier 1 has run. It has not yet run on real data (written
+2026-11-26 without the data at hand); its member check is the test.

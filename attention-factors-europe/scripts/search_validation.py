@@ -163,7 +163,9 @@ def gpu_device(gpu_procs: int = 0) -> torch.device:
 
 def init_worker(cfg: dict, data_dir: str, first_oos: int, val_years: int, K: int,
                 eval_epochs: list[int], threads: int, runner: str = "attention", device: str = "cpu",
-                gpu_procs: int = 0) -> None:
+                gpu_procs: int = 0, max_rank: int | None = None) -> None:
+    """`max_rank`: only members up to that cap_rank (attention searches), as a run with
+    sample.universe_size loads them; None (every search before 2026-11-26) keeps every member."""
     torch.set_num_threads(threads)
     dev = gpu_device(gpu_procs) if device == "cuda" else torch.device("cpu")
     if runner == "pca":
@@ -176,7 +178,7 @@ def init_worker(cfg: dict, data_dir: str, first_oos: int, val_years: int, K: int
     w0 = base.window_start(cfg, first_oos)
     if first_oos - val_years <= w0.year:
         raise SystemExit(f"a window from {w0:%Y-%m-%d} leaves no training years before {val_years} validation years")
-    p = slots.load_config(cfg, Path(data_dir), f"{w0:%Y-%m-%d}", f"{first_oos - 1}-12-31")
+    p = slots.load_config(cfg, Path(data_dir), f"{w0:%Y-%m-%d}", f"{first_oos - 1}-12-31", max_rank=max_rank)
     t = [p.dates.searchsorted(d) for d in (w0, pd.Timestamp(first_oos - val_years, 1, 1))]
     if p.dates[0].year > w0.year:
         raise SystemExit(f"the panel starts {p.dates[0]:%Y-%m-%d}, too late for a window from {w0:%Y-%m-%d}")
@@ -391,6 +393,11 @@ def main():
 
     log = lambda s: print(s, flush=True)  # noqa: E731
     V = S["validation_years"]
+    # Opt-in (2026-11-26, configs/review_t3_matrix.yaml): a search that holds sample.universe_size in
+    # `fixed` validates on the members up to that cap rank, as its rows trade. No earlier search holds it.
+    max_rank = (S.get("fixed") or {}).get("sample.universe_size")
+    if max_rank is not None and runner != "attention":
+        raise SystemExit("fixed sample.universe_size: attention searches only")
     run_dir = Path(args.resume) if args.resume else runs.create_run(
         f"search_K{K}_val{first_oos - V}-{first_oos - 1}", {"search": S, "base": cfg}, sr["seed"], root=ROOT / "runs",
         run_dir=args.run_dir)
@@ -407,7 +414,7 @@ def main():
     summary = json.loads(summary_path.read_text()) if summary_path.exists() else {}
     with mp.get_context("spawn").Pool(args.jobs, initializer=init_worker, initargs=(
             cfg, str(data_dir), first_oos, V, K, S.get("eval_epochs", []), args.threads, runner, args.device,
-            args.gpu_procs)) as pool:
+            args.gpu_procs, max_rank)) as pool:
         cost = lambda j: rough_cost(with_overrides(cfg, j["overrides"]))  # noqa: E731
         run = lambda jobs, label: run_jobs(pool, jobs, trials, path, log, label, cost)  # noqa: E731
         if args.stage in ("all", "select"):

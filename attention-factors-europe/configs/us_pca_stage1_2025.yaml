@@ -1,0 +1,32 @@
+# PCA stage one to 2025-12-31, for the 2022-2025 holdout rows of configs/review_t1_matrix.yaml (2026-11-26).
+# configs/us_pca_longconv.yaml with sample.end 2025-12-31 and its own out_dir; the data and factors blocks are
+# unchanged (252-day correlation PCA, same K list, same data.return_gaps). Each date uses only the returns
+# before it, so up to 2021 every name has the factors and residual it has in data/us/shared/pca_l252;
+# the pool has more columns (the names of 2022-2025). A second build because run_pca_longconv.Stage1
+# needs the stage one to end where the run's sample ends. Read only by the prep job
+# (scripts/build_pca_residuals.py); the holdout rows keep configs/us_pca_longconv.yaml as their base config.
+#   python scripts/build_pca_residuals.py --config configs/us_pca_stage1_2025.yaml
+
+market: us
+data:
+  dir: data/us/shared
+  return_gaps: closed
+  history_start: 1989-01-01
+  raw_daily_dir: data/us/shared/raw/crsp_daily
+sample:
+  start: 2022-01-01
+  end: 2025-12-31
+factors:
+  kind: pca
+  n_factors:
+  - 1
+  - 3
+  - 5
+  - 8
+  - 10
+  - 15
+  - 30
+  - 100
+  cov_window: 252
+  loading_window: 252
+  out_dir: data/us/shared/pca_l252_2025

@@ -238,6 +238,20 @@ weaken a test to make code pass.
   (`evaluation.*_cost`). Completes {joint attention, two-step attention, PCA} x {net, gross} with thesis_v3's rows:
   same code, data, seeds and rules, `thesis_v3_matrix.yaml` unedited. DIAGNOSTIC rows, never a headline value. Results in
   `runs/_matrix/thesis_v3_gross`; docs/cloud_runs.md section 24.
+- Review follow-ups (decided 2026-11-26, Henrik, after the external review of 2026-11-25 and AFTER thesis_v3's
+  out-of-sample rows, its 2022-2025 holdout included, had been seen; `Thesis/part2/v13/REVIEW_FINDINGS.md`). Three
+  matrices, K = 30, both markets, seeds 0-4, same code, data bundle and rules as thesis_v3, returns after 5bp / 1bp.
+  Tier 1 `configs/review_t1_matrix.yaml`: PCA + LongConv and PCA + OU on 2022-2025 with the PCA headline values (stage
+  one rebuilt to 2025 into `pca_l252_2025`, `configs/<m>_pca_stage1_2025.yaml`), and a lambda_Var sweep of the joint
+  model on the headline values (0.1, 1, 10, 100, 1000 in both markets; a very large lambda_Var approaches the
+  two-step model, which itself has no lambda_Var); the five-seed holdout books come from the saved weights
+  (`scripts/holdout_books.py`), no training. Tier 2 `configs/review_t2_matrix.yaml`: the headline with
+  `objective.subtract_rf: true`, and the paper's values (the searches' `base`). Tier 3 `configs/review_t3_matrix.yaml`:
+  a US top-200 quick search at K = 30 (Europe has its own 200-name search, the US top 200 traded with the US-500
+  values) and its winner on 1998-2021; for it, `search_validation.py` loads members up to cap rank 200 when a search
+  holds `sample.universe_size` in `fixed` (no earlier search does). Headline values sit in blocks copied from
+  thesis_v3's resolved configs. DIAGNOSTIC rows, never a headline value. Results in `runs/_matrix/review_t1`,
+  `review_t2`, `review_t3`; docs/cloud_runs.md section 25.
 
 ## Trading costs: limits, not replication
 

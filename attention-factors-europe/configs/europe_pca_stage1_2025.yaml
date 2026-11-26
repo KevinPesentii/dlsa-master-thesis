@@ -1,0 +1,32 @@
+# PCA stage one to 2025-12-31, for the 2022-2025 holdout rows of configs/review_t1_matrix.yaml (2026-11-26).
+# configs/europe_pca_longconv.yaml with sample.end 2025-12-31 and its own out_dir; the data and factors blocks are
+# unchanged (252-day correlation PCA, same K list, same data.return_gaps). Each date uses only the returns
+# before it, so up to 2021 every name has the factors and residual it has in data/europe17/holfill/pca_l252;
+# the pool has more columns (the names of 2022-2025). A second build because run_pca_longconv.Stage1
+# needs the stage one to end where the run's sample ends. Read only by the prep job
+# (scripts/build_pca_residuals.py); the holdout rows keep configs/europe_pca_longconv.yaml as their base config.
+#   python scripts/build_pca_residuals.py --config configs/europe_pca_stage1_2025.yaml
+
+market: europe17
+data:
+  dir: data/europe17/holfill
+  return_gaps: closed
+  rf_file: data/europe17/shared/rf_daily.parquet
+sample:
+  start: 2022-01-01
+  end: 2025-12-31
+  data_start: 1993-01-01
+factors:
+  kind: pca
+  n_factors:
+  - 1
+  - 3
+  - 5
+  - 8
+  - 10
+  - 15
+  - 30
+  - 100
+  cov_window: 252
+  loading_window: 252
+  out_dir: data/europe17/holfill/pca_l252_2025
